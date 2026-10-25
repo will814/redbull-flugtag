@@ -5,25 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node write-bundle.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "start": "node server.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.0",
-    "canvas-confetti": "^1.9.3",
-    "lucide-react": "^0.475.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tailwindcss": "^4.1.0",
-    "three": "^0.174.0"
-  },
-  "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.174.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "canvas-confetti": "^1.9.3",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.0",
+    "three": "^0.174.0",
     "typescript": "~5.7.2",
     "vite": "^6.2.0"
   }
