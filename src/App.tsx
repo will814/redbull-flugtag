@@ -25,6 +25,8 @@ const STORAGE_KEY_STARS = 'flugtag_total_stars_v1';
 const STORAGE_KEY_BEST_DIST = 'flugtag_best_dist_v1';
 const STORAGE_KEY_LOADOUT = 'flugtag_loadout_v1';
 const STORAGE_KEY_SAVED_BUILDS = 'flugtag_saved_builds_v1';
+const STORAGE_KEY_MUTED = 'flugtag_muted_v1';
+const MAX_HISTORY_LENGTH = 25;
 
 function loadInitialStars(): number {
   try {
@@ -68,15 +70,39 @@ function loadInitialSavedBuilds(): SavedCraftSlot[] {
   return [];
 }
 
+function loadInitialMuted(): boolean {
+  try {
+    const val = localStorage.getItem(STORAGE_KEY_MUTED);
+    const isMuted = val === '1';
+    soundEngine.muted = isMuted;
+    return isMuted;
+  } catch {
+    return false;
+  }
+}
+
 export const App: React.FC = () => {
   const [mode, setMode] = useState<'hangar' | 'flight'>('hangar');
   const [loadout, setLoadout] = useState<CraftLoadout>(loadInitialCraft);
+  const [historyState, setHistoryState] = useState<{
+    entries: CraftLoadout[];
+    index: number;
+  }>(() => ({
+    entries: [loadInitialCraft()],
+    index: 0,
+  }));
   const [savedBuilds, setSavedBuilds] = useState<SavedCraftSlot[]>(loadInitialSavedBuilds);
   const [selectedCategory, setSelectedCategory] = useState<PartCategory>('wings');
   const [windTunnelActive, setWindTunnelActive] = useState<boolean>(false);
   const [totalStars, setTotalStars] = useState<number>(loadInitialStars);
   const [bestDistanceFeet, setBestDistanceFeet] = useState<number>(loadInitialBestDist);
-  const [muted, setMuted] = useState<boolean>(false);
+  const [muted, setMuted] = useState<boolean>(loadInitialMuted);
+
+  // Refs for latest values inside stable callbacks
+  const totalStarsRef = useRef(totalStars);
+  totalStarsRef.current = totalStars;
+  const bestDistanceRef = useRef(bestDistanceFeet);
+  bestDistanceRef.current = bestDistanceFeet;
 
   // Flight simulation state (mutated at 60Hz in ref, synced to React state for HUD)
   const flightStateRef = useRef<FlightSimulationState>(createInitialFlightState());
@@ -87,9 +113,10 @@ export const App: React.FC = () => {
   const [newlyUnlockedParts, setNewlyUnlockedParts] = useState<CraftPart[]>([]);
 
   const metrics = useMemo(() => computeCraftMetrics(loadout), [loadout]);
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
 
-  const saveLoadout = useCallback((next: CraftLoadout) => {
-    setLoadout(next);
+  const persistLoadout = useCallback((next: CraftLoadout) => {
     try {
       localStorage.setItem(STORAGE_KEY_LOADOUT, JSON.stringify(next));
     } catch {
@@ -97,94 +124,141 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const pushLoadoutChange = useCallback(
+    (updater: CraftLoadout | ((prev: CraftLoadout) => CraftLoadout)) => {
+      setLoadout((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        persistLoadout(next);
+        setHistoryState((h) => {
+          const sliced = h.entries.slice(0, h.index + 1);
+          const updated = [...sliced, next].slice(-MAX_HISTORY_LENGTH);
+          return {
+            entries: updated,
+            index: updated.length - 1,
+          };
+        });
+        return next;
+      });
+    },
+    [persistLoadout]
+  );
+
+  const canUndo = historyState.index > 0;
+  const canRedo = historyState.index < historyState.entries.length - 1;
+
+  const handleUndo = useCallback(() => {
+    setHistoryState((h) => {
+      if (h.index <= 0) return h;
+      const nextIndex = h.index - 1;
+      const target = h.entries[nextIndex];
+      soundEngine.playSnapPop();
+      setLoadout(target);
+      persistLoadout(target);
+      return { ...h, index: nextIndex };
+    });
+  }, [persistLoadout]);
+
+  const handleRedo = useCallback(() => {
+    setHistoryState((h) => {
+      if (h.index >= h.entries.length - 1) return h;
+      const nextIndex = h.index + 1;
+      const target = h.entries[nextIndex];
+      soundEngine.playSnapPop();
+      setLoadout(target);
+      persistLoadout(target);
+      return { ...h, index: nextIndex };
+    });
+  }, [persistLoadout]);
+
   const handleSaveCurrentBuild = useCallback(
     (customName?: string) => {
       soundEngine.playUnlockFanfare();
-      const topperPart = getPartById(loadout.topper);
-      const chassisPart = getPartById(loadout.chassis);
-      const wingPart = getPartById(loadout.wings);
+      setSavedBuilds((prevBuilds) => {
+        const currentLoadout = historyState.entries[historyState.index] ?? loadout;
+        const topperPart = getPartById(currentLoadout.topper);
+        const chassisPart = getPartById(currentLoadout.chassis);
+        const wingPart = getPartById(currentLoadout.wings);
 
-      const autoName = `${topperPart.emoji} ${
-        topperPart.id !== 'topper_none'
-          ? topperPart.name.split(' ').slice(-1)[0]
-          : wingPart.name.split(' ')[0]
-      } ${chassisPart.name.split(' ')[0]} #${savedBuilds.length + 1}`;
+        const autoName = `${topperPart.emoji} ${
+          topperPart.id !== 'topper_none'
+            ? topperPart.name.split(' ').slice(-1)[0]
+            : wingPart.name.split(' ')[0]
+        } ${chassisPart.name.split(' ')[0]} #${prevBuilds.length + 1}`;
 
-      const finalName = customName || autoName;
-      const newSlot: SavedCraftSlot = {
-        id: `build_${Date.now()}`,
-        name: finalName,
-        loadout: { ...loadout, name: finalName },
-        createdAt: Date.now(),
-      };
+        const finalName = customName || autoName;
+        const newSlot: SavedCraftSlot = {
+          id: `build_${Date.now()}`,
+          name: finalName,
+          loadout: { ...currentLoadout, name: finalName },
+          createdAt: Date.now(),
+        };
 
-      const updated = [newSlot, ...savedBuilds].slice(0, 12);
-      setSavedBuilds(updated);
+        const updated = [newSlot, ...prevBuilds].slice(0, 12);
+        try {
+          localStorage.setItem(STORAGE_KEY_SAVED_BUILDS, JSON.stringify(updated));
+        } catch {
+          // ignore
+        }
+        return updated;
+      });
+    },
+    [historyState, loadout]
+  );
+
+  const handleDeleteSavedBuild = useCallback((id: string) => {
+    soundEngine.playSnapPop();
+    setSavedBuilds((prevBuilds) => {
+      const updated = prevBuilds.filter((b) => b.id !== id);
       try {
         localStorage.setItem(STORAGE_KEY_SAVED_BUILDS, JSON.stringify(updated));
       } catch {
         // ignore
       }
-    },
-    [loadout, savedBuilds]
-  );
-
-  const handleDeleteSavedBuild = useCallback(
-    (id: string) => {
-      soundEngine.playSnapPop();
-      const updated = savedBuilds.filter((b) => b.id !== id);
-      setSavedBuilds(updated);
-      try {
-        localStorage.setItem(STORAGE_KEY_SAVED_BUILDS, JSON.stringify(updated));
-      } catch {
-        // ignore
-      }
-    },
-    [savedBuilds]
-  );
+      return updated;
+    });
+  }, []);
 
   const handleEquipPart = useCallback(
     (category: PartCategory, partId: string) => {
       soundEngine.playSnapPop();
-      saveLoadout({
-        ...loadout,
-        [category]: partId,
-      });
+      pushLoadoutChange((prev) =>
+        prev[category] === partId ? prev : { ...prev, [category]: partId }
+      );
     },
-    [loadout, saveLoadout]
+    [pushLoadoutChange]
   );
 
   const handleSelectPaint = useCallback(
     (paintTheme: CraftLoadout['paintTheme']) => {
       soundEngine.playSnapPop();
-      saveLoadout({
-        ...loadout,
-        paintTheme,
-      });
+      pushLoadoutChange((prev) =>
+        prev.paintTheme === paintTheme ? prev : { ...prev, paintTheme }
+      );
     },
-    [loadout, saveLoadout]
+    [pushLoadoutChange]
   );
 
   const handleApplyPreset = useCallback(
     (preset: CraftLoadout) => {
       soundEngine.playSnapPop();
-      saveLoadout({ ...preset });
+      pushLoadoutChange({ ...preset });
     },
-    [saveLoadout]
+    [pushLoadoutChange]
   );
 
   const handleRandomizeCraft = useCallback(() => {
     soundEngine.playSnapPop();
+    const curStars = totalStarsRef.current;
     const pickRandom = (cat: PartCategory) => {
       const unlocked = PART_CATALOG.filter(
-        (p) => p.category === cat && p.unlockStars <= totalStars
+        (p) => p.category === cat && p.unlockStars <= curStars
       );
       return unlocked[Math.floor(Math.random() * unlocked.length)].id;
     };
     const randomTheme =
       PAINT_THEMES[Math.floor(Math.random() * PAINT_THEMES.length)].id;
 
-    saveLoadout({
+    pushLoadoutChange({
       name: '🎲 Surprise Craft',
       chassis: pickRandom('chassis'),
       wings: pickRandom('wings'),
@@ -194,7 +268,7 @@ export const App: React.FC = () => {
       trolley: pickRandom('trolley'),
       paintTheme: randomTheme,
     });
-  }, [totalStars, saveLoadout]);
+  }, [pushLoadoutChange]);
 
   const handleToggleWindTunnel = useCallback(() => {
     soundEngine.playFanWhoosh();
@@ -205,6 +279,11 @@ export const App: React.FC = () => {
     setMuted((prev) => {
       const next = !prev;
       soundEngine.muted = next;
+      try {
+        localStorage.setItem(STORAGE_KEY_MUTED, next ? '1' : '0');
+      } catch {
+        // ignore
+      }
       return next;
     });
   }, []);
@@ -233,39 +312,46 @@ export const App: React.FC = () => {
       return;
     }
 
-    const res = triggerHypeOrPushTap(sim, metrics);
+    const res = triggerHypeOrPushTap(sim, metricsRef.current);
     if (res.event === 'hype_tap') {
       soundEngine.playAirhorn();
     } else if (res.event === 'push_boost') {
       soundEngine.playPushBoost();
     } else if (res.event === 'trolley_perfect') {
-      soundEngine.playTrolleyDetach(true);
+      soundEngine.playTrolleyDetach(sim.trolleyReleaseQuality === 'perfect');
     }
     setHudFlightState({ ...sim });
-  }, [metrics]);
+  }, []);
 
   const handleSkipSkitToPush = useCallback(() => {
     const sim = flightStateRef.current;
     if (sim.phase === 'skit') {
       sim.phase = 'ramp_push';
       sim.phaseTime = 0;
-      sim.vxFeet = 11 * metrics.pushEfficiency;
+      const curMetrics = metricsRef.current;
+      const overWeightExcess = Math.max(0, curMetrics.rampTotalMassLbs - 400);
+      const overWeightInertia = 1 / (1 + overWeightExcess * 0.0035);
+      sim.vxFeet = 11 * curMetrics.pushEfficiency * overWeightInertia;
       soundEngine.playPushBoost();
       setHudFlightState({ ...sim });
     }
-  }, [metrics]);
+  }, []);
 
   const handlePitchInputChange = useCallback((val: number) => {
+    if (flightStateRef.current.pilotPitchInput === val) return;
     flightStateRef.current.pilotPitchInput = val;
-    setHudFlightState((prev) => ({ ...prev, pilotPitchInput: val }));
+    setHudFlightState((prev) =>
+      prev.pilotPitchInput === val ? prev : { ...prev, pilotPitchInput: val }
+    );
   }, []);
 
   const handleSplashdownComplete = useCallback(
     (finalState: FlightSimulationState) => {
       const scores = finalState.judgeScores;
       if (scores) {
-        const prevStars = totalStars;
+        const prevStars = totalStarsRef.current;
         const nextStars = prevStars + scores.starsEarned;
+        totalStarsRef.current = nextStars;
         setTotalStars(nextStars);
         try {
           localStorage.setItem(STORAGE_KEY_STARS, String(nextStars));
@@ -278,7 +364,8 @@ export const App: React.FC = () => {
         );
         setNewlyUnlockedParts(newlyUnlocked);
 
-        if (finalState.distanceFeet > bestDistanceFeet) {
+        if (finalState.distanceFeet > bestDistanceRef.current) {
+          bestDistanceRef.current = finalState.distanceFeet;
           setBestDistanceFeet(finalState.distanceFeet);
           try {
             localStorage.setItem(
@@ -301,7 +388,7 @@ export const App: React.FC = () => {
       setHudFlightState({ ...finalState });
       setShowJudgingModal(true);
     },
-    [totalStars, bestDistanceFeet]
+    []
   );
 
   return (
@@ -315,6 +402,7 @@ export const App: React.FC = () => {
         windTunnelActive={windTunnelActive}
         flightStateRef={flightStateRef}
         bestDistanceFeet={bestDistanceFeet}
+        onSelectCategory={setSelectedCategory}
         onFlightHudSync={setHudFlightState}
         onSplashdownComplete={handleSplashdownComplete}
       />
@@ -330,6 +418,10 @@ export const App: React.FC = () => {
           onSelectPaint={handleSelectPaint}
           onApplyPreset={handleApplyPreset}
           onRandomizeCraft={handleRandomizeCraft}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
           savedBuilds={savedBuilds}
           onSaveCurrentBuild={handleSaveCurrentBuild}
           onDeleteSavedBuild={handleDeleteSavedBuild}
@@ -361,6 +453,8 @@ export const App: React.FC = () => {
         <JudgingScorecardModal
           flightState={hudFlightState}
           newlyUnlockedParts={newlyUnlockedParts}
+          totalStars={totalStars}
+          bestDistanceFeet={bestDistanceFeet}
           onFlyAgain={handleStartFlight}
           onBackToHangar={handleReturnToHangar}
         />
@@ -368,3 +462,4 @@ export const App: React.FC = () => {
     </div>
   );
 };
+

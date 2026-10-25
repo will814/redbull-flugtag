@@ -103,9 +103,7 @@ export function computeCraftMetrics(loadout: CraftLoadout): ComputedCraftMetrics
 
   const effectiveAspectRatio = Math.max(2.2, wings.aspectRatio * 0.8 + tail.aspectRatio * 0.2);
   const effectiveLiftMultiplier =
-    (wings.liftMultiplier * wings.wingAreaM2 +
-      chassis.liftMultiplier * chassis.wingAreaM2 +
-      tail.liftMultiplier * tail.wingAreaM2) /
+    airborneParts.reduce((sum, p) => sum + p.liftMultiplier * p.wingAreaM2, 0) /
     totalWingAreaM2;
 
   const baseDragCoeff = Math.max(

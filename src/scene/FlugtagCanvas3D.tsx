@@ -1,12 +1,18 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { CraftLoadout, PartCategory, RAMP_HEIGHT_FEET, RAMP_LENGTH_FEET, WORLD_RECORD_FEET } from '../builder/PartCatalog';
+import {
+  CraftLoadout,
+  PartCategory,
+  RAMP_HEIGHT_FEET,
+  RAMP_LENGTH_FEET,
+  WORLD_RECORD_FEET,
+} from '../builder/PartCatalog';
 import { ComputedCraftMetrics } from '../physics/CraftMetrics';
 import {
   FlightSimulationState,
   stepFlightSimulation,
 } from '../physics/AeroPhysicsEngine';
-import { buildCraft3D, Craft3DGroups } from './Craft3DBuilder';
+import { buildCraft3D, Craft3DGroups, disposeCraftObject3D } from './Craft3DBuilder';
 import { soundEngine } from '../audio/SoundEngine';
 
 interface FlugtagCanvas3DProps {
@@ -17,6 +23,7 @@ interface FlugtagCanvas3DProps {
   windTunnelActive: boolean;
   flightStateRef: React.MutableRefObject<FlightSimulationState>;
   bestDistanceFeet: number;
+  onSelectCategory?: (cat: PartCategory) => void;
   onFlightHudSync: (snapshot: FlightSimulationState) => void;
   onSplashdownComplete: (finalState: FlightSimulationState) => void;
 }
@@ -24,7 +31,25 @@ interface FlugtagCanvas3DProps {
 // Scale factor: 1 Three.js world unit = 4 feet in flight scene so 30ft ramp = 7.5u high, 258ft record = 64.5u
 const UNITS_PER_FOOT = 0.25;
 
-export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
+const SOCKET_CATEGORIES: PartCategory[] = [
+  'chassis',
+  'wings',
+  'tail',
+  'nose',
+  'topper',
+  'trolley',
+];
+
+const CATEGORY_CAMERA_PRESETS: Record<PartCategory, { yaw: number; pitch: number; radius: number }> = {
+  wings: { yaw: -0.58, pitch: 0.34, radius: 7.4 },
+  topper: { yaw: -0.48, pitch: 0.38, radius: 6.4 },
+  chassis: { yaw: -0.68, pitch: 0.28, radius: 6.8 },
+  nose: { yaw: 0.48, pitch: 0.25, radius: 6.2 },
+  tail: { yaw: -2.35, pitch: 0.3, radius: 6.5 },
+  trolley: { yaw: -0.62, pitch: 0.16, radius: 6.4 },
+};
+
+export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
   mode,
   loadout,
   metrics,
@@ -32,6 +57,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
   windTunnelActive,
   flightStateRef,
   bestDistanceFeet,
+  onSelectCategory,
   onFlightHudSync,
   onSplashdownComplete,
 }) => {
@@ -41,27 +67,51 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
   const selectedCategoryRef = useRef(selectedCategory);
   const windTunnelRef = useRef(windTunnelActive);
   const bestDistRef = useRef(bestDistanceFeet);
+  const onSelectCategoryRef = useRef(onSelectCategory);
+  const onFlightHudSyncRef = useRef(onFlightHudSync);
+  const onSplashdownCompleteRef = useRef(onSplashdownComplete);
   const splashNotifiedRef = useRef(false);
+  const hasMountedCraftRef = useRef(false);
 
   modeRef.current = mode;
   metricsRef.current = metrics;
   selectedCategoryRef.current = selectedCategory;
   windTunnelRef.current = windTunnelActive;
   bestDistRef.current = bestDistanceFeet;
+  onSelectCategoryRef.current = onSelectCategory;
+  onFlightHudSyncRef.current = onFlightHudSync;
+  onSplashdownCompleteRef.current = onSplashdownComplete;
 
   const craftGroupsRef = useRef<Craft3DGroups | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const orbitYawRef = useRef<number>(-0.58);
   const orbitPitchRef = useRef<number>(0.32);
+  const orbitRadiusRef = useRef<number>(7.4);
   const snapBounceRef = useRef<number>(0);
 
-  // Rebuild the 3D craft whenever loadout changes
+  // Gently frame the selected attachment socket when switching categories in Hangar
+  useEffect(() => {
+    if (mode !== 'hangar') return;
+    const preset = CATEGORY_CAMERA_PRESETS[selectedCategory];
+    if (preset) {
+      orbitYawRef.current = preset.yaw;
+      orbitPitchRef.current = preset.pitch;
+    }
+  }, [selectedCategory, mode]);
+
+  // Rebuild the 3D craft whenever loadout changes (skipping duplicate initial mount)
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
 
+    if (!hasMountedCraftRef.current) {
+      hasMountedCraftRef.current = true;
+      return;
+    }
+
     if (craftGroupsRef.current) {
       scene.remove(craftGroupsRef.current.root);
+      disposeCraftObject3D(craftGroupsRef.current.root, false);
     }
 
     const built = buildCraft3D(loadout);
@@ -111,13 +161,16 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     sunLight.shadow.mapSize.width = 1024;
     sunLight.shadow.mapSize.height = 1024;
     sunLight.shadow.camera.near = 1;
-    sunLight.shadow.camera.far = 140;
-    const d = 35;
-    sunLight.shadow.camera.left = -d;
-    sunLight.shadow.camera.right = d;
-    sunLight.shadow.camera.top = d;
-    sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.camera.far = 120;
+    sunLight.shadow.bias = -0.0005;
+    sunLight.shadow.normalBias = 0.02;
+    const initialD = 8.5;
+    sunLight.shadow.camera.left = -initialD;
+    sunLight.shadow.camera.right = initialD;
+    sunLight.shadow.camera.top = initialD;
+    sunLight.shadow.camera.bottom = -initialD;
     scene.add(sunLight);
+    scene.add(sunLight.target);
 
     // 3. Build Hangar Workshop Environment Group
     const hangarEnv = new THREE.Group();
@@ -160,11 +213,10 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     fanHousing.add(shroud);
 
     const fanBlades = new THREE.Group();
+    const bladeGeo = new THREE.BoxGeometry(0.1, 1.75, 0.38);
+    const bladeMat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.3 });
     for (let i = 0; i < 6; i++) {
-      const blade = new THREE.Mesh(
-        new THREE.BoxGeometry(0.1, 1.75, 0.38),
-        new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.3 })
-      );
+      const blade = new THREE.Mesh(bladeGeo, bladeMat);
       blade.rotation.x = (i * Math.PI) / 3;
       fanBlades.add(blade);
     }
@@ -174,15 +226,19 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     // Wind Tunnel Airflow Ribbons (visible when Wind Tunnel Fan is ON)
     const windRibbonsGroup = new THREE.Group();
     const windRibbons: THREE.Mesh[] = [];
+    const ribbonGeo = new THREE.BoxGeometry(1.3, 0.05, 0.05);
+    const ribbonMatCyan = new THREE.MeshBasicMaterial({
+      color: '#38bdf8',
+      transparent: true,
+      opacity: 0.85,
+    });
+    const ribbonMatYellow = new THREE.MeshBasicMaterial({
+      color: '#fde047',
+      transparent: true,
+      opacity: 0.85,
+    });
     for (let i = 0; i < 18; i++) {
-      const ribbon = new THREE.Mesh(
-        new THREE.BoxGeometry(1.3, 0.05, 0.05),
-        new THREE.MeshBasicMaterial({
-          color: i % 2 === 0 ? '#38bdf8' : '#fde047',
-          transparent: true,
-          opacity: 0.85,
-        })
-      );
+      const ribbon = new THREE.Mesh(ribbonGeo, i % 2 === 0 ? ribbonMatCyan : ribbonMatYellow);
       ribbon.position.set(
         4.2 - (i % 6) * 1.6,
         -0.2 + Math.floor(i / 6) * 0.85,
@@ -198,7 +254,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     scene.add(bayEnv);
 
     // Sparkling Ocean Water Plane
-    const waterGeo = new THREE.PlaneGeometry(360, 220, 48, 24);
+    const waterGeo = new THREE.PlaneGeometry(360, 220, 32, 16);
     waterGeo.rotateX(-Math.PI / 2);
     const waterMat = new THREE.MeshStandardMaterial({
       color: '#0284c7',
@@ -222,9 +278,9 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     pierDeck.receiveShadow = true;
     bayEnv.add(pierDeck);
 
-    // Glowing Green "DROP TROLLEY ZONE" on the last 26 ft (6.5u) of the ramp!
+    // Glowing Green "DROP TROLLEY ZONE" on the last 22 ft (5.5u) of the ramp!
     const dropZoneStrip = new THREE.Mesh(
-      new THREE.BoxGeometry(6.5, 0.54, 4.1),
+      new THREE.BoxGeometry(5.5, 0.54, 4.1),
       new THREE.MeshStandardMaterial({
         color: '#22c55e',
         emissive: '#15803d',
@@ -232,7 +288,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
         roughness: 0.3,
       })
     );
-    dropZoneStrip.position.set(-3.25, rampHeightU - 0.24, 0);
+    dropZoneStrip.position.set(-2.75, rampHeightU - 0.24, 0);
     bayEnv.add(dropZoneStrip);
 
     // Red & White Checkered Lip at x = 0
@@ -243,13 +299,12 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     rampLip.position.set(-0.3, rampHeightU - 0.23, 0);
     bayEnv.add(rampLip);
 
-    // Pier Support Pillars down to the water
+    // Pier Support Pillars down to the water (shared geometry & material)
+    const pillarGeo = new THREE.CylinderGeometry(0.28, 0.32, rampHeightU, 12);
+    const pillarMat = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.5 });
     [-20, -14, -7, -0.8].forEach((px) => {
       [-1.7, 1.7].forEach((pz) => {
-        const pillar = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.28, 0.32, rampHeightU, 12),
-          new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.5 })
-        );
+        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
         pillar.position.set(px, rampHeightU / 2, pz);
         bayEnv.add(pillar);
       });
@@ -258,11 +313,10 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     // Iconic Red Bull Archway near the end of the Flight Deck
     const archGroup = new THREE.Group();
     archGroup.position.set(-2.5, rampHeightU, 0);
+    const archColGeo = new THREE.BoxGeometry(0.55, 4.2, 0.55);
+    const archColMat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.3 });
     [-2.1, 2.1].forEach((z) => {
-      const col = new THREE.Mesh(
-        new THREE.BoxGeometry(0.55, 4.2, 0.55),
-        new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.3 })
-      );
+      const col = new THREE.Mesh(archColGeo, archColMat);
       col.position.set(0, 2.1, z);
       archGroup.add(col);
     });
@@ -276,6 +330,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
 
     // Distance Buoys in the Water (50ft, 100ft, 150ft, 200ft, 258ft World Record!)
     const buoyDistances = [50, 100, 150, 200, WORLD_RECORD_FEET];
+    const buoyGroups: THREE.Group[] = [];
+    const buoyBaseGeo = new THREE.CylinderGeometry(0.65, 0.75, 0.5, 16);
     buoyDistances.forEach((distFt) => {
       const xU = distFt * UNITS_PER_FOOT;
       const isRecord = distFt === WORLD_RECORD_FEET;
@@ -296,7 +352,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
       [-5.2, 5.2].forEach((z) => {
         const buoy = new THREE.Group();
         const base = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.65, 0.75, 0.5, 16),
+          buoyBaseGeo,
           new THREE.MeshStandardMaterial({
             color: isRecord ? '#facc15' : '#ef4444',
             roughness: 0.3,
@@ -313,21 +369,67 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
         buoy.add(base, cone);
         buoy.position.set(xU, 0.1, z);
         bayEnv.add(buoy);
+        buoyGroups.push(buoy);
       });
     });
+
+    // Personal Best (PB) 3D Water Line & Emerald Buoys
+    const pbMarkerGroup = new THREE.Group();
+    const pbLineMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.32, 0.09, 18),
+      new THREE.MeshBasicMaterial({
+        color: '#34d399',
+        transparent: true,
+        opacity: 0.85,
+      })
+    );
+    pbLineMesh.position.set(0, 0.05, 0);
+    pbMarkerGroup.add(pbLineMesh);
+    [-6.1, 6.1].forEach((z) => {
+      const pbBuoy = new THREE.Mesh(
+        new THREE.ConeGeometry(0.42, 1.8, 12),
+        new THREE.MeshStandardMaterial({
+          color: '#10b981',
+          emissive: '#059669',
+          emissiveIntensity: 0.45,
+          roughness: 0.25,
+        })
+      );
+      pbBuoy.position.set(0, 0.9, z);
+      pbMarkerGroup.add(pbBuoy);
+    });
+    pbMarkerGroup.visible = false;
+    bayEnv.add(pbMarkerGroup);
+
+    // 3D Aerodynamic Wingtip Streamer Trails (Visible during Airborne Glide)
+    const wingTrailGroup = new THREE.Group();
+    const wingTrailMat = new THREE.MeshBasicMaterial({
+      color: '#34d399',
+      transparent: true,
+      opacity: 0.72,
+    });
+    const trailGeo = new THREE.BoxGeometry(2.6, 0.06, 0.08);
+    [-1.85, 1.85].forEach((z) => {
+      const trail = new THREE.Mesh(trailGeo, wingTrailMat);
+      trail.position.set(-1.5, 0.45, z);
+      wingTrailGroup.add(trail);
+    });
+    wingTrailGroup.visible = false;
+    bayEnv.add(wingTrailGroup);
 
     // Floating Thermal Wind Rings over the bay
     const thermalMeshes: THREE.Mesh[] = [];
     const initialRings = flightStateRef.current.thermalRings;
+    const thermalMat = new THREE.MeshStandardMaterial({
+      color: '#fde047',
+      emissive: '#f59e0b',
+      emissiveIntensity: 0.6,
+      roughness: 0.2,
+    });
     initialRings.forEach((r) => {
       const torus = new THREE.Mesh(
         new THREE.TorusGeometry(r.radiusFeet * UNITS_PER_FOOT * 0.55, 0.16, 12, 28),
-        new THREE.MeshStandardMaterial({
-          color: '#fde047',
-          emissive: '#f59e0b',
-          emissiveIntensity: 0.6,
-          roughness: 0.2,
-        })
+        thermalMat
       );
       torus.rotation.y = Math.PI / 2;
       torus.position.set(r.xFeet * UNITS_PER_FOOT, r.yFeet * UNITS_PER_FOOT, 0);
@@ -369,19 +471,49 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     scene.add(initialCraft.root);
     craftGroupsRef.current = initialCraft;
 
-    // 5. Pointer Orbit Handler for Hangar Mode
+    // 5. Pointer Orbit, Pinch/Wheel Zoom & 3D Socket Raycast Handler for Hangar Mode
     let isDragging = false;
+    let downX = 0;
+    let downY = 0;
     let prevX = 0;
     let prevY = 0;
+    const activePointers = new Map<number, { x: number; y: number }>();
+    let prevPinchDist = 0;
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
 
     const onPointerDown = (e: PointerEvent) => {
       if (modeRef.current !== 'hangar') return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointers.size === 2) {
+        const pts = Array.from(activePointers.values());
+        prevPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        isDragging = false;
+        return;
+      }
       isDragging = true;
+      downX = e.clientX;
+      downY = e.clientY;
       prevX = e.clientX;
       prevY = e.clientY;
     };
+
     const onPointerMove = (e: PointerEvent) => {
-      if (!isDragging || modeRef.current !== 'hangar') return;
+      if (modeRef.current !== 'hangar') return;
+      if (activePointers.has(e.pointerId)) {
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (activePointers.size === 2) {
+        const pts = Array.from(activePointers.values());
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        if (prevPinchDist > 0) {
+          const delta = prevPinchDist - dist;
+          orbitRadiusRef.current = Math.max(4.4, Math.min(11.2, orbitRadiusRef.current + delta * 0.018));
+        }
+        prevPinchDist = dist;
+        return;
+      }
+      if (!isDragging) return;
       const dx = e.clientX - prevX;
       const dy = e.clientY - prevY;
       prevX = e.clientX;
@@ -389,16 +521,56 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
       orbitYawRef.current -= dx * 0.008;
       orbitPitchRef.current = Math.max(0.08, Math.min(0.85, orbitPitchRef.current + dy * 0.006));
     };
-    const onPointerUp = () => {
+
+    const onPointerUp = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) {
+        prevPinchDist = 0;
+      }
+      if (isDragging && modeRef.current === 'hangar' && craftGroupsRef.current) {
+        const moveDist = Math.hypot(e.clientX - downX, e.clientY - downY);
+        if (moveDist < 6 && onSelectCategoryRef.current) {
+          const rect = renderer.domElement.getBoundingClientRect();
+          pointerNdc.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+          pointerNdc.y = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
+          raycaster.setFromCamera(pointerNdc, camera);
+          const markerMeshes = SOCKET_CATEGORIES.map((c) => craftGroupsRef.current!.socketMarkers[c]);
+          const hits = raycaster.intersectObjects(markerMeshes, false);
+          if (hits.length > 0) {
+            const cat = hits[0].object.userData?.category as PartCategory | undefined;
+            if (cat) {
+              soundEngine.playSnapPop();
+              onSelectCategoryRef.current(cat);
+            }
+          }
+        }
+      }
       isDragging = false;
+    };
+
+    const onPointerCancel = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
+      prevPinchDist = 0;
+      isDragging = false;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (modeRef.current !== 'hangar') return;
+      e.preventDefault();
+      orbitRadiusRef.current = Math.max(
+        4.4,
+        Math.min(11.2, orbitRadiusRef.current + e.deltaY * 0.004)
+      );
     };
 
     const domEl = renderer.domElement;
     domEl.addEventListener('pointerdown', onPointerDown);
+    domEl.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
 
-    // 6. Resize Handler (Essential for Razr Foldable fold/unfold & orientation changes!)
+    // 6. Resize Handler + ResizeObserver (Essential for Razr Foldable fold/unfold & orientation changes!)
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -406,16 +578,34 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
       camera.aspect = w / h;
       camera.fov = w / h > 1.9 ? 44 : w < 520 ? 58 : 50;
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(w, h);
     };
     handleResize();
     window.addEventListener('resize', handleResize);
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(handleResize) : null;
+    resizeObserver?.observe(container);
 
-    // 7. Main 60Hz Animation & Physics Loop
+    // 7. Main 60Hz Animation & Physics Loop (Zero per-frame allocations)
     let lastTime = performance.now();
     let hudTimer = 0;
     let rafId = 0;
+    let prevMode: 'hangar' | 'flight' = modeRef.current;
+    let windTunnelBaseY = 0.05;
+    let partsNeedReset = true;
+
     const smoothedLookAt = new THREE.Vector3(0, 0.35, 0);
+    const desiredCamPos = new THREE.Vector3();
+    const desiredLookAt = new THREE.Vector3();
+
+    const updateShadowBounds = (d: number) => {
+      sunLight.shadow.camera.left = -d;
+      sunLight.shadow.camera.right = d;
+      sunLight.shadow.camera.top = d;
+      sunLight.shadow.camera.bottom = -d;
+      sunLight.shadow.camera.updateProjectionMatrix();
+    };
 
     const animate = (now: number) => {
       rafId = requestAnimationFrame(animate);
@@ -432,6 +622,38 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
 
       if (!craft) return;
 
+      // Handle clean mode transitions (camera framing & shadow frustum tuning)
+      if (currentMode !== prevMode) {
+        prevMode = currentMode;
+        partsNeedReset = true;
+        if (currentMode === 'hangar') {
+          updateShadowBounds(8.5);
+          sunLight.position.set(10, 22, 14);
+          sunLight.target.position.set(0, 0, 0);
+          sunLight.target.updateMatrixWorld();
+          for (const cat of SOCKET_CATEGORIES) {
+            craft.socketMarkers[cat].visible = true;
+          }
+          const r = orbitRadiusRef.current;
+          camera.position.set(
+            Math.sin(orbitYawRef.current) * Math.cos(orbitPitchRef.current) * r,
+            Math.sin(orbitPitchRef.current) * r + 0.5,
+            Math.cos(orbitYawRef.current) * Math.cos(orbitPitchRef.current) * r
+          );
+          smoothedLookAt.set(0, 0.35, 0);
+        } else {
+          updateShadowBounds(26);
+          for (const cat of SOCKET_CATEGORIES) {
+            craft.socketMarkers[cat].visible = false;
+          }
+          const sim = flightStateRef.current;
+          const startXU = sim.xFeet * UNITS_PER_FOOT;
+          const startYU = sim.yFeet * UNITS_PER_FOOT + 0.52;
+          camera.position.set(startXU + 7.5, startYU + 3.2, 8.5);
+          smoothedLookAt.set(startXU - 0.5, startYU + 0.5, 0);
+        }
+      }
+
       // Spring bounce when snapping a new part
       if (snapBounceRef.current > 0.01) {
         snapBounceRef.current *= Math.pow(0.04, dt);
@@ -446,27 +668,30 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
         craft.root.position.set(0, 0, 0);
         craft.crewGroup.visible = false;
         craft.trolleyGroup.visible = true;
-        craft.trolleyGroup.position.set(0, 0, 0);
-        craft.trolleyGroup.rotation.set(0, 0, 0);
 
-        // Reset any detached part positions
-        craft.wingsGroup.position.set(0, 0, 0);
-        craft.wingsGroup.rotation.set(0, 0, 0);
-        craft.tailGroup.position.set(0, 0, 0);
-        craft.tailGroup.rotation.set(0, 0, 0);
-        craft.noseGroup.position.set(0, 0, 0);
-        craft.noseGroup.rotation.set(0, 0, 0);
-        craft.topperGroup.position.set(0, 0, 0);
-        craft.topperGroup.rotation.set(0, 0, 0);
+        if (partsNeedReset) {
+          partsNeedReset = false;
+          craft.trolleyGroup.position.set(0, 0, 0);
+          craft.trolleyGroup.rotation.set(0, 0, 0);
+          craft.wingsGroup.position.set(0, 0, 0);
+          craft.wingsGroup.rotation.set(0, 0, 0);
+          craft.tailGroup.position.set(0, 0, 0);
+          craft.tailGroup.rotation.set(0, 0, 0);
+          craft.noseGroup.position.set(0, 0, 0);
+          craft.noseGroup.rotation.set(0, 0, 0);
+          craft.topperGroup.position.set(0, 0, 0);
+          craft.topperGroup.rotation.set(0, 0, 0);
+        }
 
         // Highlight active category socket marker
-        (Object.keys(craft.socketMarkers) as PartCategory[]).forEach((cat) => {
+        const activeCat = selectedCategoryRef.current;
+        for (const cat of SOCKET_CATEGORIES) {
           const marker = craft.socketMarkers[cat];
           marker.visible = true;
-          const isSelected = cat === selectedCategoryRef.current;
+          const isSelected = cat === activeCat;
           const scalePulse = isSelected ? 1.25 + Math.sin(elapsedSec * 6) * 0.2 : 0.85;
           marker.scale.set(scalePulse, scalePulse, scalePulse);
-        });
+        }
 
         const fanOn = windTunnelRef.current;
         windRibbonsGroup.visible = fanOn;
@@ -476,46 +701,50 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
           craft.propSpinner.rotation.x += (fanOn ? 16 : 2) * dt;
         }
 
+        const dampFactor = 1 - Math.exp(-7.5 * dt);
         if (fanOn) {
-          windRibbons.forEach((r) => {
+          for (const r of windRibbons) {
             r.position.x -= 11 * dt;
             if (r.position.x < -4.2) {
               r.position.x = 4.5;
             }
-          });
+          }
           const targetLiftY = ((curMetrics.liftScore - curMetrics.weightScore * 0.65) / 100) * 0.85;
           const targetPitchRad = (curMetrics.seesawTiltDeg * Math.PI) / 180;
-          craft.airframeGroup.position.y =
-            THREE.MathUtils.lerp(craft.airframeGroup.position.y, Math.max(-0.15, targetLiftY), 0.1) +
-            Math.sin(elapsedSec * 5) * 0.05;
+          windTunnelBaseY = THREE.MathUtils.lerp(
+            windTunnelBaseY,
+            Math.max(-0.15, targetLiftY),
+            dampFactor
+          );
+          craft.airframeGroup.position.y = windTunnelBaseY + Math.sin(elapsedSec * 5) * 0.045;
           craft.airframeGroup.rotation.z = THREE.MathUtils.lerp(
             craft.airframeGroup.rotation.z,
             targetPitchRad,
-            0.1
+            dampFactor
           );
         } else {
           const gentleTiltRad = ((curMetrics.seesawTiltDeg * 0.35) * Math.PI) / 180;
-          craft.airframeGroup.position.y = THREE.MathUtils.lerp(craft.airframeGroup.position.y, 0.05, 0.12);
+          windTunnelBaseY = THREE.MathUtils.lerp(windTunnelBaseY, 0.05, dampFactor);
+          craft.airframeGroup.position.y = windTunnelBaseY;
           craft.airframeGroup.rotation.z = THREE.MathUtils.lerp(
             craft.airframeGroup.rotation.z,
             gentleTiltRad,
-            0.12
+            dampFactor
           );
         }
 
-        const radius = 7.4;
+        const radius = orbitRadiusRef.current;
         const camX = Math.sin(orbitYawRef.current) * Math.cos(orbitPitchRef.current) * radius;
         const camY = Math.sin(orbitPitchRef.current) * radius + 0.5;
         const camZ = Math.cos(orbitYawRef.current) * Math.cos(orbitPitchRef.current) * radius;
-        camera.position.lerp(new THREE.Vector3(camX, camY, camZ), 0.18);
-        smoothedLookAt.lerp(new THREE.Vector3(0, 0.35, 0), 0.2);
+        const camDamp = 1 - Math.exp(-11 * dt);
+        desiredCamPos.set(camX, camY, camZ);
+        desiredLookAt.set(0, 0.35, 0);
+        camera.position.lerp(desiredCamPos, camDamp);
+        smoothedLookAt.lerp(desiredLookAt, camDamp);
         camera.lookAt(smoothedLookAt);
       } else {
         // FLIGHT MODE
-        (Object.keys(craft.socketMarkers) as PartCategory[]).forEach((cat) => {
-          craft.socketMarkers[cat].visible = false;
-        });
-
         const sim = flightStateRef.current;
         const prevPhase = sim.phase;
         const events = stepFlightSimulation(sim, curMetrics, dt, bestDistRef.current);
@@ -529,12 +758,14 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
         if (events.justSplashedDown) {
           soundEngine.playSplash(sim.splashIntensity);
           const impactXU = sim.impactXFeet * UNITS_PER_FOOT;
+          const forwardMomentum = sim.vxFeet * UNITS_PER_FOOT * 0.22;
           splashDrops.forEach((d, idx) => {
             d.mesh.visible = true;
             d.mesh.position.set(impactXU, 0.25, 0);
+            d.mesh.scale.set(1, 1, 1);
             const ang = (idx / splashDrops.length) * Math.PI * 2;
             const spd = 2.0 + (idx % 5) * 1.1;
-            d.vx = Math.cos(ang) * spd;
+            d.vx = Math.cos(ang) * spd + forwardMomentum;
             d.vy = 5.0 + (sim.splashIntensity / 100) * 5.8 + (idx % 4) * 1.2;
             d.vz = Math.sin(ang) * spd;
           });
@@ -552,22 +783,54 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
           !splashNotifiedRef.current
         ) {
           splashNotifiedRef.current = true;
-          onSplashdownComplete({ ...sim });
+          onSplashdownCompleteRef.current({ ...sim });
         }
 
         hudTimer += dt;
         if (hudTimer >= 0.05 || prevPhase !== sim.phase || events.justSplashedDown) {
           hudTimer = 0;
-          onFlightHudSync({ ...sim });
+          onFlightHudSyncRef.current({ ...sim });
         }
 
-        // Position Craft in 3D World
+        // Update Personal Best 3D marker line on the water
+        if (bestDistRef.current > 5) {
+          pbMarkerGroup.visible = true;
+          pbMarkerGroup.position.x = bestDistRef.current * UNITS_PER_FOOT;
+        } else {
+          pbMarkerGroup.visible = false;
+        }
+
+        // Gentle buoy bobbing on the bay
+        for (let i = 0; i < buoyGroups.length; i++) {
+          buoyGroups[i].position.y = 0.1 + Math.sin(elapsedSec * 2.4 + i) * 0.06;
+        }
+
+        // Position Craft in 3D World & Follow with Directional Sun Shadow Frustum
         const craftXU = sim.xFeet * UNITS_PER_FOOT;
         const craftYU = sim.yFeet * UNITS_PER_FOOT + 0.52;
         const pitchRad = (sim.pitchDeg * Math.PI) / 180;
         craft.root.position.set(craftXU, craftYU, 0);
         craft.airframeGroup.position.set(0, 0, 0);
         craft.airframeGroup.rotation.set(0, 0, pitchRad);
+
+        sunLight.position.set(craftXU + 14, 35, 22);
+        sunLight.target.position.set(craftXU, 0, 0);
+        sunLight.target.updateMatrixWorld();
+
+        // Update 3D Wingtip Trails during Airborne Phase
+        if (sim.phase === 'airborne') {
+          wingTrailGroup.visible = true;
+          wingTrailGroup.position.set(craftXU, craftYU, 0);
+          wingTrailGroup.rotation.set(0, 0, pitchRad);
+          wingTrailMat.color.setHex(
+            sim.isStalling ? 0xf43f5e : sim.inSweetSpot ? 0x34d399 : 0x38bdf8
+          );
+          wingTrailMat.opacity = sim.isStalling
+            ? 0.45 + Math.abs(Math.sin(elapsedSec * 14)) * 0.45
+            : 0.65;
+        } else {
+          wingTrailGroup.visible = false;
+        }
 
         if (craft.propSpinner) {
           craft.propSpinner.rotation.x += Math.max(3, sim.vxFeet * 0.45) * dt;
@@ -603,12 +866,14 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
           const mesh = thermalMeshes[idx];
           if (mesh) {
             mesh.visible = !r.collected;
+            mesh.position.set(r.xFeet * UNITS_PER_FOOT, r.yFeet * UNITS_PER_FOOT, 0);
             mesh.rotation.z += 2.2 * dt;
           }
         });
 
         // Clean World-Aligned Floating Debris on Splashdown!
         if (sim.phase === 'splashdown' && sim.debris.length > 0) {
+          partsNeedReset = true;
           const cosP = Math.cos(-pitchRad);
           const sinP = Math.sin(-pitchRad);
           sim.debris.forEach((d) => {
@@ -630,7 +895,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
             targetGroup.position.set(localX, localY, d.zFeet * UNITS_PER_FOOT);
             targetGroup.rotation.set(d.rotX, d.rotY, d.rotZ - pitchRad);
           });
-        } else {
+        } else if (partsNeedReset) {
+          partsNeedReset = false;
           craft.wingsGroup.position.set(0, 0, 0);
           craft.wingsGroup.rotation.set(0, 0, 0);
           craft.tailGroup.position.set(0, 0, 0);
@@ -649,6 +915,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
             d.mesh.position.x += d.vx * dt;
             d.mesh.position.y += d.vy * dt;
             d.mesh.position.z += d.vz * dt;
+            const scaleFade = Math.max(0.25, 1 - sim.phaseTime * 0.45);
+            d.mesh.scale.set(scaleFade, scaleFade, scaleFade);
             if (d.mesh.position.y < 0.02) {
               d.mesh.visible = false;
             }
@@ -669,10 +937,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
           });
         }
 
-        // Smooth Dynamic Chase Camera
-        const desiredCamPos = new THREE.Vector3();
-        const desiredLookAt = new THREE.Vector3();
-
+        // Smooth Frame-Rate Independent Dynamic Chase Camera
         if (sim.phase === 'skit') {
           desiredCamPos.set(craftXU + 4.8, craftYU + 2.2, 6.2);
           desiredLookAt.set(craftXU - 0.5, craftYU + 0.5, 0);
@@ -692,8 +957,10 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
           desiredLookAt.set(craftXU, 0.65, 0);
         }
 
-        camera.position.lerp(desiredCamPos, 0.12);
-        smoothedLookAt.lerp(desiredLookAt, 0.14);
+        const camPosDamp = 1 - Math.exp(-8.0 * dt);
+        const camLookDamp = 1 - Math.exp(-9.5 * dt);
+        camera.position.lerp(desiredCamPos, camPosDamp);
+        smoothedLookAt.lerp(desiredLookAt, camLookDamp);
         camera.lookAt(smoothedLookAt);
       }
 
@@ -705,17 +972,25 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = ({
     return () => {
       cancelAnimationFrame(rafId);
       domEl.removeEventListener('pointerdown', onPointerDown);
+      domEl.removeEventListener('wheel', onWheel);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
       window.removeEventListener('resize', handleResize);
+      resizeObserver?.disconnect();
+      disposeCraftObject3D(scene, true);
       renderer.dispose();
+      sceneRef.current = null;
     };
   }, []);
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden cursor-grab active:cursor-grabbing"
+      className={`relative w-full h-full overflow-hidden touch-none ${
+        mode === 'hangar' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+      }`}
     />
   );
-};
+});
+

@@ -868,14 +868,24 @@ export const PRESET_BLUEPRINTS: CraftLoadout[] = [
   },
 ];
 
+const PART_BY_ID_MAP = new Map<string, CraftPart>(
+  PART_CATALOG.map((part) => [part.id, part])
+);
+
+const PARTS_BY_CATEGORY_MAP: Record<PartCategory, CraftPart[]> = {
+  chassis: PART_CATALOG.filter((p) => p.category === 'chassis'),
+  wings: PART_CATALOG.filter((p) => p.category === 'wings'),
+  tail: PART_CATALOG.filter((p) => p.category === 'tail'),
+  nose: PART_CATALOG.filter((p) => p.category === 'nose'),
+  topper: PART_CATALOG.filter((p) => p.category === 'topper'),
+  trolley: PART_CATALOG.filter((p) => p.category === 'trolley'),
+};
+
 export function getPartById(id: string): CraftPart {
-  const found = PART_CATALOG.find((p) => p.id === id);
-  if (!found) {
-    return PART_CATALOG[0];
-  }
-  return found;
+  return PART_BY_ID_MAP.get(id) ?? PART_CATALOG[0];
 }
 
 export function getPartsByCategory(category: PartCategory): CraftPart[] {
-  return PART_CATALOG.filter((p) => p.category === category);
+  return PARTS_BY_CATEGORY_MAP[category] ?? [];
 }
+

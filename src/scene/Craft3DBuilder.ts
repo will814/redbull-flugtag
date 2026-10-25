@@ -21,15 +21,46 @@ export interface Craft3DGroups {
   propSpinner: THREE.Object3D | null;
 }
 
+const MATERIAL_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const AIRFOIL_GEO_CACHE = new Map<string, THREE.BufferGeometry>();
+
 function makeMat(
   hex: string | number,
   roughness = 0.38,
   metalness = 0.12
 ): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+  const key = `${hex}_${roughness}_${metalness}`;
+  const cached = MATERIAL_CACHE.get(key);
+  if (cached) return cached;
+
+  const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(hex),
     roughness,
     metalness,
+  });
+  mat.userData.cached = true;
+  MATERIAL_CACHE.set(key, mat);
+  return mat;
+}
+
+/**
+ * Disposes non-cached geometries and materials in a 3D subtree to prevent GPU memory leaks.
+ */
+export function disposeCraftObject3D(root: THREE.Object3D, disposeCached = false): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (mesh.geometry && (disposeCached || !mesh.geometry.userData?.cached)) {
+      mesh.geometry.dispose();
+    }
+    if (mesh.material) {
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        if (m && (disposeCached || !m.userData?.cached)) {
+          m.dispose();
+        }
+      }
+    }
   });
 }
 
@@ -37,6 +68,10 @@ function makeMat(
  * Creates a true cambered airfoil 3D wing geometry extruded along the span (Z axis).
  */
 function createAirfoilGeometry(chord: number, thickness: number, span: number): THREE.BufferGeometry {
+  const key = `${chord}_${thickness}_${span}`;
+  const existing = AIRFOIL_GEO_CACHE.get(key);
+  if (existing) return existing;
+
   const shape = new THREE.Shape();
   const halfC = chord / 2;
   // Start at trailing edge (-halfC, 0), curve over cambered top to leading edge (+halfC, 0), then flat/cambered bottom
@@ -68,6 +103,8 @@ function createAirfoilGeometry(chord: number, thickness: number, span: number): 
   });
   // Center along Z axis
   geo.translate(0, 0, -span / 2);
+  geo.userData.cached = true;
+  AIRFOIL_GEO_CACHE.set(key, geo);
   return geo;
 }
 
@@ -122,9 +159,19 @@ export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
   const socketMarkers = createSocketMarkers(airframeGroup, trolleyGroup);
 
   root.traverse((obj) => {
-    if ((obj as THREE.Mesh).isMesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh) {
+      if (mesh.userData?.isSocketMarker) {
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        return;
+      }
+      if (!mesh.geometry.boundingSphere) {
+        mesh.geometry.computeBoundingSphere();
+      }
+      const radius = mesh.geometry.boundingSphere?.radius ?? 1;
+      mesh.castShadow = radius >= 0.11;
+      mesh.receiveShadow = radius >= 0.16;
     }
   });
 
@@ -1899,6 +1946,8 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
   const wheelRadius = id === 'trolley_monster_wheels' ? 0.27 : 0.2;
   const wheelGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.15, 16);
   wheelGeo.rotateX(Math.PI / 2);
+  const hubGeo = new THREE.CylinderGeometry(wheelRadius * 0.45, wheelRadius * 0.45, 0.17, 10);
+  hubGeo.rotateX(Math.PI / 2);
   const wheelMat = makeMat('#0f172a', 0.7);
   const hubMat = makeMat('#facc15', 0.3, 0.5);
 
@@ -1910,12 +1959,7 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
   ].forEach(([x, z]) => {
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
     wheel.position.set(x, -0.64, z);
-    const hub = new THREE.Mesh(
-      new THREE.CylinderGeometry(wheelRadius * 0.45, wheelRadius * 0.45, 0.17, 10).rotateX(
-        Math.PI / 2
-      ),
-      hubMat
-    );
+    const hub = new THREE.Mesh(hubGeo, hubMat);
     hub.position.set(x, -0.64, z);
     group.add(wheel, hub);
   });
@@ -1929,31 +1973,26 @@ function buildPushCrewMesh(group: THREE.Group, jerseyHex: string): void {
     [-2.48, -0.35, -0.4],
   ];
 
+  const bodyGeo = new THREE.CylinderGeometry(0.15, 0.16, 0.58, 10);
+  const headGeo = new THREE.SphereGeometry(0.16, 12, 12);
+  const capGeo = new THREE.CylinderGeometry(0.165, 0.165, 0.08, 12);
+  const armGeo = new THREE.CylinderGeometry(0.045, 0.04, 0.34, 8);
+  const skinMat = makeMat('#fde68a', 0.4);
+  const capMat = makeMat('#ef4444', 0.4);
+
   offsets.forEach(([x, y, z], i) => {
     const person = new THREE.Group();
-    const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.15, 0.16, 0.58, 10),
-      makeMat(i % 2 === 0 ? jerseyHex : '#facc15', 0.45)
-    );
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 12, 12),
-      makeMat('#fde68a', 0.4)
-    );
+    const body = new THREE.Mesh(bodyGeo, makeMat(i % 2 === 0 ? jerseyHex : '#facc15', 0.45));
+    const head = new THREE.Mesh(headGeo, skinMat);
     head.position.y = 0.42;
 
     // Headband / Cap
-    const cap = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.165, 0.165, 0.08, 12),
-      makeMat('#ef4444', 0.4)
-    );
+    const cap = new THREE.Mesh(capGeo, capMat);
     cap.position.y = 0.49;
 
     // Arms reaching forward to push the craft
     [-0.18, 0.18].forEach((az) => {
-      const arm = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.045, 0.04, 0.34, 8),
-        makeMat('#fde68a', 0.4)
-      );
+      const arm = new THREE.Mesh(armGeo, skinMat);
       arm.position.set(0.18, 0.12, az);
       arm.rotation.z = -1.2;
       person.add(arm);
@@ -1969,8 +2008,13 @@ function createSocketMarkers(
   airframeGroup: THREE.Group,
   trolleyGroup: THREE.Group
 ): Record<PartCategory, THREE.Mesh> {
-  const makeRing = (color: number, pos: [number, number, number], parent: THREE.Group) => {
-    const geo = new THREE.RingGeometry(0.24, 0.36, 24);
+  const makeRing = (
+    category: PartCategory,
+    color: number,
+    pos: [number, number, number],
+    parent: THREE.Group
+  ) => {
+    const geo = new THREE.RingGeometry(0.24, 0.4, 24);
     geo.rotateX(-Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({
       color,
@@ -1980,16 +2024,18 @@ function createSocketMarkers(
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(pos[0], pos[1], pos[2]);
+    mesh.userData = { isSocketMarker: true, category };
     parent.add(mesh);
     return mesh;
   };
 
   return {
-    chassis: makeRing(0x38bdf8, [0, 0.05, 0], airframeGroup),
-    wings: makeRing(0xfacc15, [0, 0.56, 0], airframeGroup),
-    tail: makeRing(0xf43f5e, [-1.8, 0.35, 0], airframeGroup),
-    nose: makeRing(0x22c55e, [1.55, 0.1, 0], airframeGroup),
-    topper: makeRing(0xa855f7, [0, 1.05, 0], airframeGroup),
-    trolley: makeRing(0xf97316, [0, -0.55, 0], trolleyGroup),
+    chassis: makeRing('chassis', 0x38bdf8, [0, 0.05, 0], airframeGroup),
+    wings: makeRing('wings', 0xfacc15, [0, 0.56, 0], airframeGroup),
+    tail: makeRing('tail', 0xf43f5e, [-1.8, 0.35, 0], airframeGroup),
+    nose: makeRing('nose', 0x22c55e, [1.55, 0.1, 0], airframeGroup),
+    topper: makeRing('topper', 0xa855f7, [0, 1.05, 0], airframeGroup),
+    trolley: makeRing('trolley', 0xf97316, [0, -0.55, 0], trolleyGroup),
   };
 }
+
