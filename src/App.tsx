@@ -1,13 +1,16 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import confetti from 'canvas-confetti';
 import {
+  CompetitionId,
+  COMPETITIONS,
   CraftLoadout,
   CraftPart,
   getPartById,
+  getPartsByCategory,
   PAINT_THEMES,
   PART_CATALOG,
   PartCategory,
-  PRESET_BLUEPRINTS,
+  PRESET_BLUEPRINTS_BY_COMPETITION,
 } from './builder/PartCatalog';
 import { computeCraftMetrics } from './physics/CraftMetrics';
 import {
@@ -21,12 +24,27 @@ import { FlightHUD } from './ui/FlightHUD';
 import { JudgingScorecardModal } from './ui/JudgingScorecardModal';
 import { soundEngine } from './audio/SoundEngine';
 
+const STORAGE_KEY_COMP = 'flugtag_active_comp_v1';
 const STORAGE_KEY_STARS = 'flugtag_total_stars_v1';
-const STORAGE_KEY_BEST_DIST = 'flugtag_best_dist_v1';
-const STORAGE_KEY_LOADOUT = 'flugtag_loadout_v1';
+const STORAGE_KEY_BEST_DIST_LEGACY = 'flugtag_best_dist_v1';
+const STORAGE_KEY_BEST_DIST_BY_COMP = 'flugtag_best_dist_by_comp_v1';
+const STORAGE_KEY_LOADOUT_LEGACY = 'flugtag_loadout_v1';
+const STORAGE_KEY_LOADOUT_BY_COMP = 'flugtag_loadout_by_comp_v1';
 const STORAGE_KEY_SAVED_BUILDS = 'flugtag_saved_builds_v1';
 const STORAGE_KEY_MUTED = 'flugtag_muted_v1';
 const MAX_HISTORY_LENGTH = 25;
+
+function loadInitialCompetition(): CompetitionId {
+  try {
+    const val = localStorage.getItem(STORAGE_KEY_COMP);
+    if (val === 'flugtag' || val === 'soapbox' || val === 'rollercoaster') {
+      return val;
+    }
+  } catch {
+    // ignore
+  }
+  return 'flugtag';
+}
 
 function loadInitialStars(): number {
   try {
@@ -37,25 +55,74 @@ function loadInitialStars(): number {
   }
 }
 
-function loadInitialBestDist(): number {
+function loadInitialBestDistByComp(): Record<CompetitionId, number> {
+  const defaults: Record<CompetitionId, number> = {
+    flugtag: 0,
+    soapbox: 0,
+    rollercoaster: 0,
+  };
   try {
-    const val = localStorage.getItem(STORAGE_KEY_BEST_DIST);
-    return val ? Math.max(0, parseInt(val, 10) || 0) : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function loadInitialCraft(): CraftLoadout {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_LOADOUT);
+    const legacy = localStorage.getItem(STORAGE_KEY_BEST_DIST_LEGACY);
+    if (legacy) {
+      defaults.flugtag = Math.max(0, parseInt(legacy, 10) || 0);
+    }
+    const raw = localStorage.getItem(STORAGE_KEY_BEST_DIST_BY_COMP);
     if (raw) {
-      return JSON.parse(raw) as CraftLoadout;
+      const parsed = JSON.parse(raw) as Partial<Record<CompetitionId, number>>;
+      return {
+        flugtag: parsed.flugtag ?? defaults.flugtag,
+        soapbox: parsed.soapbox ?? 0,
+        rollercoaster: parsed.rollercoaster ?? 0,
+      };
     }
   } catch {
     // ignore
   }
-  return PRESET_BLUEPRINTS[0];
+  return defaults;
+}
+
+function inferLoadoutCompetition(craft: CraftLoadout): CompetitionId {
+  const comp = getPartById(craft.chassis).competition;
+  return comp === 'soapbox' || comp === 'rollercoaster' ? comp : 'flugtag';
+}
+
+function loadInitialCraftsByComp(): Record<CompetitionId, CraftLoadout> {
+  const defaults: Record<CompetitionId, CraftLoadout> = {
+    flugtag: PRESET_BLUEPRINTS_BY_COMPETITION.flugtag[0],
+    soapbox: PRESET_BLUEPRINTS_BY_COMPETITION.soapbox[0],
+    rollercoaster: PRESET_BLUEPRINTS_BY_COMPETITION.rollercoaster[0],
+  };
+  try {
+    const legacy = localStorage.getItem(STORAGE_KEY_LOADOUT_LEGACY);
+    if (legacy) {
+      const parsedLegacy = JSON.parse(legacy) as CraftLoadout;
+      if (inferLoadoutCompetition(parsedLegacy) === 'flugtag') {
+        defaults.flugtag = parsedLegacy;
+      }
+    }
+    const raw = localStorage.getItem(STORAGE_KEY_LOADOUT_BY_COMP);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<Record<CompetitionId, CraftLoadout>>;
+      return {
+        flugtag:
+          parsed.flugtag && inferLoadoutCompetition(parsed.flugtag) === 'flugtag'
+            ? parsed.flugtag
+            : defaults.flugtag,
+        soapbox:
+          parsed.soapbox && inferLoadoutCompetition(parsed.soapbox) === 'soapbox'
+            ? parsed.soapbox
+            : defaults.soapbox,
+        rollercoaster:
+          parsed.rollercoaster &&
+          inferLoadoutCompetition(parsed.rollercoaster) === 'rollercoaster'
+            ? parsed.rollercoaster
+            : defaults.rollercoaster,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return defaults;
 }
 
 function loadInitialSavedBuilds(): SavedCraftSlot[] {
@@ -83,31 +150,49 @@ function loadInitialMuted(): boolean {
 
 export const App: React.FC = () => {
   const [mode, setMode] = useState<'hangar' | 'flight'>('hangar');
-  const [loadout, setLoadout] = useState<CraftLoadout>(loadInitialCraft);
+  const [competition, setCompetition] = useState<CompetitionId>(loadInitialCompetition);
+  const [craftsByComp, setCraftsByComp] = useState<Record<CompetitionId, CraftLoadout>>(
+    loadInitialCraftsByComp
+  );
+  const [loadout, setLoadout] = useState<CraftLoadout>(
+    () => loadInitialCraftsByComp()[loadInitialCompetition()]
+  );
   const [historyState, setHistoryState] = useState<{
     entries: CraftLoadout[];
     index: number;
   }>(() => ({
-    entries: [loadInitialCraft()],
+    entries: [loadInitialCraftsByComp()[loadInitialCompetition()]],
     index: 0,
   }));
   const [savedBuilds, setSavedBuilds] = useState<SavedCraftSlot[]>(loadInitialSavedBuilds);
-  const [selectedCategory, setSelectedCategory] = useState<PartCategory>('wings');
+  const [selectedCategory, setSelectedCategory] = useState<PartCategory>(
+    () => COMPETITIONS[loadInitialCompetition()].categories[0].id
+  );
   const [windTunnelActive, setWindTunnelActive] = useState<boolean>(false);
   const [totalStars, setTotalStars] = useState<number>(loadInitialStars);
-  const [bestDistanceFeet, setBestDistanceFeet] = useState<number>(loadInitialBestDist);
+  const [bestDistByComp, setBestDistByComp] = useState<Record<CompetitionId, number>>(
+    loadInitialBestDistByComp
+  );
   const [muted, setMuted] = useState<boolean>(loadInitialMuted);
 
+  const bestDistanceFeet = bestDistByComp[competition] ?? 0;
+
   // Refs for latest values inside stable callbacks
+  const competitionRef = useRef(competition);
+  competitionRef.current = competition;
   const totalStarsRef = useRef(totalStars);
   totalStarsRef.current = totalStars;
-  const bestDistanceRef = useRef(bestDistanceFeet);
-  bestDistanceRef.current = bestDistanceFeet;
+  const bestDistByCompRef = useRef(bestDistByComp);
+  bestDistByCompRef.current = bestDistByComp;
+  const craftsByCompRef = useRef(craftsByComp);
+  craftsByCompRef.current = craftsByComp;
 
   // Flight simulation state (mutated at 60Hz in ref, synced to React state for HUD)
-  const flightStateRef = useRef<FlightSimulationState>(createInitialFlightState());
+  const flightStateRef = useRef<FlightSimulationState>(
+    createInitialFlightState(competition)
+  );
   const [hudFlightState, setHudFlightState] = useState<FlightSimulationState>(() =>
-    createInitialFlightState()
+    createInitialFlightState(competition)
   );
   const [showJudgingModal, setShowJudgingModal] = useState<boolean>(false);
   const [newlyUnlockedParts, setNewlyUnlockedParts] = useState<CraftPart[]>([]);
@@ -116,19 +201,47 @@ export const App: React.FC = () => {
   const metricsRef = useRef(metrics);
   metricsRef.current = metrics;
 
-  const persistLoadout = useCallback((next: CraftLoadout) => {
+  const persistLoadout = useCallback((next: CraftLoadout, compId: CompetitionId) => {
+    setCraftsByComp((prev) => {
+      const updated = { ...prev, [compId]: next };
+      try {
+        localStorage.setItem(STORAGE_KEY_LOADOUT_BY_COMP, JSON.stringify(updated));
+        if (compId === 'flugtag') {
+          localStorage.setItem(STORAGE_KEY_LOADOUT_LEGACY, JSON.stringify(next));
+        }
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleSelectCompetition = useCallback((nextComp: CompetitionId) => {
+    if (nextComp === competitionRef.current) return;
+    soundEngine.playSnapPop();
+    competitionRef.current = nextComp;
+    setCompetition(nextComp);
+    setSelectedCategory(COMPETITIONS[nextComp].categories[0].id);
+    setWindTunnelActive(false);
     try {
-      localStorage.setItem(STORAGE_KEY_LOADOUT, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEY_COMP, nextComp);
     } catch {
       // ignore
     }
+    const targetCraft =
+      craftsByCompRef.current[nextComp] ?? PRESET_BLUEPRINTS_BY_COMPETITION[nextComp][0];
+    setLoadout(targetCraft);
+    setHistoryState({
+      entries: [targetCraft],
+      index: 0,
+    });
   }, []);
 
   const pushLoadoutChange = useCallback(
     (updater: CraftLoadout | ((prev: CraftLoadout) => CraftLoadout)) => {
       setLoadout((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
-        persistLoadout(next);
+        persistLoadout(next, competitionRef.current);
         setHistoryState((h) => {
           const sliced = h.entries.slice(0, h.index + 1);
           const updated = [...sliced, next].slice(-MAX_HISTORY_LENGTH);
@@ -153,7 +266,7 @@ export const App: React.FC = () => {
       const target = h.entries[nextIndex];
       soundEngine.playSnapPop();
       setLoadout(target);
-      persistLoadout(target);
+      persistLoadout(target, competitionRef.current);
       return { ...h, index: nextIndex };
     });
   }, [persistLoadout]);
@@ -165,7 +278,7 @@ export const App: React.FC = () => {
       const target = h.entries[nextIndex];
       soundEngine.playSnapPop();
       setLoadout(target);
-      persistLoadout(target);
+      persistLoadout(target, competitionRef.current);
       return { ...h, index: nextIndex };
     });
   }, [persistLoadout]);
@@ -189,6 +302,7 @@ export const App: React.FC = () => {
         const newSlot: SavedCraftSlot = {
           id: `build_${Date.now()}`,
           name: finalName,
+          competition: inferLoadoutCompetition(currentLoadout),
           loadout: { ...currentLoadout, name: finalName },
           createdAt: Date.now(),
         };
@@ -241,19 +355,40 @@ export const App: React.FC = () => {
   const handleApplyPreset = useCallback(
     (preset: CraftLoadout) => {
       soundEngine.playSnapPop();
-      pushLoadoutChange({ ...preset });
+      const targetComp = inferLoadoutCompetition(preset);
+      if (targetComp !== competitionRef.current) {
+        competitionRef.current = targetComp;
+        setCompetition(targetComp);
+        setSelectedCategory(COMPETITIONS[targetComp].categories[0].id);
+        setWindTunnelActive(false);
+        try {
+          localStorage.setItem(STORAGE_KEY_COMP, targetComp);
+        } catch {
+          // ignore
+        }
+        const next = { ...preset };
+        setLoadout(next);
+        persistLoadout(next, targetComp);
+        setHistoryState({
+          entries: [next],
+          index: 0,
+        });
+      } else {
+        pushLoadoutChange({ ...preset });
+      }
     },
-    [pushLoadoutChange]
+    [persistLoadout, pushLoadoutChange]
   );
 
   const handleRandomizeCraft = useCallback(() => {
     soundEngine.playSnapPop();
     const curStars = totalStarsRef.current;
+    const curComp = competitionRef.current;
     const pickRandom = (cat: PartCategory) => {
-      const unlocked = PART_CATALOG.filter(
-        (p) => p.category === cat && p.unlockStars <= curStars
-      );
-      return unlocked[Math.floor(Math.random() * unlocked.length)].id;
+      const compParts = getPartsByCategory(cat, curComp);
+      const unlocked = compParts.filter((p) => p.unlockStars <= curStars);
+      const pool = unlocked.length > 0 ? unlocked : compParts;
+      return pool[Math.floor(Math.random() * pool.length)].id;
     };
     const randomTheme =
       PAINT_THEMES[Math.floor(Math.random() * PAINT_THEMES.length)].id;
@@ -293,7 +428,7 @@ export const App: React.FC = () => {
     setWindTunnelActive(false);
     setShowJudgingModal(false);
     setNewlyUnlockedParts([]);
-    const fresh = createInitialFlightState();
+    const fresh = createInitialFlightState(competitionRef.current);
     flightStateRef.current = fresh;
     setHudFlightState(fresh);
     setMode('flight');
@@ -307,7 +442,7 @@ export const App: React.FC = () => {
 
   const handleActionTap = useCallback(() => {
     const sim = flightStateRef.current;
-    if (sim.phase === 'airborne') {
+    if (sim.phase === 'airborne' && sim.competition === 'flugtag') {
       soundEngine.playAirhorn();
       return;
     }
@@ -348,6 +483,7 @@ export const App: React.FC = () => {
   const handleSplashdownComplete = useCallback(
     (finalState: FlightSimulationState) => {
       const scores = finalState.judgeScores;
+      const compId = finalState.competition;
       if (scores) {
         const prevStars = totalStarsRef.current;
         const nextStars = prevStars + scores.starsEarned;
@@ -360,18 +496,35 @@ export const App: React.FC = () => {
         }
 
         const newlyUnlocked = PART_CATALOG.filter(
-          (p) => p.unlockStars > prevStars && p.unlockStars <= nextStars
+          (p) =>
+            p.unlockStars > prevStars &&
+            p.unlockStars <= nextStars &&
+            (p.category === 'topper' ||
+              p.competition === 'shared' ||
+              p.competition === compId ||
+              (!p.competition && compId === 'flugtag'))
         );
         setNewlyUnlockedParts(newlyUnlocked);
 
-        if (finalState.distanceFeet > bestDistanceRef.current) {
-          bestDistanceRef.current = finalState.distanceFeet;
-          setBestDistanceFeet(finalState.distanceFeet);
+        const prevBest = bestDistByCompRef.current[compId] ?? 0;
+        if (finalState.distanceFeet > prevBest) {
+          const updatedBest = {
+            ...bestDistByCompRef.current,
+            [compId]: finalState.distanceFeet,
+          };
+          bestDistByCompRef.current = updatedBest;
+          setBestDistByComp(updatedBest);
           try {
             localStorage.setItem(
-              STORAGE_KEY_BEST_DIST,
-              String(finalState.distanceFeet)
+              STORAGE_KEY_BEST_DIST_BY_COMP,
+              JSON.stringify(updatedBest)
             );
+            if (compId === 'flugtag') {
+              localStorage.setItem(
+                STORAGE_KEY_BEST_DIST_LEGACY,
+                String(finalState.distanceFeet)
+              );
+            }
           } catch {
             // ignore
           }
@@ -410,6 +563,8 @@ export const App: React.FC = () => {
       {/* HANGAR BUILDER HUD */}
       {mode === 'hangar' && (
         <HangarHUD
+          competition={competition}
+          onSelectCompetition={handleSelectCompetition}
           loadout={loadout}
           metrics={metrics}
           selectedCategory={selectedCategory}
@@ -435,7 +590,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* FLIGHT & RAMP HUD */}
+      {/* FLIGHT & COURSE HUD */}
       {mode === 'flight' && !showJudgingModal && (
         <FlightHUD
           flightState={hudFlightState}
@@ -448,7 +603,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* POST-FLIGHT 3-JUDGE SCORECARD & PART UNLOCKS MODAL */}
+      {/* POST-RUN 3-JUDGE SCORECARD & PART UNLOCKS MODAL */}
       {mode === 'flight' && showJudgingModal && (
         <JudgingScorecardModal
           flightState={hudFlightState}
@@ -462,4 +617,3 @@ export const App: React.FC = () => {
     </div>
   );
 };
-

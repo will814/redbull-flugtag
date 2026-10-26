@@ -9,7 +9,10 @@ import {
 } from '../builder/PartCatalog';
 import { ComputedCraftMetrics } from '../physics/CraftMetrics';
 import {
+  createInitialFlightState,
   FlightSimulationState,
+  getRollercoasterTrackProfile,
+  getSoapboxTrackElevationFeet,
   stepFlightSimulation,
 } from '../physics/AeroPhysicsEngine';
 import { buildCraft3D, Craft3DGroups, disposeCraftObject3D } from './Craft3DBuilder';
@@ -249,7 +252,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     }
     hangarEnv.add(windRibbonsGroup);
 
-    // 4. Build Miami Bay Flight Environment Group
+    // 4. Build Multi-Competition Flight & Course Environment Group
     const bayEnv = new THREE.Group();
     scene.add(bayEnv);
 
@@ -278,7 +281,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     pierDeck.receiveShadow = true;
     bayEnv.add(pierDeck);
 
-    // Glowing Green "DROP TROLLEY ZONE" on the last 22 ft (5.5u) of the ramp!
+    // Glowing Green "DROP TROLLEY / PUSH-OFF ZONE" on the last 22 ft (5.5u) of the ramp!
     const dropZoneStrip = new THREE.Mesh(
       new THREE.BoxGeometry(5.5, 0.54, 4.1),
       new THREE.MeshStandardMaterial({
@@ -310,7 +313,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
       });
     });
 
-    // Iconic Red Bull Archway near the end of the Flight Deck
+    // Iconic Red Bull Archway near the end of the Start Deck
     const archGroup = new THREE.Group();
     archGroup.position.set(-2.5, rampHeightU, 0);
     const archColGeo = new THREE.BoxGeometry(0.55, 4.2, 0.55);
@@ -328,7 +331,10 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     archGroup.add(topBeam);
     bayEnv.add(archGroup);
 
-    // Distance Buoys in the Water (50ft, 100ft, 150ft, 200ft, 258ft World Record!)
+    // --- 4A. FLUGTAG COURSE GROUP (Distance Buoys in the Bay) ---
+    const flugtagCourseGroup = new THREE.Group();
+    bayEnv.add(flugtagCourseGroup);
+
     const buoyDistances = [50, 100, 150, 200, WORLD_RECORD_FEET];
     const buoyGroups: THREE.Group[] = [];
     const buoyBaseGeo = new THREE.CylinderGeometry(0.65, 0.75, 0.5, 16);
@@ -336,7 +342,6 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
       const xU = distFt * UNITS_PER_FOOT;
       const isRecord = distFt === WORLD_RECORD_FEET;
 
-      // Lane marker line across the water
       const laneLine = new THREE.Mesh(
         new THREE.BoxGeometry(isRecord ? 0.45 : 0.22, 0.08, 18),
         new THREE.MeshBasicMaterial({
@@ -346,9 +351,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         })
       );
       laneLine.position.set(xU, 0.04, 0);
-      bayEnv.add(laneLine);
+      flugtagCourseGroup.add(laneLine);
 
-      // Pair of floating buoys flanking the flight lane
       [-5.2, 5.2].forEach((z) => {
         const buoy = new THREE.Group();
         const base = new THREE.Mesh(
@@ -368,10 +372,133 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         cone.position.y = isRecord ? 1.4 : 0.9;
         buoy.add(base, cone);
         buoy.position.set(xU, 0.1, z);
-        bayEnv.add(buoy);
+        flugtagCourseGroup.add(buoy);
         buoyGroups.push(buoy);
       });
     });
+
+    // --- 4B. SOAPBOX RACE COURSE GROUP (450-Ft Downhill Street, Chicanes & Kicker Ramps) ---
+    const soapboxCourseGroup = new THREE.Group();
+    soapboxCourseGroup.visible = false;
+    bayEnv.add(soapboxCourseGroup);
+
+    const roadMat = new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.75 });
+    const curbRedMat = new THREE.MeshStandardMaterial({ color: '#ef4444', roughness: 0.45 });
+    const curbWhiteMat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.45 });
+    const segStepFt = 15;
+    const roadSegGeo = new THREE.BoxGeometry(segStepFt * UNITS_PER_FOOT + 0.22, 0.4, 6.8);
+    const curbGeo = new THREE.BoxGeometry(segStepFt * UNITS_PER_FOOT + 0.15, 0.55, 0.35);
+
+    for (let xFt = 0; xFt <= 465; xFt += segStepFt) {
+      const midFt = xFt + segStepFt * 0.5;
+      const elev = getSoapboxTrackElevationFeet(midFt);
+      const xU = midFt * UNITS_PER_FOOT;
+      const yU = elev.yFeet * UNITS_PER_FOOT - 0.2;
+      const slopeRad = (elev.slopeDeg * Math.PI) / 180;
+
+      const slab = new THREE.Mesh(roadSegGeo, roadMat);
+      slab.position.set(xU, yU, 0);
+      slab.rotation.z = slopeRad;
+      slab.receiveShadow = true;
+      soapboxCourseGroup.add(slab);
+
+      const isEven = Math.floor(xFt / segStepFt) % 2 === 0;
+      [-3.45, 3.45].forEach((cz) => {
+        const curb = new THREE.Mesh(curbGeo, isEven ? curbRedMat : curbWhiteMat);
+        curb.position.set(xU, yU + 0.12, cz);
+        curb.rotation.z = slopeRad;
+        soapboxCourseGroup.add(curb);
+      });
+    }
+
+    // Hay-Bale Chicanes & Wooden Kicker Ramps along the Soapbox Hill
+    const hayMat = new THREE.MeshStandardMaterial({ color: '#eab308', roughness: 0.85 });
+    const rampMat = new THREE.MeshStandardMaterial({ color: '#f97316', roughness: 0.45 });
+    const sbTemplate = createInitialFlightState('soapbox').soapboxObstacles;
+    sbTemplate.forEach((obs) => {
+      const elev = getSoapboxTrackElevationFeet(obs.xFeet);
+      const ox = obs.xFeet * UNITS_PER_FOOT;
+      const oy = elev.yFeet * UNITS_PER_FOOT;
+      const oz = obs.zFeet * UNITS_PER_FOOT;
+
+      if (obs.type === 'hay_bale') {
+        const bale = new THREE.Mesh(
+          new THREE.BoxGeometry(1.1, 0.95, obs.halfWidthFeet * UNITS_PER_FOOT * 1.75),
+          hayMat
+        );
+        bale.position.set(ox, oy + 0.48, oz);
+        soapboxCourseGroup.add(bale);
+      } else {
+        const kicker = new THREE.Mesh(
+          new THREE.BoxGeometry(2.4, 0.45, obs.halfWidthFeet * UNITS_PER_FOOT * 1.6),
+          rampMat
+        );
+        kicker.position.set(ox, oy + 0.16, oz);
+        kicker.rotation.z = 0.22;
+        soapboxCourseGroup.add(kicker);
+      }
+    });
+
+    // 450-Ft Soapbox Finish Line Arch
+    const sbFinishElev = getSoapboxTrackElevationFeet(450).yFeet * UNITS_PER_FOOT;
+    const sbFinishArch = archGroup.clone();
+    sbFinishArch.position.set(450 * UNITS_PER_FOOT, sbFinishElev, 0);
+    soapboxCourseGroup.add(sbFinishArch);
+
+    // --- 4C. TANDEM ROLLERCOASTER COURSE GROUP (320-Ft Floating Canal Coaster Track & Bells) ---
+    const coasterCourseGroup = new THREE.Group();
+    coasterCourseGroup.visible = false;
+    bayEnv.add(coasterCourseGroup);
+
+    const railBeamMat = new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.3, metalness: 0.4 });
+    const railTieMat = new THREE.MeshStandardMaterial({ color: '#ef4444', roughness: 0.4 });
+    const rcStepFt = 8;
+    const railSegGeo = new THREE.BoxGeometry(rcStepFt * UNITS_PER_FOOT + 0.18, 0.24, 1.35);
+    const tieGeo = new THREE.BoxGeometry(0.32, 0.3, 1.65);
+
+    for (let xFt = 0; xFt <= 328; xFt += rcStepFt) {
+      const midFt = xFt + rcStepFt * 0.5;
+      const prof = getRollercoasterTrackProfile(midFt);
+      const xU = midFt * UNITS_PER_FOOT;
+      const yU = prof.yFeet * UNITS_PER_FOOT - 0.12;
+      const slopeRad = (prof.slopeDeg * Math.PI) / 180;
+      const bankRad = (prof.targetLeanDeg * Math.PI) / 180;
+
+      const railSeg = new THREE.Mesh(railSegGeo, railBeamMat);
+      railSeg.position.set(xU, yU, 0);
+      railSeg.rotation.order = 'ZXY';
+      railSeg.rotation.set(bankRad, 0, slopeRad);
+      railSeg.receiveShadow = true;
+      coasterCourseGroup.add(railSeg);
+
+      const tie = new THREE.Mesh(tieGeo, railTieMat);
+      tie.position.set(xU, yU + 0.04, 0);
+      tie.rotation.order = 'ZXY';
+      tie.rotation.set(bankRad, 0, slopeRad);
+      coasterCourseGroup.add(tie);
+
+      if (xFt % 32 === 0) {
+        const postH = Math.max(1, yU);
+        const post = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.22, postH, 10),
+          pillarMat
+        );
+        post.position.set(xU, postH * 0.5, 0);
+        coasterCourseGroup.add(post);
+      }
+    }
+
+    // 320-Ft Grand Canal Bell Finish Platform
+    const rcFinishY = getRollercoasterTrackProfile(320).yFeet * UNITS_PER_FOOT;
+    const rcFinishArch = archGroup.clone();
+    rcFinishArch.position.set(320 * UNITS_PER_FOOT, rcFinishY, 0);
+    const grandBell = new THREE.Mesh(
+      new THREE.ConeGeometry(0.65, 0.9, 16),
+      new THREE.MeshStandardMaterial({ color: '#facc15', roughness: 0.15, metalness: 0.85 })
+    );
+    grandBell.position.set(0, 3.3, 0);
+    rcFinishArch.add(grandBell);
+    coasterCourseGroup.add(rcFinishArch);
 
     // Personal Best (PB) 3D Water Line & Emerald Buoys
     const pbMarkerGroup = new THREE.Group();
@@ -417,7 +544,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     wingTrailGroup.visible = false;
     bayEnv.add(wingTrailGroup);
 
-    // Floating Thermal Wind Rings over the bay
+    // Floating Thermal Wind Rings / Speed Gates / Hanging Canal Bells
     const thermalMeshes: THREE.Mesh[] = [];
     const initialRings = flightStateRef.current.thermalRings;
     const thermalMat = new THREE.MeshStandardMaterial({
@@ -426,13 +553,17 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
       emissiveIntensity: 0.6,
       roughness: 0.2,
     });
+    const unitTorusGeo = new THREE.TorusGeometry(1, 0.14, 12, 28);
     initialRings.forEach((r) => {
-      const torus = new THREE.Mesh(
-        new THREE.TorusGeometry(r.radiusFeet * UNITS_PER_FOOT * 0.55, 0.16, 12, 28),
-        thermalMat
-      );
+      const torus = new THREE.Mesh(unitTorusGeo, thermalMat);
       torus.rotation.y = Math.PI / 2;
-      torus.position.set(r.xFeet * UNITS_PER_FOOT, r.yFeet * UNITS_PER_FOOT, 0);
+      const ringScale = r.radiusFeet * UNITS_PER_FOOT * 0.55;
+      torus.scale.set(ringScale, ringScale, 1);
+      torus.position.set(
+        r.xFeet * UNITS_PER_FOOT,
+        r.yFeet * UNITS_PER_FOOT,
+        (r.zFeet ?? 0) * UNITS_PER_FOOT
+      );
       bayEnv.add(torus);
       thermalMeshes.push(torus);
     });
@@ -668,6 +799,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         craft.root.position.set(0, 0, 0);
         craft.crewGroup.visible = false;
         craft.trolleyGroup.visible = true;
+        craft.pilotGroup.rotation.set(0, 0, 0);
 
         if (partsNeedReset) {
           partsNeedReset = false;
@@ -701,7 +833,11 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           craft.propSpinner.rotation.x += (fanOn ? 16 : 2) * dt;
         }
 
+        const chassisId = curMetrics.parts.chassis.id;
+        const isSoapbox = chassisId.startsWith('sb_');
+        const isRollercoaster = chassisId.startsWith('rc_');
         const dampFactor = 1 - Math.exp(-7.5 * dt);
+
         if (fanOn) {
           for (const r of windRibbons) {
             r.position.x -= 11 * dt;
@@ -709,28 +845,81 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
               r.position.x = 4.5;
             }
           }
-          const targetLiftY = ((curMetrics.liftScore - curMetrics.weightScore * 0.65) / 100) * 0.85;
           const targetPitchRad = (curMetrics.seesawTiltDeg * Math.PI) / 180;
-          windTunnelBaseY = THREE.MathUtils.lerp(
-            windTunnelBaseY,
-            Math.max(-0.15, targetLiftY),
-            dampFactor
-          );
-          craft.airframeGroup.position.y = windTunnelBaseY + Math.sin(elapsedSec * 5) * 0.045;
-          craft.airframeGroup.rotation.z = THREE.MathUtils.lerp(
-            craft.airframeGroup.rotation.z,
-            targetPitchRad,
-            dampFactor
-          );
+          if (isSoapbox) {
+            // Soapbox Dyno Test: suspension bounce + steering roll oscillation with wheels attached!
+            windTunnelBaseY = THREE.MathUtils.lerp(windTunnelBaseY, 0.06, dampFactor);
+            const bounceY = windTunnelBaseY + Math.sin(elapsedSec * 14) * 0.035;
+            const rollRad = Math.sin(elapsedSec * 3.8) * 0.14;
+            craft.airframeGroup.position.y = bounceY;
+            craft.airframeGroup.rotation.order = 'ZXY';
+            craft.airframeGroup.rotation.set(
+              rollRad,
+              0,
+              THREE.MathUtils.lerp(craft.airframeGroup.rotation.z, targetPitchRad * 0.5, dampFactor)
+            );
+            craft.trolleyGroup.position.y = windTunnelBaseY + Math.sin(elapsedSec * 28) * 0.012;
+            craft.trolleyGroup.rotation.order = 'ZXY';
+            craft.trolleyGroup.rotation.set(rollRad * 0.5, 0, craft.airframeGroup.rotation.z);
+          } else if (isRollercoaster) {
+            // Tandem Rollercoaster Rollers Test: 3D rail balance lean preview with wheels attached!
+            windTunnelBaseY = THREE.MathUtils.lerp(windTunnelBaseY, 0.05, dampFactor);
+            const leanPreviewRad = Math.sin(elapsedSec * 2.8) * 0.24;
+            craft.airframeGroup.position.y = windTunnelBaseY + Math.sin(elapsedSec * 10) * 0.018;
+            craft.airframeGroup.rotation.order = 'ZXY';
+            craft.airframeGroup.rotation.set(
+              leanPreviewRad,
+              0,
+              THREE.MathUtils.lerp(craft.airframeGroup.rotation.z, targetPitchRad * 0.4, dampFactor)
+            );
+            craft.trolleyGroup.position.y = craft.airframeGroup.position.y;
+            craft.trolleyGroup.rotation.order = 'ZXY';
+            craft.trolleyGroup.rotation.set(leanPreviewRad, 0, craft.airframeGroup.rotation.z);
+          } else {
+            // Flugtag Aerodynamic Wind Tunnel: glider lifts off its launch trolley!
+            const targetLiftY = ((curMetrics.liftScore - curMetrics.weightScore * 0.65) / 100) * 0.85;
+            windTunnelBaseY = THREE.MathUtils.lerp(
+              windTunnelBaseY,
+              Math.max(-0.15, targetLiftY),
+              dampFactor
+            );
+            craft.airframeGroup.position.y = windTunnelBaseY + Math.sin(elapsedSec * 5) * 0.045;
+            craft.airframeGroup.rotation.x = 0;
+            craft.airframeGroup.rotation.y = 0;
+            craft.airframeGroup.rotation.z = THREE.MathUtils.lerp(
+              craft.airframeGroup.rotation.z,
+              targetPitchRad,
+              dampFactor
+            );
+            craft.trolleyGroup.position.set(0, 0, 0);
+            craft.trolleyGroup.rotation.set(0, 0, 0);
+          }
         } else {
           const gentleTiltRad = ((curMetrics.seesawTiltDeg * 0.35) * Math.PI) / 180;
           windTunnelBaseY = THREE.MathUtils.lerp(windTunnelBaseY, 0.05, dampFactor);
           craft.airframeGroup.position.y = windTunnelBaseY;
+          craft.airframeGroup.rotation.x = THREE.MathUtils.lerp(
+            craft.airframeGroup.rotation.x,
+            0,
+            dampFactor
+          );
+          craft.airframeGroup.rotation.y = 0;
           craft.airframeGroup.rotation.z = THREE.MathUtils.lerp(
             craft.airframeGroup.rotation.z,
             gentleTiltRad,
             dampFactor
           );
+          if (isSoapbox || isRollercoaster) {
+            craft.trolleyGroup.position.y = craft.airframeGroup.position.y;
+            craft.trolleyGroup.rotation.set(
+              craft.airframeGroup.rotation.x,
+              0,
+              craft.airframeGroup.rotation.z
+            );
+          } else {
+            craft.trolleyGroup.position.set(0, 0, 0);
+            craft.trolleyGroup.rotation.set(0, 0, 0);
+          }
         }
 
         const radius = orbitRadiusRef.current;
@@ -744,10 +933,17 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         smoothedLookAt.lerp(desiredLookAt, camDamp);
         camera.lookAt(smoothedLookAt);
       } else {
-        // FLIGHT MODE
+        // FLIGHT / COURSE MODE
         const sim = flightStateRef.current;
+        if (sim.phase !== 'splashdown') {
+          splashNotifiedRef.current = false;
+        }
         const prevPhase = sim.phase;
         const events = stepFlightSimulation(sim, curMetrics, dt, bestDistRef.current);
+
+        flugtagCourseGroup.visible = sim.competition === 'flugtag';
+        soapboxCourseGroup.visible = sim.competition === 'soapbox';
+        coasterCourseGroup.visible = sim.competition === 'rollercoaster';
 
         if (events.justLaunchedOffRamp) {
           soundEngine.playAirhorn();
@@ -756,12 +952,24 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           soundEngine.playThermalChime();
         }
         if (events.justSplashedDown) {
-          soundEngine.playSplash(sim.splashIntensity);
+          const isDryCourseFinish =
+            (sim.competition === 'soapbox' || sim.competition === 'rollercoaster') &&
+            sim.completedCourse;
+          const isWaterImpact =
+            sim.competition === 'flugtag' ||
+            (sim.competition === 'rollercoaster' && !sim.completedCourse);
+
+          if (isDryCourseFinish) {
+            soundEngine.playAirhorn();
+          } else {
+            soundEngine.playSplash(sim.splashIntensity);
+          }
           const impactXU = sim.impactXFeet * UNITS_PER_FOOT;
+          const impactZU = sim.lateralZFeet * UNITS_PER_FOOT;
           const forwardMomentum = sim.vxFeet * UNITS_PER_FOOT * 0.22;
           splashDrops.forEach((d, idx) => {
-            d.mesh.visible = true;
-            d.mesh.position.set(impactXU, 0.25, 0);
+            d.mesh.visible = isWaterImpact;
+            d.mesh.position.set(impactXU, 0.25, impactZU);
             d.mesh.scale.set(1, 1, 1);
             const ang = (idx / splashDrops.length) * Math.PI * 2;
             const spd = 2.0 + (idx % 5) * 1.1;
@@ -770,8 +978,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
             d.vz = Math.sin(ang) * spd;
           });
           foamRings.forEach((ring) => {
-            ring.visible = true;
-            ring.position.set(impactXU, 0.06, 0);
+            ring.visible = isWaterImpact;
+            ring.position.set(impactXU, 0.06, impactZU);
             ring.scale.set(0.4, 0.4, 0.4);
             (ring.material as THREE.MeshBasicMaterial).opacity = 0.85;
           });
@@ -793,7 +1001,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         }
 
         // Update Personal Best 3D marker line on the water
-        if (bestDistRef.current > 5) {
+        if (bestDistRef.current > 5 && sim.competition === 'flugtag') {
           pbMarkerGroup.visible = true;
           pbMarkerGroup.position.x = bestDistRef.current * UNITS_PER_FOOT;
         } else {
@@ -801,27 +1009,33 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         }
 
         // Gentle buoy bobbing on the bay
-        for (let i = 0; i < buoyGroups.length; i++) {
-          buoyGroups[i].position.y = 0.1 + Math.sin(elapsedSec * 2.4 + i) * 0.06;
+        if (sim.competition === 'flugtag') {
+          for (let i = 0; i < buoyGroups.length; i++) {
+            buoyGroups[i].position.y = 0.1 + Math.sin(elapsedSec * 2.4 + i) * 0.06;
+          }
         }
 
         // Position Craft in 3D World & Follow with Directional Sun Shadow Frustum
         const craftXU = sim.xFeet * UNITS_PER_FOOT;
         const craftYU = sim.yFeet * UNITS_PER_FOOT + 0.52;
+        const craftZU = sim.lateralZFeet * UNITS_PER_FOOT;
         const pitchRad = (sim.pitchDeg * Math.PI) / 180;
-        craft.root.position.set(craftXU, craftYU, 0);
+        const leanRad = (sim.leanDeg * Math.PI) / 180;
+        craft.root.position.set(craftXU, craftYU, craftZU);
         craft.airframeGroup.position.set(0, 0, 0);
-        craft.airframeGroup.rotation.set(0, 0, pitchRad);
+        craft.airframeGroup.rotation.order = 'ZXY';
+        craft.airframeGroup.rotation.set(leanRad, 0, pitchRad);
 
         sunLight.position.set(craftXU + 14, 35, 22);
-        sunLight.target.position.set(craftXU, 0, 0);
+        sunLight.target.position.set(craftXU, 0, craftZU);
         sunLight.target.updateMatrixWorld();
 
         // Update 3D Wingtip Trails during Airborne Phase
         if (sim.phase === 'airborne') {
           wingTrailGroup.visible = true;
-          wingTrailGroup.position.set(craftXU, craftYU, 0);
-          wingTrailGroup.rotation.set(0, 0, pitchRad);
+          wingTrailGroup.position.set(craftXU, craftYU, craftZU);
+          wingTrailGroup.rotation.order = 'ZXY';
+          wingTrailGroup.rotation.set(leanRad, 0, pitchRad);
           wingTrailMat.color.setHex(
             sim.isStalling ? 0xf43f5e : sim.inSweetSpot ? 0x34d399 : 0x38bdf8
           );
@@ -836,7 +1050,10 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           craft.propSpinner.rotation.x += Math.max(3, sim.vxFeet * 0.45) * dt;
         }
 
-        craft.pilotGroup.rotation.z = -sim.pilotPitchInput * 0.38;
+        craft.pilotGroup.rotation.z =
+          sim.competition === 'flugtag' ? -sim.pilotPitchInput * 0.38 : 0;
+        craft.pilotGroup.rotation.x =
+          sim.competition !== 'flugtag' ? sim.pilotPitchInput * 0.28 : 0;
 
         if (sim.phase === 'skit') {
           craft.crewGroup.visible = true;
@@ -850,10 +1067,11 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           craft.crewGroup.visible = false;
         }
 
-        // Independent Trolley position after detachment
-        if (!sim.trolleyDetached) {
+        // Trolley / Wheel positioning: Soapbox & Rollercoaster keep their wheels attached!
+        if (!sim.trolleyDetached || sim.competition !== 'flugtag') {
           craft.trolleyGroup.position.set(0, 0, 0);
-          craft.trolleyGroup.rotation.set(0, 0, 0);
+          craft.trolleyGroup.rotation.order = 'ZXY';
+          craft.trolleyGroup.rotation.set(leanRad, 0, pitchRad);
         } else {
           const relTrolleyX = (sim.trolleyXFeet - sim.xFeet) * UNITS_PER_FOOT;
           const relTrolleyY = (sim.trolleyYFeet - sim.yFeet) * UNITS_PER_FOOT;
@@ -861,12 +1079,18 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           craft.trolleyGroup.rotation.set(0, 0, (sim.trolleyPitchDeg * Math.PI) / 180);
         }
 
-        // Animate Thermal Rings
+        // Animate Thermal Rings / Speed Gates / Canal Bells
         sim.thermalRings.forEach((r, idx) => {
           const mesh = thermalMeshes[idx];
           if (mesh) {
             mesh.visible = !r.collected;
-            mesh.position.set(r.xFeet * UNITS_PER_FOOT, r.yFeet * UNITS_PER_FOOT, 0);
+            const ringScale = r.radiusFeet * UNITS_PER_FOOT * 0.55;
+            mesh.scale.set(ringScale, ringScale, 1);
+            mesh.position.set(
+              r.xFeet * UNITS_PER_FOOT,
+              r.yFeet * UNITS_PER_FOOT,
+              (r.zFeet ?? 0) * UNITS_PER_FOOT
+            );
             mesh.rotation.z += 2.2 * dt;
           }
         });
@@ -874,6 +1098,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         // Clean World-Aligned Floating Debris on Splashdown!
         if (sim.phase === 'splashdown' && sim.debris.length > 0) {
           partsNeedReset = true;
+          craft.airframeGroup.rotation.x = 0;
           const cosP = Math.cos(-pitchRad);
           const sinP = Math.sin(-pitchRad);
           sim.debris.forEach((d) => {
@@ -886,9 +1111,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
                 ? craft.noseGroup
                 : craft.topperGroup;
 
-            // Convert desired world offset into airframe-local coordinates by counter-rotating by -pitchRad
-            const worldDx = d.offsetXFeet * UNITS_PER_FOOT;
-            const worldDy = (d.yFeet - sim.yFeet) * UNITS_PER_FOOT;
+            const worldDx = (sim.impactXFeet - sim.xFeet + d.offsetXFeet) * UNITS_PER_FOOT;
+            const worldDy = (d.yFeet - sim.yFeet) * UNITS_PER_FOOT - 0.52;
             const localX = worldDx * cosP - worldDy * sinP;
             const localY = worldDx * sinP + worldDy * cosP;
 
@@ -945,16 +1169,21 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           desiredCamPos.set(craftXU - 3.5, craftYU + 2.4, 8.8);
           desiredLookAt.set(craftXU + 2.5, craftYU + 0.2, 0);
         } else if (sim.phase === 'airborne') {
-          desiredCamPos.set(craftXU - 4.2, Math.max(2.6, craftYU + 2.1), 10.5);
-          desiredLookAt.set(craftXU + 3.2, Math.max(1.0, craftYU - 0.3), 0);
+          if (sim.competition === 'soapbox' || sim.competition === 'rollercoaster') {
+            desiredCamPos.set(craftXU - 5.2, Math.max(2.6, craftYU + 2.7), craftZU + 6.8);
+            desiredLookAt.set(craftXU + 3.8, Math.max(1.2, craftYU - 0.1), craftZU * 0.5);
+          } else {
+            desiredCamPos.set(craftXU - 4.2, Math.max(2.6, craftYU + 2.1), 10.5);
+            desiredLookAt.set(craftXU + 3.2, Math.max(1.0, craftYU - 0.3), 0);
+          }
         } else {
           const angle = sim.phaseTime * 0.45;
           desiredCamPos.set(
             craftXU - 2.0 + Math.sin(angle) * 5.5,
-            3.6,
-            Math.cos(angle) * 8.2
+            Math.max(3.6, craftYU + 2.0),
+            craftZU + Math.cos(angle) * 8.2
           );
-          desiredLookAt.set(craftXU, 0.65, 0);
+          desiredLookAt.set(craftXU, Math.max(0.65, craftYU), craftZU);
         }
 
         const camPosDamp = 1 - Math.exp(-8.0 * dt);

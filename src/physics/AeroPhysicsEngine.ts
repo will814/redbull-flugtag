@@ -1,5 +1,10 @@
 import { ComputedCraftMetrics } from './CraftMetrics';
-import { RAMP_HEIGHT_FEET, RAMP_LENGTH_FEET, WORLD_RECORD_FEET } from '../builder/PartCatalog';
+import {
+  COMPETITIONS,
+  CompetitionId,
+  RAMP_HEIGHT_FEET,
+  RAMP_LENGTH_FEET,
+} from '../builder/PartCatalog';
 
 export type FlightPhase = 'skit' | 'ramp_push' | 'airborne' | 'splashdown';
 export type TrolleyReleaseQuality = 'pending' | 'early' | 'perfect' | 'good' | 'late';
@@ -8,15 +13,25 @@ export interface ThermalRing {
   id: number;
   xFeet: number;
   yFeet: number;
+  zFeet?: number;
   radiusFeet: number;
   collected: boolean;
+}
+
+export interface SoapboxObstacle {
+  id: number;
+  type: 'hay_bale' | 'kicker_ramp';
+  xFeet: number;
+  zFeet: number;
+  halfWidthFeet: number;
+  triggered: boolean;
 }
 
 export interface DetachedDebris {
   partKey: 'wings' | 'tail' | 'nose' | 'topper';
   /** World X offset in feet from impact point */
   offsetXFeet: number;
-  /** Height in feet above water surface (>= 0) */
+  /** Height in feet above water/ground surface (>= 0) */
   yFeet: number;
   /** World Z offset in feet */
   zFeet: number;
@@ -34,16 +49,17 @@ export interface JudgeScores {
   showmanshipJudge: number;  // 1 - 10
   totalScore: number;        // 3 - 30
   starsEarned: number;       // 1 - 3 stars for this run
-  splashRating: 'Smooth Skim!' | 'Big Splash!' | 'MEGA CANNONBALL!!';
+  splashRating: string;
   isOverWeightCannonball: boolean;
   newRecord: boolean;
   beatWorldRecord: boolean;
 }
 
 export interface FlightSimulationState {
+  competition: CompetitionId;
   phase: FlightPhase;
   phaseTime: number;
-  /** Craft horizontal position in feet relative to the ramp edge (-90 ft to +300 ft) */
+  /** Craft horizontal position in feet relative to the ramp edge (-90 ft to +450 ft) */
   xFeet: number;
   /** Craft altitude in feet above water (water is 0 ft, ramp deck is 30 ft) */
   yFeet: number;
@@ -56,19 +72,19 @@ export interface FlightSimulationState {
   pitchVelDeg: number;
   /** Current Angle of Attack (AoA) in degrees */
   aoaDeg: number;
-  /** Whether the wings are currently stalling (AoA too high!) */
+  /** Whether the wings are currently stalling (or coaster tipping into danger!) */
   isStalling: boolean;
-  /** Whether the craft is in the sweet-spot glide AoA (4.5 to 11.5 deg) */
+  /** Whether the craft is in the sweet-spot glide AoA / rail balance zone */
   inSweetSpot: boolean;
-  /** Live pitch balance zone for the Pitch Level Guide HUD & physics penalty */
+  /** Live pitch/balance zone for the HUD & physics penalty */
   pitchZone: 'too_high' | 'sweet_spot' | 'too_low';
-  /** Active wind gust indicator (-1 downdraft, 0 calm, +1 updraft/gust) */
+  /** Active wind gust / course hazard indicator */
   windGustWarning: 'calm' | 'headwind_gust' | 'downdraft';
   /** Pre-launch crew dance hype meter (0 to 100) */
   hypeMeter: number;
   /** Ramp push speed percentage (0 to 100) */
   pushMeter: number;
-  /** Whether the craft is inside the green Trolley Drop zone (-22 ft to 0 ft) */
+  /** Whether the craft is inside the green Trolley Drop / Push-Off zone (-22 ft to 0 ft) */
   inTrolleyDropZone: boolean;
   trolleyDetached: boolean;
   trolleyReleaseQuality: TrolleyReleaseQuality;
@@ -78,19 +94,37 @@ export interface FlightSimulationState {
   trolleyVxFeet: number;
   trolleyVyFeet: number;
   trolleyPitchDeg: number;
-  /** Pilot weight shift input (-1 = lean forward/nose down, +1 = lean back/nose up) */
+  /** Pilot control input (-1 = nose down / steer left / lean left, +1 = nose up / steer right / lean right) */
   pilotPitchInput: number;
-  /** Floating thermal rings over the water */
+  /** Floating thermal rings / speed gates / hanging canal bells */
   thermalRings: ThermalRing[];
   thermalsCollected: number;
-  /** Exact X position where craft first touched water */
+  /** Exact X position where craft first touched water / finished */
   impactXFeet: number;
-  /** Broken-off floating parts on hard water splashdown */
+  /** Broken-off floating parts on hard impact */
   debris: DetachedDebris[];
-  /** Final / current flight distance in feet */
+  /** Final / current flight or course distance in feet */
   distanceFeet: number;
   splashIntensity: number;
   judgeScores: JudgeScores | null;
+  /** Lateral Z position in feet (for Soapbox steering [-12..+12] & Rollercoaster derail offset) */
+  lateralZFeet: number;
+  lateralVzFeet: number;
+  /** Roll / Lean angle in degrees (for Tandem Rollercoaster rail balance [-45..+45] & Soapbox body roll) */
+  leanDeg: number;
+  leanVelDeg: number;
+  /** Target rail balance angle on the Tandem Rollercoaster */
+  trackTargetLeanDeg: number;
+  /** Current track slope in degrees */
+  trackSlopeDeg: number;
+  /** Number of hay-bale obstacles clipped in Soapbox Race */
+  obstaclesHit: number;
+  /** Whether the craft reached the finish line / Grand Bell */
+  completedCourse: boolean;
+  /** Active course run time in seconds */
+  courseTimeSeconds: number;
+  /** Soapbox downhill obstacles (hay bales & kicker ramps) */
+  soapboxObstacles: SoapboxObstacle[];
 }
 
 const FEET_PER_METER = 3.28084;
@@ -105,8 +139,119 @@ const STEP_RESULT = {
   justCollectedThermal: false,
 };
 
-export function createInitialFlightState(): FlightSimulationState {
+/**
+ * Shared mathematical road profile for the 450-ft Red Bull Soapbox downhill course.
+ */
+export function getSoapboxTrackElevationFeet(xFeet: number): {
+  yFeet: number;
+  slopeDeg: number;
+} {
+  if (xFeet <= 0) {
+    return { yFeet: RAMP_HEIGHT_FEET, slopeDeg: 0 };
+  }
+  const clampedX = Math.min(480, Math.max(0, xFeet));
+  // Smooth downhill descent from 30 ft at x=0 down to 1.5 ft at x=450 ft with rolling terraces
+  const baseDrop = RAMP_HEIGHT_FEET - (clampedX / 450) * 28.2;
+  const wave = Math.sin(clampedX * 0.042) * 1.65 + Math.cos(clampedX * 0.019) * 0.9;
+  const yFeet = Math.max(1.2, baseDrop + wave - 0.9);
+  const dyDx =
+    -28.2 / 450 +
+    0.042 * 1.65 * Math.cos(clampedX * 0.042) -
+    0.019 * 0.9 * Math.sin(clampedX * 0.019);
+  const slopeDeg = (Math.atan(dyDx) * 180) / Math.PI;
+  return { yFeet, slopeDeg };
+}
+
+/**
+ * Shared mathematical rail profile for the 320-ft Red Bull Tandem Rollercoaster over water.
+ */
+export function getRollercoasterTrackProfile(xFeet: number): {
+  yFeet: number;
+  slopeDeg: number;
+  targetLeanDeg: number;
+} {
+  if (xFeet <= 0) {
+    return { yFeet: RAMP_HEIGHT_FEET, slopeDeg: 0, targetLeanDeg: 0 };
+  }
+  const x = Math.min(340, Math.max(0, xFeet));
+  // Camelback hills over the canal: starts at 30 ft, drops into valley, climbs 3 camelback humps, finishes at 14 ft
+  const baseLine = 30 - (x / 320) * 15.5;
+  const camelbacks =
+    -Math.sin((x / 320) * Math.PI * 3.5) * 6.2 +
+    Math.sin((x / 320) * Math.PI * 7.0) * 2.1;
+  const yFeet = Math.max(4.5, baseLine + camelbacks);
+
+  const dBase = -15.5 / 320;
+  const dCamel =
+    -(Math.PI * 3.5 / 320) * 6.2 * Math.cos((x / 320) * Math.PI * 3.5) +
+    (Math.PI * 7.0 / 320) * 2.1 * Math.cos((x / 320) * Math.PI * 7.0);
+  const slopeDeg = (Math.atan(dBase + dCamel) * 180) / Math.PI;
+
+  // Banking & seesaw tilt challenge along the narrow rail (smoothly ramped in over the first 20 ft)
+  const rampIn = Math.min(1, x / 20);
+  const targetLeanDeg =
+    rampIn * (Math.sin(x * 0.055) * 12 + Math.sin(x * 0.095) * 7);
+
+  return { yFeet, slopeDeg, targetLeanDeg };
+}
+
+export function createInitialFlightState(
+  competition: CompetitionId = 'flugtag'
+): FlightSimulationState {
+  const thermalRings: ThermalRing[] =
+    competition === 'soapbox'
+      ? [
+          {
+            id: 1,
+            xFeet: 95,
+            yFeet: getSoapboxTrackElevationFeet(95).yFeet + 4.5,
+            zFeet: -4.5,
+            radiusFeet: 7.5,
+            collected: false,
+          },
+          {
+            id: 2,
+            xFeet: 225,
+            yFeet: getSoapboxTrackElevationFeet(225).yFeet + 4.5,
+            zFeet: 4.5,
+            radiusFeet: 7.5,
+            collected: false,
+          },
+          {
+            id: 3,
+            xFeet: 355,
+            yFeet: getSoapboxTrackElevationFeet(355).yFeet + 4.5,
+            zFeet: -3.5,
+            radiusFeet: 7.5,
+            collected: false,
+          },
+        ]
+      : competition === 'rollercoaster'
+      ? [
+          { id: 1, xFeet: 85, yFeet: getRollercoasterTrackProfile(85).yFeet + 6.5, radiusFeet: 9.5, collected: false },
+          { id: 2, xFeet: 185, yFeet: getRollercoasterTrackProfile(185).yFeet + 6.5, radiusFeet: 9.5, collected: false },
+          { id: 3, xFeet: 275, yFeet: getRollercoasterTrackProfile(275).yFeet + 6.5, radiusFeet: 9.5, collected: false },
+        ]
+      : [
+          { id: 1, xFeet: 58, yFeet: 21, radiusFeet: 10.5, collected: false },
+          { id: 2, xFeet: 132, yFeet: 17, radiusFeet: 11, collected: false },
+          { id: 3, xFeet: 208, yFeet: 14, radiusFeet: 11.5, collected: false },
+        ];
+
+  const soapboxObstacles: SoapboxObstacle[] =
+    competition === 'soapbox'
+      ? [
+          { id: 1, type: 'hay_bale', xFeet: 65, zFeet: 4.8, halfWidthFeet: 4.2, triggered: false },
+          { id: 2, type: 'kicker_ramp', xFeet: 128, zFeet: 0.0, halfWidthFeet: 6.5, triggered: false },
+          { id: 3, type: 'hay_bale', xFeet: 178, zFeet: -5.0, halfWidthFeet: 4.4, triggered: false },
+          { id: 4, type: 'hay_bale', xFeet: 255, zFeet: 4.5, halfWidthFeet: 4.4, triggered: false },
+          { id: 5, type: 'kicker_ramp', xFeet: 305, zFeet: 0.0, halfWidthFeet: 6.5, triggered: false },
+          { id: 6, type: 'hay_bale', xFeet: 388, zFeet: -4.2, halfWidthFeet: 4.4, triggered: false },
+        ]
+      : [];
+
   return {
+    competition,
     phase: 'skit',
     phaseTime: 0,
     xFeet: -RAMP_LENGTH_FEET + 12, // Start at -78 ft on the 90-ft deck
@@ -131,22 +276,28 @@ export function createInitialFlightState(): FlightSimulationState {
     trolleyVyFeet: 0,
     trolleyPitchDeg: 0,
     pilotPitchInput: 0,
-    thermalRings: [
-      { id: 1, xFeet: 58, yFeet: 21, radiusFeet: 10.5, collected: false },
-      { id: 2, xFeet: 132, yFeet: 17, radiusFeet: 11, collected: false },
-      { id: 3, xFeet: 208, yFeet: 14, radiusFeet: 11.5, collected: false },
-    ],
+    thermalRings,
     thermalsCollected: 0,
     impactXFeet: 0,
     debris: [],
     distanceFeet: 0,
     splashIntensity: 0,
     judgeScores: null,
+    lateralZFeet: 0,
+    lateralVzFeet: 0,
+    leanDeg: 0,
+    leanVelDeg: 0,
+    trackTargetLeanDeg: 0,
+    trackSlopeDeg: 0,
+    obstaclesHit: 0,
+    completedCourse: false,
+    courseTimeSeconds: 0,
+    soapboxObstacles,
   };
 }
 
 /**
- * Triggers a burst of Crew Hype during Skit, or Sprint Push / Trolley Release on the Ramp.
+ * Triggers a burst of Crew Hype during Skit, Sprint Push on the Ramp, or Mid-Run Boost/Pedal!
  */
 export function triggerHypeOrPushTap(
   state: FlightSimulationState,
@@ -158,13 +309,14 @@ export function triggerHypeOrPushTap(
   }
 
   if (state.phase === 'ramp_push') {
-    // Check if inside the green Trolley Drop zone (-22 ft to 0 ft)
+    // Check if inside the green Trolley Drop / Push-Off zone (-22 ft to 0 ft)
     if (state.xFeet >= -22 && !state.trolleyDetached) {
       state.trolleyDetached = true;
       state.trolleyReleaseQuality = state.xFeet >= -13 ? 'perfect' : 'good';
-      // Clean trolley release sheds weight and gives launch pop!
       state.vxFeet += state.trolleyReleaseQuality === 'perfect' ? 5.2 : 2.6;
-      state.pitchDeg = Math.max(state.pitchDeg, 5.5);
+      if (state.competition === 'flugtag') {
+        state.pitchDeg = Math.max(state.pitchDeg, 5.5);
+      }
       return { event: 'trolley_perfect' };
     }
 
@@ -180,11 +332,28 @@ export function triggerHypeOrPushTap(
     return { event: 'push_boost' };
   }
 
+  // Mid-run action tap for Soapbox (Gravity Tuck Boost) & Tandem Rollercoaster (Pedal Sprint!)
+  if (state.phase === 'airborne') {
+    if (state.competition === 'rollercoaster') {
+      const overWeightExcess = Math.max(0, metrics.rampTotalMassLbs - 400);
+      const overWeightInertia = 1 / (1 + overWeightExcess * 0.0035);
+      const pedalBoost = 3.2 * metrics.effectiveLiftMultiplier * overWeightInertia;
+      state.vxFeet = Math.min(44, state.vxFeet + pedalBoost);
+      // Pedaling rhythmically also helps steady moderate wobble
+      state.leanVelDeg *= 0.82;
+      return { event: 'push_boost' };
+    }
+    if (state.competition === 'soapbox') {
+      state.vxFeet = Math.min(54, state.vxFeet + 2.4 * metrics.pushEfficiency);
+      return { event: 'push_boost' };
+    }
+  }
+
   return { event: 'none' };
 }
 
 /**
- * Advances the Red Bull Flugtag physics simulation by dt seconds.
+ * Advances the active Red Bull competition physics simulation by dt seconds.
  */
 export function stepFlightSimulation(
   state: FlightSimulationState,
@@ -249,34 +418,58 @@ export function stepFlightSimulation(
       state.trolleyPitchDeg = 0;
     }
 
-    // Reached the edge of the 30-foot flight deck! (xFeet >= 0)
+    // Reached the edge of the 30-foot start ramp! (xFeet >= 0)
     if (state.xFeet >= 0) {
       state.phase = 'airborne';
       state.phaseTime = 0;
       STEP_RESULT.justLaunchedOffRamp = true;
 
-      if (!state.trolleyDetached) {
-        // Player missed the trolley drop window!
-        // Heavy trolley drags speed down (-24%) and tips the nose downward!
-        state.trolleyReleaseQuality = 'late';
-        state.trolleyDetached = true;
-        state.vxFeet *= 0.76;
-        state.vyFeet = -3.6;
-        state.pitchVelDeg -= 22;
-        state.trolleyVxFeet = state.vxFeet * 0.65;
-        state.trolleyVyFeet = -5;
+      if (state.competition === 'flugtag') {
+        if (!state.trolleyDetached) {
+          // Player missed the trolley drop window!
+          // Heavy trolley drags speed down (-24%) and tips the nose downward!
+          state.trolleyReleaseQuality = 'late';
+          state.trolleyDetached = true;
+          state.vxFeet *= 0.76;
+          state.vyFeet = -3.6;
+          state.pitchVelDeg -= 22;
+          state.trolleyVxFeet = state.vxFeet * 0.65;
+          state.trolleyVyFeet = -5;
+        } else {
+          // Clean glider separation off the lip!
+          state.vyFeet = state.trolleyReleaseQuality === 'perfect' ? 2.8 : 1.4;
+          state.pitchDeg = Math.max(-5, Math.min(10, 5.5 + metrics.seesawTiltDeg * 0.22));
+        }
       } else {
-        // Clean separation off the lip!
-        state.vyFeet = state.trolleyReleaseQuality === 'perfect' ? 2.8 : 1.4;
-        state.pitchDeg = Math.max(-5, Math.min(10, 5.5 + metrics.seesawTiltDeg * 0.22));
+        // Soapbox & Tandem Rollercoaster stay planted on their wheels entering the course
+        if (!state.trolleyDetached) {
+          state.trolleyReleaseQuality = 'late';
+          state.trolleyDetached = true;
+          state.vxFeet *= 0.88;
+        }
+        state.vyFeet = 0;
+        state.pitchVelDeg = 0;
+        state.pitchDeg =
+          state.competition === 'soapbox'
+            ? getSoapboxTrackElevationFeet(0.1).slopeDeg
+            : getRollercoasterTrackProfile(0.1).slopeDeg;
       }
     }
 
     return STEP_RESULT;
   }
 
-  // 3. AIRBORNE GLIDE PHASE (Sub-stepped at >=120Hz for frame-rate independence)
+  // 3. AIRBORNE / ACTIVE COURSE PHASE (Sub-stepped at >=120Hz for frame-rate independence)
   if (state.phase === 'airborne') {
+    state.courseTimeSeconds += clampedDt;
+
+    if (state.competition === 'soapbox') {
+      return stepSoapboxCourse(state, metrics, clampedDt, bestDistanceFeet);
+    }
+    if (state.competition === 'rollercoaster') {
+      return stepRollercoasterCourse(state, metrics, clampedDt, bestDistanceFeet);
+    }
+
     let remainingDt = clampedDt;
 
     while (remainingDt > 1e-6 && state.phase === 'airborne') {
@@ -469,44 +662,8 @@ export function stepFlightSimulation(
           Math.round((impactSpeed / 44) * 65 + (metrics.airborneMassLbs / 380) * 45 + overWeightBonus)
         );
 
-        // Smoothly level pitch velocity on water entry so hull doesn't glitch
         state.pitchVelDeg = 0;
-
-        // Break apart parts cleanly into world-aligned floating debris on hard impact
-        // Overweight (> 400 lb) builds guarantee a spectacular yard-sale breakup!
-        const breakThreshold = metrics.structuralToughness * 32;
-        const impactSeverity =
-          Math.abs(state.vyFeet) +
-          (metrics.airborneMassLbs - 200) * 0.08 +
-          (metrics.isOverWeightLimit ? 25 : 0);
-
-        const brokenParts: Array<'wings' | 'tail' | 'nose' | 'topper'> = [];
-        if (impactSeverity > breakThreshold * 0.62 || metrics.isOverWeightLimit) {
-          brokenParts.push('wings');
-          if (metrics.parts.topper.id !== 'topper_none') brokenParts.push('topper');
-        }
-        if (impactSeverity > breakThreshold * 0.82 || metrics.isOverWeightLimit) {
-          if (metrics.parts.tail.id !== 'tail_none') brokenParts.push('tail');
-          brokenParts.push('nose');
-        }
-
-        state.debris = brokenParts.map((partKey, idx) => {
-          const spreadZ = (idx % 2 === 0 ? 1 : -1) * (4.5 + idx * 1.8);
-          const spreadX = (idx - 1.5) * 4.0;
-          return {
-            partKey,
-            offsetXFeet: spreadX * 0.3,
-            yFeet: 0.6 + idx * 0.3,
-            zFeet: spreadZ * 0.3,
-            vx: spreadX * 1.8,
-            vy: 7.5 + idx * 1.5,
-            vz: spreadZ * 2.2,
-            rotX: (idx % 2 === 0 ? 1 : -1) * 0.25,
-            rotY: idx * 0.5,
-            rotZ: (idx % 2 === 0 ? -1 : 1) * 0.2,
-          };
-        });
-
+        spawnImpactDebris(state, metrics, Math.abs(state.vyFeet));
         state.judgeScores = calculateJudgeScores(state, metrics, bestDistanceFeet);
       }
     }
@@ -514,30 +671,51 @@ export function stepFlightSimulation(
     return STEP_RESULT;
   }
 
-  // 4. SPLASHDOWN & BUOYANCY PHASE (Smooth floating & gentle wave bobbing!)
+  // 4. SPLASHDOWN / FINISH LINE PHASE
   if (state.phase === 'splashdown') {
-    // Hull skims smoothly to a stop and bobs gently above the water plane (never negative!)
     state.vxFeet *= Math.pow(0.12, clampedDt);
     state.xFeet += state.vxFeet * clampedDt;
-    state.yFeet = 0.18 + Math.sin(state.phaseTime * 3.2) * 0.16;
-    // Smoothly level the hull pitch toward 0 deg on the water surface
-    state.pitchDeg =
-      state.pitchDeg * Math.pow(0.05, clampedDt) + Math.cos(state.phaseTime * 2.6) * 2.5 * 0.1;
 
-    // Update floating debris pieces smoothly in world water space
+    if (state.competition === 'soapbox') {
+      const road = getSoapboxTrackElevationFeet(state.xFeet);
+      state.yFeet = road.yFeet;
+      state.pitchDeg = road.slopeDeg;
+      state.leanDeg *= Math.pow(0.08, clampedDt);
+    } else if (state.competition === 'rollercoaster' && state.completedCourse) {
+      const prof = getRollercoasterTrackProfile(state.xFeet);
+      state.yFeet = prof.yFeet;
+      state.pitchDeg = prof.slopeDeg;
+      state.leanDeg *= Math.pow(0.1, clampedDt);
+    } else {
+      state.yFeet = 0.18 + Math.sin(state.phaseTime * 3.2) * 0.16;
+      state.pitchDeg =
+        state.pitchDeg * Math.pow(0.05, clampedDt) + Math.cos(state.phaseTime * 2.6) * 2.5 * 0.1;
+      state.leanDeg *= Math.pow(0.15, clampedDt);
+    }
+
+    const isDryFinish =
+      state.competition === 'soapbox' ||
+      (state.competition === 'rollercoaster' && state.completedCourse);
+
     for (const d of state.debris) {
       d.offsetXFeet += d.vx * clampedDt;
       d.zFeet += d.vz * clampedDt;
       d.vx *= Math.pow(0.18, clampedDt);
       d.vz *= Math.pow(0.18, clampedDt);
 
-      if (d.yFeet > 0.25 || d.vy > 0) {
+      const floorY =
+        state.competition === 'soapbox'
+          ? getSoapboxTrackElevationFeet(state.impactXFeet + d.offsetXFeet).yFeet + 0.2
+          : state.competition === 'rollercoaster' && state.completedCourse
+          ? getRollercoasterTrackProfile(state.impactXFeet + d.offsetXFeet).yFeet + 0.2
+          : 0.22;
+      if (d.yFeet > floorY + 0.05 || d.vy > 0) {
         d.vy -= 24 * clampedDt;
-        d.yFeet = Math.max(0.22, d.yFeet + d.vy * clampedDt);
+        d.yFeet = Math.max(floorY, d.yFeet + d.vy * clampedDt);
       } else {
-        d.yFeet = 0.22 + Math.sin(state.phaseTime * 3.5 + d.zFeet) * 0.14;
+        d.yFeet =
+          floorY + (isDryFinish ? 0 : Math.sin(state.phaseTime * 3.5 + d.zFeet) * 0.14);
       }
-      // Gentle settle toward flat floating orientation
       d.rotX *= Math.pow(0.4, clampedDt);
       d.rotZ *= Math.pow(0.4, clampedDt);
       d.rotY += 0.25 * clampedDt;
@@ -547,16 +725,350 @@ export function stepFlightSimulation(
   return STEP_RESULT;
 }
 
+/**
+ * Red Bull Soapbox Race downhill physics (0 -> 450 ft).
+ * Player steers Left/Right (pilotPitchInput) around hay bales, hits kicker ramps, and collects speed gates!
+ */
+function stepSoapboxCourse(
+  state: FlightSimulationState,
+  metrics: ComputedCraftMetrics,
+  clampedDt: number,
+  bestDistanceFeet: number
+) {
+  let remainingDt = clampedDt;
+
+  while (remainingDt > 1e-6 && state.phase === 'airborne') {
+    const subDt = Math.min(remainingDt, MAX_AIRBORNE_SUBSTEP);
+    remainingDt -= subDt;
+
+    const road = getSoapboxTrackElevationFeet(state.xFeet);
+    state.trackSlopeDeg = road.slopeDeg;
+
+    // Gravity acceleration down the hill: heavy soapboxes (>400 lb) gain extra downhill gravity pull!
+    const overWeightGravityBonus = metrics.isOverWeightLimit
+      ? Math.min(4.2, (metrics.rampTotalMassLbs - 400) * 0.015)
+      : 0;
+    const downhillAccel =
+      (14.5 * metrics.effectiveLiftMultiplier * metrics.pushEfficiency + overWeightGravityBonus) *
+      Math.max(0.35, -road.slopeDeg / 5.5);
+
+    // Aerodynamic & tire rolling drag + cornering scrub
+    const cornerScrub = Math.abs(state.pilotPitchInput) * (1.8 / Math.max(0.4, metrics.pitchStability));
+    const dragDecel = 0.0085 * state.vxFeet * state.vxFeet + cornerScrub;
+
+    state.vxFeet = Math.min(56, Math.max(12, state.vxFeet + (downhillAccel - dragDecel) * subDt));
+
+    // Lateral steering (pilotPitchInput: -1 = Steer Left [-Z], +1 = Steer Right [+Z])
+    // Heavy >400 lb soapboxes have higher lateral inertia so you must anticipate chicanes!
+    const overWeightSteerInertia = metrics.isOverWeightLimit ? 0.76 : 1.0;
+    const steerAuthority = (24 + metrics.stabilityScore * 0.22) * overWeightSteerInertia;
+    const targetVz = state.pilotPitchInput * steerAuthority;
+    state.lateralVzFeet += (targetVz - state.lateralVzFeet) * Math.min(1, subDt * 9.5);
+    state.lateralZFeet = Math.max(-11.5, Math.min(11.5, state.lateralZFeet + state.lateralVzFeet * subDt));
+
+    // Body roll lean when steering around chicanes (tilts in the direction of steering)
+    const targetLean = state.pilotPitchInput * 10;
+    state.leanDeg += (targetLean - state.leanDeg) * Math.min(1, subDt * 10);
+
+    // Advance X and vertical jump physics above road
+    state.xFeet += state.vxFeet * subDt;
+    const nextRoad = getSoapboxTrackElevationFeet(state.xFeet);
+
+    if (state.yFeet > nextRoad.yFeet + 0.08 || state.vyFeet > 0) {
+      // Airborne off a wooden kicker ramp!
+      state.vyFeet -= GRAVITY_MPS2 * FEET_PER_METER * 0.85 * subDt;
+      state.yFeet += state.vyFeet * subDt;
+      state.pitchDeg = Math.max(-18, Math.min(20, state.vyFeet * 0.75));
+      if (state.yFeet <= nextRoad.yFeet) {
+        state.yFeet = nextRoad.yFeet;
+        state.vyFeet = 0;
+        state.pitchDeg = nextRoad.slopeDeg;
+      }
+    } else {
+      state.yFeet = nextRoad.yFeet;
+      state.vyFeet = 0;
+      state.pitchDeg = nextRoad.slopeDeg;
+    }
+
+    state.windGustWarning =
+      state.yFeet > nextRoad.yFeet + 0.35 || state.vyFeet > 1 ? 'headwind_gust' : 'calm';
+
+    state.distanceFeet = Math.min(450, Math.max(0, Math.round(state.xFeet)));
+
+    // Update HUD zone indicator based on line cleanliness
+    const absZ = Math.abs(state.lateralZFeet);
+    state.inSweetSpot = absZ < 8.8;
+    state.pitchZone = absZ > 8.8 ? 'too_low' : 'sweet_spot';
+
+    // Check Speed Gates (thermalRings)
+    for (const gate of state.thermalRings) {
+      if (!gate.collected && Math.abs(state.xFeet - gate.xFeet) <= 5.5) {
+        const dz = state.lateralZFeet - (gate.zFeet ?? 0);
+        if (Math.abs(dz) <= gate.radiusFeet) {
+          gate.collected = true;
+          state.thermalsCollected += 1;
+          STEP_RESULT.justCollectedThermal = true;
+          state.vxFeet = Math.min(58, state.vxFeet + 6.5);
+        }
+      }
+    }
+
+    // Check Hay-Bale Chicanes & Wooden Kicker Ramps
+    for (const obs of state.soapboxObstacles) {
+      if (!obs.triggered && Math.abs(state.xFeet - obs.xFeet) <= 4.0) {
+        const dz = Math.abs(state.lateralZFeet - obs.zFeet);
+        if (dz <= obs.halfWidthFeet) {
+          obs.triggered = true;
+          if (obs.type === 'kicker_ramp') {
+            // Launch airborne off the kicker ramp!
+            state.vyFeet = 14.5 + state.vxFeet * 0.16;
+            state.vxFeet = Math.min(58, state.vxFeet + 4.0);
+            STEP_RESULT.justCollectedThermal = true;
+          } else {
+            // Clipped a hay-bale chicane!
+            const jumpClearance = state.yFeet - nextRoad.yFeet;
+            if (jumpClearance < 2.2) {
+              state.obstaclesHit += 1;
+              state.pitchZone = 'too_high';
+              state.inSweetSpot = false;
+              state.vxFeet = Math.max(11, state.vxFeet * 0.72);
+              state.leanDeg += (state.lateralZFeet >= obs.zFeet ? 1 : -1) * 18;
+              // Fragile cardboard builds can lose a piece on hard hay-bale impacts!
+              if (state.obstaclesHit >= 3 && metrics.structuralToughness < 0.58) {
+                state.completedCourse = false;
+                state.phase = 'splashdown';
+                state.phaseTime = 0;
+                STEP_RESULT.justSplashedDown = true;
+                state.impactXFeet = state.xFeet;
+                state.splashIntensity = 82;
+                spawnImpactDebris(state, metrics, 28);
+                state.judgeScores = calculateJudgeScores(state, metrics, bestDistanceFeet);
+                return STEP_RESULT;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Reached the 450-Ft Checkered Finish Arch!
+    if (state.xFeet >= 450) {
+      state.xFeet = 450;
+      state.distanceFeet = 450;
+      state.completedCourse = true;
+      state.phase = 'splashdown';
+      state.phaseTime = 0;
+      STEP_RESULT.justSplashedDown = true;
+      state.impactXFeet = 450;
+      state.splashIntensity = Math.min(
+        100,
+        Math.round((state.vxFeet / 48) * 70 + (metrics.isOverWeightLimit ? 25 : 10))
+      );
+      if (state.obstaclesHit >= 2) {
+        spawnImpactDebris(state, metrics, 24);
+      }
+      state.judgeScores = calculateJudgeScores(state, metrics, bestDistanceFeet);
+    }
+  }
+
+  return STEP_RESULT;
+}
+
+/**
+ * Red Bull Tandem Rollercoaster (Stalen Ros) over-water rail balance & hill momentum physics (0 -> 320 ft).
+ * Player leans Left/Right (pilotPitchInput) to stay balanced on the narrow track and taps Space to pedal up hills!
+ */
+function stepRollercoasterCourse(
+  state: FlightSimulationState,
+  metrics: ComputedCraftMetrics,
+  clampedDt: number,
+  bestDistanceFeet: number
+) {
+  let remainingDt = clampedDt;
+
+  while (remainingDt > 1e-6 && state.phase === 'airborne') {
+    const subDt = Math.min(remainingDt, MAX_AIRBORNE_SUBSTEP);
+    remainingDt -= subDt;
+
+    const profile = getRollercoasterTrackProfile(state.xFeet);
+    state.yFeet = profile.yFeet;
+    state.pitchDeg = profile.slopeDeg;
+    state.trackSlopeDeg = profile.slopeDeg;
+    state.trackTargetLeanDeg = profile.targetLeanDeg;
+    state.windGustWarning = profile.slopeDeg > 2.2 ? 'downdraft' : 'calm';
+
+    // Slope momentum physics:
+    // Downhill drops accelerate strongly (extra boost for >400 lb heavy builds),
+    // while uphill camelbacks require momentum + rider pedaling!
+    const slopeRad = (profile.slopeDeg * Math.PI) / 180;
+    const overWeightMassRatio = metrics.rampTotalMassLbs / 260;
+    const gravitySlopeAccel =
+      -Math.sin(slopeRad) *
+      36 *
+      (profile.slopeDeg < 0 ? Math.min(1.45, Math.sqrt(overWeightMassRatio)) : 1.0);
+
+    // Base tandem rider cadence keeps a steady baseline push, scaled by gear/frame efficiency
+    const overWeightClimbDrag =
+      profile.slopeDeg > 0 && metrics.isOverWeightLimit
+        ? (metrics.rampTotalMassLbs - 400) * 0.022
+        : 0;
+    const basePedalAccel = 6.2 * metrics.effectiveLiftMultiplier * metrics.pushEfficiency - overWeightClimbDrag;
+    const rollingDrag = 0.0075 * state.vxFeet * state.vxFeet;
+
+    state.vxFeet = Math.min(
+      46,
+      Math.max(4.5, state.vxFeet + (gravitySlopeAccel + basePedalAccel - rollingDrag) * subDt)
+    );
+
+    // 3D Rail Balance Physics:
+    // The narrow floating track banks & wobbles toward profile.targetLeanDeg.
+    // Rider input (pilotPitchInput: -1 = Lean Left, +1 = Lean Right) applies corrective torque!
+    const stabilityFactor = 0.55 + (metrics.stabilityScore / 100) * 0.65;
+    const railCamberTorque = (profile.targetLeanDeg - state.leanDeg * 0.35) * (2.6 / stabilityFactor);
+    const speedWobble = Math.sin(state.xFeet * 0.18) * (7.5 / stabilityFactor);
+    const riderLeanTorque = state.pilotPitchInput * (92 * stabilityFactor);
+    const selfCenteringDamping = -state.leanDeg * (1.4 * stabilityFactor) - state.leanVelDeg * 3.8;
+
+    const leanAccel = railCamberTorque + speedWobble + riderLeanTorque + selfCenteringDamping;
+    state.leanVelDeg += leanAccel * subDt;
+    state.leanDeg = Math.max(-52, Math.min(52, state.leanDeg + state.leanVelDeg * subDt));
+
+    // Update HUD balance zone indicators
+    const absLean = Math.abs(state.leanDeg);
+    state.aoaDeg = state.leanDeg; // Expose lean angle for HUD readout
+    state.isStalling = absLean > 28;
+    if (absLean > 28) {
+      state.pitchZone = 'too_high';
+      state.inSweetSpot = false;
+    } else if (absLean > 15) {
+      state.pitchZone = 'too_low';
+      state.inSweetSpot = false;
+    } else {
+      state.pitchZone = 'sweet_spot';
+      state.inSweetSpot = true;
+      // Smooth balance bonus keeps speed flowing!
+      state.vxFeet = Math.min(46, state.vxFeet + 1.2 * subDt);
+    }
+
+    state.xFeet += state.vxFeet * subDt;
+    state.distanceFeet = Math.min(320, Math.max(0, Math.round(state.xFeet)));
+
+    // Check Hanging Canal Bells (thermalRings)
+    for (const bell of state.thermalRings) {
+      if (!bell.collected && Math.abs(state.xFeet - bell.xFeet) <= 5.5) {
+        if (absLean <= 30) {
+          bell.collected = true;
+          state.thermalsCollected += 1;
+          STEP_RESULT.justCollectedThermal = true;
+          state.vxFeet = Math.min(46, state.vxFeet + 5.5);
+        }
+      }
+    }
+
+    // Check Derailment off the narrow rollercoaster track into the canal! (|leanDeg| >= 43 deg)
+    if (absLean >= 43) {
+      state.completedCourse = false;
+      state.phase = 'splashdown';
+      state.phaseTime = 0;
+      STEP_RESULT.justSplashedDown = true;
+      state.impactXFeet = state.xFeet;
+      state.distanceFeet = Math.max(8, Math.round(state.xFeet));
+      state.lateralZFeet = Math.sign(state.leanDeg) * 4.5;
+      state.yFeet = 0.18;
+      state.splashIntensity = Math.min(
+        100,
+        Math.round(58 + (state.vxFeet / 42) * 30 + (metrics.isOverWeightLimit ? 18 : 0))
+      );
+      spawnImpactDebris(state, metrics, 26);
+      state.judgeScores = calculateJudgeScores(state, metrics, bestDistanceFeet);
+      return STEP_RESULT;
+    }
+
+    // Reached the 320-Ft Grand Finish Bell Platform!
+    if (state.xFeet >= 320) {
+      state.xFeet = 320;
+      state.distanceFeet = 320;
+      state.completedCourse = true;
+      state.phase = 'splashdown';
+      state.phaseTime = 0;
+      STEP_RESULT.justSplashedDown = true;
+      state.impactXFeet = 320;
+      state.splashIntensity = Math.min(
+        100,
+        Math.round(65 + (state.vxFeet / 44) * 25 + (metrics.isOverWeightLimit ? 15 : 0))
+      );
+      state.judgeScores = calculateJudgeScores(state, metrics, bestDistanceFeet);
+      return STEP_RESULT;
+    }
+  }
+
+  return STEP_RESULT;
+}
+
+function spawnImpactDebris(
+  state: FlightSimulationState,
+  metrics: ComputedCraftMetrics,
+  verticalSeverity: number
+) {
+  const breakThreshold = metrics.structuralToughness * 32;
+  const impactSeverity =
+    verticalSeverity +
+    (metrics.airborneMassLbs - 200) * 0.08 +
+    (metrics.isOverWeightLimit ? 25 : 0);
+
+  const brokenParts: Array<'wings' | 'tail' | 'nose' | 'topper'> = [];
+  if (impactSeverity > breakThreshold * 0.62 || metrics.isOverWeightLimit) {
+    brokenParts.push('wings');
+    if (metrics.parts.topper.id !== 'topper_none') brokenParts.push('topper');
+  }
+  if (impactSeverity > breakThreshold * 0.82 || metrics.isOverWeightLimit) {
+    if (metrics.parts.tail.id !== 'tail_none') brokenParts.push('tail');
+    brokenParts.push('nose');
+  }
+
+  state.debris = brokenParts.map((partKey, idx) => {
+    const spreadZ = (idx % 2 === 0 ? 1 : -1) * (4.5 + idx * 1.8);
+    const spreadX = (idx - 1.5) * 4.0;
+    return {
+      partKey,
+      offsetXFeet: spreadX * 0.3,
+      yFeet: 0.6 + idx * 0.3,
+      zFeet: spreadZ * 0.3,
+      vx: spreadX * 1.8,
+      vy: 7.5 + idx * 1.5,
+      vz: spreadZ * 2.2,
+      rotX: (idx % 2 === 0 ? 1 : -1) * 0.25,
+      rotY: idx * 0.5,
+      rotZ: (idx % 2 === 0 ? -1 : 1) * 0.2,
+    };
+  });
+}
+
 function calculateJudgeScores(
   state: FlightSimulationState,
   metrics: ComputedCraftMetrics,
   previousBestFeet: number
 ): JudgeScores {
-  // 1. Distance Judge (1-10): Slightly more challenging curve (235 ft for 10/10)
-  const distNorm = Math.min(1, state.distanceFeet / 235);
-  const distanceJudge = Math.max(3, Math.min(10, Math.round(3 + distNorm * 7)));
+  const goalFeet = COMPETITIONS[state.competition].goalFeet;
+  const targetForTen = state.competition === 'flugtag' ? 235 : goalFeet;
+  const distNorm = Math.min(1, state.distanceFeet / targetForTen);
 
-  // 2. Creativity Judge (1-10): Rewards creative builds + cannonball splashes (+1 for Heavyweight >400lb Cannonballs)
+  // For Soapbox & Rollercoaster, finishing fast or clean adds to Judge 1; for Flugtag, hitting 235+ ft reaches 10/10
+  const cleanBonus =
+    state.competition === 'soapbox' && state.completedCourse
+      ? Math.max(0, 1.5 - state.obstaclesHit * 0.5)
+      : state.competition === 'rollercoaster' && state.completedCourse
+      ? 1.5
+      : state.competition === 'flugtag' && state.distanceFeet >= targetForTen
+      ? 0.8
+      : 0;
+
+  const distanceJudge = Math.max(
+    3,
+    Math.min(10, Math.round(3 + distNorm * 6.2 + cleanBonus))
+  );
+
+  // 2. Creativity Judge (1-10)
   const splashBonus = state.splashIntensity > 74 ? 2 : state.splashIntensity > 52 ? 1 : 0;
   const heavyBonus = metrics.isOverWeightLimit ? 1 : 0;
   const creativityJudge = Math.max(
@@ -564,7 +1076,7 @@ function calculateJudgeScores(
     Math.min(10, Math.round(3 + (metrics.creativityScore / 100) * 6 + splashBonus + heavyBonus))
   );
 
-  // 3. Showmanship Judge (1-10): Rewards Hype Skit, Trolley Release Timing, and Thermal Rings!
+  // 3. Showmanship Judge (1-10)
   const releaseBonus =
     state.trolleyReleaseQuality === 'perfect' ? 2.5 : state.trolleyReleaseQuality === 'good' ? 1.5 : 0.0;
   const thermalBonus = state.thermalsCollected * 1.2;
@@ -576,12 +1088,25 @@ function calculateJudgeScores(
   const totalScore = distanceJudge + creativityJudge + showmanshipJudge;
   const starsEarned = totalScore >= 26 ? 3 : totalScore >= 20 ? 2 : 1;
 
-  const splashRating =
-    state.splashIntensity >= 72
-      ? 'MEGA CANNONBALL!!'
-      : state.splashIntensity >= 46
-      ? 'Big Splash!'
-      : 'Smooth Skim!';
+  let splashRating = 'Smooth Skim!';
+  if (state.competition === 'soapbox') {
+    splashRating = state.completedCourse
+      ? state.obstaclesHit === 0
+        ? 'CLEAN APEX FINISH!!'
+        : `Finished (${state.obstaclesHit} Hay Hit)`
+      : 'YARD-SALE CRASH!!';
+  } else if (state.competition === 'rollercoaster') {
+    splashRating = state.completedCourse
+      ? '🔔 RANG THE GRAND BELL!!'
+      : '💦 CANAL RAIL SPLASH!!';
+  } else {
+    splashRating =
+      state.splashIntensity >= 72
+        ? 'MEGA CANNONBALL!!'
+        : state.splashIntensity >= 46
+        ? 'Big Splash!'
+        : 'Smooth Skim!';
+  }
 
   return {
     distanceJudge,
@@ -592,7 +1117,8 @@ function calculateJudgeScores(
     splashRating,
     isOverWeightCannonball: metrics.isOverWeightLimit,
     newRecord: state.distanceFeet > previousBestFeet,
-    beatWorldRecord: state.distanceFeet >= WORLD_RECORD_FEET,
+    beatWorldRecord: state.distanceFeet >= goalFeet,
   };
 }
+
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { CraftPart, PART_CATALOG } from '../builder/PartCatalog';
+import { COMPETITIONS, CraftPart, PART_CATALOG } from '../builder/PartCatalog';
 import { FlightSimulationState } from '../physics/AeroPhysicsEngine';
 import { RotateCcw, Wrench, Trophy, Sparkles } from 'lucide-react';
 
@@ -22,14 +22,21 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
 }) => {
   const scores = flightState.judgeScores;
   const primaryBtnRef = useRef<HTMLButtonElement | null>(null);
+  const comp = flightState.competition;
+  const compMeta = COMPETITIONS[comp];
 
-  // Find the next locked part so players always see their progression goal
+  // Find the next locked part for this competition (or shared topper) so players always see their progression goal
   const nextLockedPart = useMemo(() => {
-    const locked = PART_CATALOG.filter((p) => p.unlockStars > totalStars).sort(
-      (a, b) => a.unlockStars - b.unlockStars
-    );
+    const locked = PART_CATALOG.filter(
+      (p) =>
+        p.unlockStars > totalStars &&
+        (p.category === 'topper' ||
+          p.competition === 'shared' ||
+          p.competition === comp ||
+          (!p.competition && comp === 'flugtag'))
+    ).sort((a, b) => a.unlockStars - b.unlockStars);
     return locked[0] ?? null;
-  }, [totalStars]);
+  }, [totalStars, comp]);
 
   // Auto-focus primary CTA & support keyboard shortcuts (after brief 350ms guard)
   useEffect(() => {
@@ -37,12 +44,13 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
     const mountedAt = performance.now();
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat || performance.now() - mountedAt < 350) return;
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
+        if (e.repeat || performance.now() - mountedAt < 350) return;
         onFlyAgain();
       } else if (e.code === 'Escape' || e.code === 'KeyB') {
         e.preventDefault();
+        if (e.repeat || performance.now() - mountedAt < 350) return;
         onBackToHangar();
       }
     };
@@ -67,7 +75,15 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
         <div className="flex items-center justify-between gap-2 border-b border-white/15 pb-2">
           <div className="flex items-center gap-2">
             <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-2xl bg-yellow-400 text-xl sm:text-3xl shadow-md">
-              💦
+              {comp === 'soapbox'
+                ? flightState.completedCourse
+                  ? '🏁'
+                  : '🏎️'
+                : comp === 'rollercoaster'
+                ? flightState.completedCourse
+                  ? '🔔'
+                  : '💦'
+                : '💦'}
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -89,8 +105,12 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
               </div>
               <div className="text-[11px] sm:text-xs font-extrabold text-sky-300 mt-0.5">
                 {scores.beatWorldRecord
-                  ? '👑 YOU BEAT THE 258 FT WORLD RECORD!!'
-                  : `${scores.splashRating} • Trolley Drop: ${flightState.trolleyReleaseQuality.toUpperCase()}`}
+                  ? comp === 'soapbox'
+                    ? `🏁 CROSSED THE 450 FT FINISH LINE IN ${flightState.courseTimeSeconds.toFixed(1)}S!!`
+                    : comp === 'rollercoaster'
+                    ? `🔔 RANG THE GRAND BELL AT 320 FT IN ${flightState.courseTimeSeconds.toFixed(1)}S!!`
+                    : '👑 YOU BEAT THE 258 FT WORLD RECORD!!'
+                  : `${scores.splashRating} • Start Timing: ${flightState.trolleyReleaseQuality.toUpperCase()}`}
               </div>
             </div>
           </div>
@@ -120,31 +140,51 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
         <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-slate-950/60 border border-white/10 px-3 py-1 text-[11px] font-extrabold">
           <span
             className={
-              flightState.debris.length === 0 ? 'text-emerald-300' : 'text-amber-300'
+              (comp === 'soapbox'
+                ? flightState.obstaclesHit === 0
+                : comp === 'rollercoaster'
+                ? flightState.completedCourse
+                : flightState.debris.length === 0)
+                ? 'text-emerald-300'
+                : 'text-amber-300'
             }
           >
-            {flightState.debris.length === 0
+            {comp === 'soapbox'
+              ? flightState.obstaclesHit === 0
+                ? '🛞 Clean Street Run — Zero Hay Bales Hit!'
+                : `🌾 ${flightState.obstaclesHit} Hay Bale(s) Smashed Along the Hill!`
+              : comp === 'rollercoaster'
+              ? flightState.completedCourse
+                ? '🚲 Stayed Dry & Balanced Across the Entire Canal Track!'
+                : `💦 Derailed into the Canal at ${flightState.distanceFeet} ft!`
+              : flightState.debris.length === 0
               ? '🛠️ Hull Held Together on Water Impact!'
               : `💥 ${flightState.debris.length} Parts Snapped Off in a Yard-Sale Splash!`}
           </span>
           {scores.isOverWeightCannonball && (
             <span className="rounded-md bg-rose-500/25 border border-rose-400/50 px-1.5 py-0.5 text-rose-200">
-              🛋️ &gt;400LB HEAVYWEIGHT CANNONBALL (+1 CREATIVITY!)
+              🛋️ &gt;400LB HEAVYWEIGHT (+1 CREATIVITY!)
             </span>
           )}
         </div>
 
         {/* THE 3 CELEBRITY JUDGES' SCORECARDS (Staggered Entrance) */}
         <div className="grid grid-cols-3 gap-2">
-          {/* Judge 1: Distance */}
+          {/* Judge 1: Distance / Speed & Line / Track & Bell */}
           <div
             className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-sky-400/60 p-2 sm:p-2.5 text-center shadow-lg"
             style={{ animationDelay: '60ms' }}
           >
             <div className="flex flex-col items-center">
-              <span className="text-xl sm:text-2xl">🧑‍✈️</span>
+              <span className="text-xl sm:text-2xl">
+                {comp === 'soapbox' ? '🏁' : comp === 'rollercoaster' ? '🔔' : '🧑‍✈️'}
+              </span>
               <span className="text-[11px] sm:text-xs font-extrabold text-sky-300">
-                DISTANCE
+                {comp === 'soapbox'
+                  ? 'SPEED & LINE'
+                  : comp === 'rollercoaster'
+                  ? 'TRACK & BELL'
+                  : 'DISTANCE'}
               </span>
             </div>
             <div className="my-1 flex h-9 w-13 sm:h-11 sm:w-16 items-center justify-center rounded-xl bg-white font-display text-lg sm:text-2xl font-black text-slate-950 shadow">
@@ -152,7 +192,11 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
               <span className="text-[11px] text-slate-500">/10</span>
             </div>
             <div className="text-[10px] sm:text-[11px] font-bold text-slate-300 leading-tight">
-              {flightState.distanceFeet} / 235 ft goal
+              {comp === 'soapbox'
+                ? `${flightState.distanceFeet} / ${compMeta.goalFeet} ft finish`
+                : comp === 'rollercoaster'
+                ? `${flightState.distanceFeet} / ${compMeta.goalFeet} ft bell`
+                : `${flightState.distanceFeet} / 235 ft goal`}
             </div>
           </div>
 
@@ -192,7 +236,8 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
               <span className="text-[11px] text-slate-500">/10</span>
             </div>
             <div className="text-[10px] sm:text-[11px] font-bold text-slate-300 leading-tight">
-              Hype {Math.round(flightState.hypeMeter)}% • ⭕ {flightState.thermalsCollected}/3
+              Hype {Math.round(flightState.hypeMeter)}% •{' '}
+              {comp === 'rollercoaster' ? '🔔' : '⭕'} {flightState.thermalsCollected}/3
             </div>
           </div>
         </div>
@@ -233,16 +278,22 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
         {/* ACTION BUTTONS */}
         <div className="grid grid-cols-2 gap-2">
           <button
+            ref={primaryBtnRef}
             onClick={onFlyAgain}
             className="flex items-center justify-center gap-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border-2 border-sky-400/60 py-2 sm:py-2.5 font-display text-xs sm:text-base font-black text-sky-200 shadow-lg active:scale-95 transition cursor-pointer"
-            title="Fly Again (Space / Enter)"
+            title="Play Again (Space / Enter)"
           >
             <RotateCcw className="h-4 w-4 sm:h-5 sm:w-5" />
-            <span>FLY AGAIN!</span>
+            <span>
+              {comp === 'soapbox'
+                ? 'RACE AGAIN!'
+                : comp === 'rollercoaster'
+                ? 'RIDE AGAIN!'
+                : 'FLY AGAIN!'}
+            </span>
           </button>
 
           <button
-            ref={primaryBtnRef}
             onClick={onBackToHangar}
             className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 border-2 border-white py-2 sm:py-2.5 font-display text-xs sm:text-base font-black text-slate-950 shadow-xl active:scale-95 transition cursor-pointer"
             title="Return to Hangar (B / Esc)"
@@ -255,4 +306,3 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
     </div>
   );
 });
-

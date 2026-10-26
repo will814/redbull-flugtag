@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  COMPETITIONS,
+  CompetitionId,
   CraftLoadout,
   CraftPart,
   getPartById,
@@ -7,7 +9,7 @@ import {
   MAX_FLUGTAG_WEIGHT_LBS,
   PAINT_THEMES,
   PartCategory,
-  PRESET_BLUEPRINTS,
+  PRESET_BLUEPRINTS_BY_COMPETITION,
 } from '../builder/PartCatalog';
 import { ComputedCraftMetrics, computeCraftMetrics } from '../physics/CraftMetrics';
 import {
@@ -31,11 +33,14 @@ import {
 export interface SavedCraftSlot {
   id: string;
   name: string;
+  competition?: CompetitionId;
   loadout: CraftLoadout;
   createdAt: number;
 }
 
 interface HangarHUDProps {
+  competition: CompetitionId;
+  onSelectCompetition: (comp: CompetitionId) => void;
   loadout: CraftLoadout;
   metrics: ComputedCraftMetrics;
   selectedCategory: PartCategory;
@@ -60,16 +65,11 @@ interface HangarHUDProps {
   onToggleMute: () => void;
 }
 
-const CATEGORY_TABS: Array<{ id: PartCategory; label: string; emoji: string; keyHint: string }> = [
-  { id: 'wings', label: 'Wings', emoji: '🦅', keyHint: '1' },
-  { id: 'topper', label: 'Topper', emoji: '🌮', keyHint: '2' },
-  { id: 'chassis', label: 'Hull', emoji: '🪵', keyHint: '3' },
-  { id: 'nose', label: 'Nose', emoji: '🚀', keyHint: '4' },
-  { id: 'tail', label: 'Tail', emoji: '📐', keyHint: '5' },
-  { id: 'trolley', label: 'Wheels', emoji: '🛹', keyHint: '6' },
-];
+const COMPETITION_LIST: CompetitionId[] = ['flugtag', 'soapbox', 'rollercoaster'];
 
 export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
+  competition,
+  onSelectCompetition,
   loadout,
   metrics,
   selectedCategory,
@@ -102,7 +102,13 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   const toastTimerRef = useRef<number | null>(null);
   const activePartCardRef = useRef<HTMLButtonElement | null>(null);
 
-  const categoryParts = useMemo(() => getPartsByCategory(selectedCategory), [selectedCategory]);
+  const compMeta = COMPETITIONS[competition];
+  const categoryTabs = compMeta.categories;
+
+  const categoryParts = useMemo(
+    () => getPartsByCategory(selectedCategory, competition),
+    [selectedCategory, competition]
+  );
   const currentEquippedId = loadout[selectedCategory];
 
   // Precompute saved build summaries so computeCraftMetrics is not re-run inside map() on every render
@@ -139,6 +145,12 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
     };
   }, []);
 
+  // Automatically reveal part cards when a 3D socket ring is clicked in the viewport
+  useEffect(() => {
+    setShowPaintDrawer(false);
+    setDockCollapsed(false);
+  }, [selectedCategory]);
+
   // Desktop / Chromebook Keyboard Shortcuts in Hangar Mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -165,20 +177,28 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
         return;
       }
 
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
       if (e.key === 'Escape' && showGarageModal) {
         e.preventDefault();
         setShowGarageModal(false);
         return;
       }
 
+      if (e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        setShowGarageModal((v) => !v);
+        return;
+      }
+
       if (showGarageModal) return;
 
       const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
-      if (idx !== -1 && CATEGORY_TABS[idx]) {
+      if (idx !== -1 && categoryTabs[idx]) {
         e.preventDefault();
         setShowPaintDrawer(false);
         setDockCollapsed(false);
-        onSelectCategory(CATEGORY_TABS[idx].id);
+        onSelectCategory(categoryTabs[idx].id);
       } else if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setDockCollapsed(false);
@@ -186,10 +206,14 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
       } else if (e.key.toLowerCase() === 'w') {
         e.preventDefault();
         onToggleWindTunnel();
-      } else if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) {
+      } else if (e.key.toLowerCase() === 'r') {
         e.preventDefault();
         onRandomizeCraft();
-      } else if (e.code === 'Space' && !e.repeat) {
+      } else if (
+        (e.code === 'Space' || e.code === 'Enter') &&
+        !e.repeat &&
+        (!target || target.tagName !== 'BUTTON')
+      ) {
         e.preventDefault();
         onStartFlight();
       }
@@ -199,6 +223,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     showGarageModal,
+    categoryTabs,
     onSelectCategory,
     onToggleWindTunnel,
     onRandomizeCraft,
@@ -210,19 +235,24 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   const balanceConfig =
     metrics.balanceStatus === 'balanced'
       ? {
-          label: 'BALANCED GLIDER!',
+          label:
+            competition === 'flugtag'
+              ? 'BALANCED GLIDER!'
+              : competition === 'soapbox'
+              ? 'BALANCED RACER!'
+              : 'BALANCED TANDEM!',
           sub: 'Sweet Spot!',
           bg: 'bg-emerald-600/95 border-emerald-300',
         }
       : metrics.balanceStatus === 'nose_heavy'
       ? {
           label: 'NOSE HEAVY!',
-          sub: 'Dives Fast!',
+          sub: competition === 'flugtag' ? 'Dives Fast!' : 'Front Heavy!',
           bg: 'bg-amber-500/95 border-amber-200 text-slate-950',
         }
       : {
           label: 'TAIL HEAVY!',
-          sub: 'Flips Up!',
+          sub: competition === 'flugtag' ? 'Flips Up!' : 'Rear Heavy!',
           bg: 'bg-purple-600/95 border-purple-300',
         };
 
@@ -241,16 +271,39 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
       {/* TOP GROUP: Single-Row Header Bar + Mobile Telemetry Strip + Optional Wind Tunnel Banner */}
       <div className="flex flex-col gap-1">
         <div className="pointer-events-auto flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar rounded-2xl bg-slate-900/95 px-2.5 py-1.5 border border-white/15 shadow-xl">
-          {/* Left: Brand & Stars & Record & Mute */}
+          {/* Left: 3-Competition Switcher + Stars & Record & Mute */}
           <div className="flex shrink-0 items-center gap-1.5">
-            <div className="flex items-center gap-1 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 px-2 py-1 font-display text-xs sm:text-sm font-bold tracking-wide shadow">
-              <span>🐂</span>
-              <span className="hidden md:inline">FLUGTAG</span>
+            <div
+              className="flex items-center gap-0.5 rounded-xl bg-slate-950/90 p-0.5 border border-white/15"
+              role="tablist"
+              aria-label="Select Red Bull Competition"
+            >
+              {COMPETITION_LIST.map((compId) => {
+                const c = COMPETITIONS[compId];
+                const isActive = competition === compId;
+                return (
+                  <button
+                    key={compId}
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => onSelectCompetition(compId)}
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 font-display text-[11px] sm:text-xs font-black tracking-wide transition cursor-pointer ${
+                      isActive
+                        ? 'bg-gradient-to-r from-red-600 to-amber-500 text-white shadow'
+                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                    }`}
+                    title={c.fullName}
+                  >
+                    <span>{c.emoji}</span>
+                    <span className="hidden sm:inline">{c.shortName}</span>
+                  </button>
+                );
+              })}
             </div>
 
             <div
               className="flex items-center gap-1 rounded-xl bg-amber-400/20 border border-amber-400/50 px-2 py-1 text-xs sm:text-sm font-extrabold text-amber-300"
-              title="Judge Stars Earned — Unlocks New Parts!"
+              title="Judge Stars Earned — Unlocks New Parts Across All 3 Events!"
             >
               <span>⭐</span>
               <span>{totalStars}</span>
@@ -258,7 +311,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
 
             <div
               className="flex items-center gap-1 rounded-xl bg-sky-500/20 border border-sky-400/40 px-2 py-1 text-xs sm:text-sm font-extrabold text-sky-200"
-              title="Best Flight Distance (World Record is 258 ft!)"
+              title={`Best ${compMeta.shortName} Distance (Goal: ${compMeta.goalFeet} ft!)`}
             >
               <span>🏆</span>
               <span>{bestDistanceFeet} FT</span>
@@ -283,7 +336,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             {/* Animated Balance Seesaw Pill with Nose/Tail Orientation & Subtitle */}
             <div
               className={`flex items-center gap-1.5 rounded-xl border px-2 py-1 text-xs font-extrabold shadow ${balanceConfig.bg}`}
-              title="Center of Gravity vs. Center of Lift Balance Seesaw"
+              title="Center of Gravity Balance Seesaw"
             >
               <div className="relative flex h-5 w-12 items-center justify-between rounded-lg bg-black/30 px-1">
                 <span className="text-[8px] font-black uppercase opacity-80">T</span>
@@ -291,7 +344,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                   className="h-1.5 w-6 rounded-full bg-yellow-300 transition-transform duration-300"
                   style={{ transform: `rotate(${-metrics.seesawTiltDeg}deg)` }}
                 />
-                <span className="text-[9px] leading-none">✈️</span>
+                <span className="text-[9px] leading-none">{compMeta.emoji}</span>
                 <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rotate-45 bg-white" />
               </div>
               <div className="leading-tight">
@@ -304,11 +357,11 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
               </div>
             </div>
 
-            {/* Desktop Weight, Lift, Stability & Fun Bars */}
+            {/* Desktop Weight, Lift/Speed/Pedal, Stability & Fun Bars */}
             <div className="hidden lg:flex items-center gap-2.5 rounded-xl bg-slate-800/95 px-2.5 py-1 border border-white/10 text-xs">
-              <div className="flex items-center gap-1" title="Aerodynamic Wing Lift">
-                <span>🦅</span>
-                <span className="font-bold text-sky-300">Lift</span>
+              <div className="flex items-center gap-1" title={compMeta.meterLabels.lift}>
+                <span>{compMeta.meterLabels.liftEmoji}</span>
+                <span className="font-bold text-sky-300">{compMeta.meterLabels.lift}</span>
                 <div className="h-2 w-11 rounded-full bg-slate-700 overflow-hidden">
                   <div
                     className="h-full w-full origin-left bg-gradient-to-r from-sky-400 to-emerald-400 transition-transform duration-300"
@@ -317,9 +370,9 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1" title="Pitch Trim & Weathervane Stability">
-                <span>🎯</span>
-                <span className="font-bold text-emerald-300">Stab</span>
+              <div className="flex items-center gap-1" title={compMeta.meterLabels.stability}>
+                <span>{compMeta.meterLabels.stabilityEmoji}</span>
+                <span className="font-bold text-emerald-300">{compMeta.meterLabels.stability}</span>
                 <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
                   <div
                     className="h-full w-full origin-left bg-gradient-to-r from-emerald-400 to-teal-300 transition-transform duration-300"
@@ -330,7 +383,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
 
               <div
                 className="flex items-center gap-1"
-                title="Total Ramp Weight (Over 400 lbs triggers Heavyweight Cannonball inertia & splash!)"
+                title="Total Weight (Over 400 lbs triggers Heavyweight Inertia & Cannonball Bonus!)"
               >
                 <span>⚖️</span>
                 <span
@@ -358,7 +411,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             </div>
           </div>
 
-          {/* Right: Undo/Redo, Wind Tunnel Fan, Mix, Save Build, Garage & FLY! */}
+          {/* Right: Undo/Redo, Wind Tunnel / Test Rig, Mix, Save Build, Garage & LAUNCH! */}
           <div className="flex shrink-0 items-center gap-1">
             <button
               onClick={onUndo}
@@ -396,10 +449,10 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                   ? 'bg-emerald-500 text-slate-950 border-emerald-200 shadow-lg shadow-emerald-500/30'
                   : 'bg-slate-800 text-sky-200 border-sky-400/40 hover:bg-slate-700'
               }`}
-              title="Test Craft in Wind Tunnel (W)"
+              title="Test Craft in Hangar Rig (W)"
             >
               <Wind className={`h-4 w-4 ${windTunnelActive ? 'animate-spin' : ''}`} />
-              <span>{windTunnelActive ? 'FAN ON!' : 'TEST FAN'}</span>
+              <span>{windTunnelActive ? compMeta.testButtonActiveLabel : compMeta.testButtonLabel}</span>
             </button>
 
             <button
@@ -449,19 +502,23 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             <button
               onClick={onStartFlight}
               className="animate-pulse-glow flex items-center gap-1 rounded-xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 px-3 sm:px-4 py-1 font-display text-xs sm:text-base font-black text-slate-950 border-2 border-yellow-200 shadow-lg active:scale-95 transition cursor-pointer"
-              title="Roll Out to the 30-Foot Flight Deck! (Space)"
+              title={`Launch ${compMeta.fullName}! (Space)`}
             >
               <Rocket className="h-4 w-4" />
-              <span>FLY IT!</span>
+              <span>{compMeta.launchLabel}</span>
             </button>
           </div>
         </div>
 
-        {/* COMPACT MOBILE / TABLET (<1024px) TELEMETRY BAR (Lift, Stability, Weight, Fun) */}
+        {/* COMPACT MOBILE / TABLET (<1024px) TELEMETRY BAR */}
         <div className="pointer-events-auto flex lg:hidden items-center justify-center gap-2 self-center rounded-xl bg-slate-900/95 border border-white/15 px-3 py-1 text-[11px] shadow-md">
-          <span className="font-extrabold text-sky-300">🦅 Lift {metrics.liftScore}%</span>
+          <span className="font-extrabold text-sky-300">
+            {compMeta.meterLabels.liftEmoji} {compMeta.meterLabels.lift} {metrics.liftScore}%
+          </span>
           <span className="text-slate-600">•</span>
-          <span className="font-extrabold text-emerald-300">🎯 Stab {metrics.stabilityScore}%</span>
+          <span className="font-extrabold text-emerald-300">
+            {compMeta.meterLabels.stabilityEmoji} {compMeta.meterLabels.stability} {metrics.stabilityScore}%
+          </span>
           <span className="text-slate-600">•</span>
           <span
             className={`font-extrabold ${
@@ -475,13 +532,17 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
           <span className="font-extrabold text-pink-300">🎭 Fun {metrics.creativityScore}%</span>
         </div>
 
-        {/* WIND TUNNEL LIVE FEEDBACK BANNER */}
+        {/* HANGAR TEST RIG LIVE FEEDBACK BANNER */}
         {windTunnelActive && (
           <div className="pointer-events-none self-center rounded-xl bg-slate-900/95 border border-sky-400/50 px-3 py-0.5 text-center shadow-md">
             <div className="text-[11px] sm:text-xs font-extrabold text-sky-300">
-              💨 WIND TUNNEL TEST:{' '}
+              💨 {compMeta.testButtonActiveLabel}:{' '}
               {metrics.isOverWeightLimit
-                ? '⚠️ OVER 400 LB RULE! Extra ramp push inertia, but guaranteed MEGA CANNONBALL breakup!'
+                ? '⚠️ OVER 400 LB RULE! Harder start push, but massive downhill momentum & +1 Creativity Bonus!'
+                : competition === 'soapbox'
+                ? '🏎️ Suspension & Steering checked! Steer Left/Right around hay bales and hit the orange kicker ramps!'
+                : competition === 'rollercoaster'
+                ? '🚲 Tandem Balance checked! Lean Left/Right to stay centered on the floating canal rail & ring the bells!'
                 : metrics.balanceStatus === 'balanced' && metrics.liftScore >= 45
                 ? '✨ Awesome Lift & Balance! Ready for a huge flight!'
                 : metrics.balanceStatus === 'nose_heavy'
@@ -628,10 +689,10 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             {/* Starter Famous Blueprints */}
             <div>
               <div className="text-xs font-black uppercase tracking-wider text-amber-300 mb-1.5">
-                🏆 Famous Flugtag Starter Blueprints
+                🏆 Famous {compMeta.shortName} Starter Blueprints
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {PRESET_BLUEPRINTS.map((preset) => (
+                {PRESET_BLUEPRINTS_BY_COMPETITION[competition].map((preset) => (
                   <button
                     key={preset.name}
                     onClick={() => {
@@ -655,7 +716,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
         {/* Category Tabs + Paint Swatch Button + Collapse Toggle */}
         <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-1" role="tablist" aria-label="Craft Part Categories">
-            {CATEGORY_TABS.map((tab) => {
+            {categoryTabs.map((tab) => {
               const isSelected = !showPaintDrawer && selectedCategory === tab.id;
               return (
                 <button
@@ -701,7 +762,8 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             <div className="hidden md:flex items-center gap-1.5 text-[11px] font-bold text-slate-300">
               <Sparkles className="h-3.5 w-3.5 text-amber-400" />
               <span>
-                {selectedCategory === 'wings' || selectedCategory === 'tail'
+                {competition === 'flugtag' &&
+                (selectedCategory === 'wings' || selectedCategory === 'tail')
                   ? 'Symmetric L/R Pair • Drag/Scroll 3D to Spin & Zoom!'
                   : 'Tap 3D rings or cards to snap on! Drag/Scroll 3D to Spin & Zoom!'}
               </span>
@@ -824,11 +886,16 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                           </div>
                           <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-300">
                             <span>⚖️ {part.massLbs}lb</span>
-                            {part.wingAreaM2 > 0.5 && (
+                            {part.wingAreaM2 > 0.5 ? (
                               <span className="text-sky-300">
-                                🦅 +{Math.round(part.wingAreaM2 * part.liftMultiplier)}
+                                {competition === 'flugtag' ? '🦅' : compMeta.meterLabels.liftEmoji}{' '}
+                                +{Math.round(part.wingAreaM2 * part.liftMultiplier)}
                               </span>
-                            )}
+                            ) : part.pushEfficiency ? (
+                              <span className="text-emerald-300">
+                                🛞 +{Math.round((part.pushEfficiency - 0.85) * 40)}
+                              </span>
+                            ) : null}
                             <span>✨ +{part.creativityPoints}</span>
                           </div>
                         </>
