@@ -172,17 +172,17 @@ export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
   // 5. FUNNY TOPPER (Mounted atop the wing/cockpit)
   buildTopperMesh(topperGroup, topperPart.id);
 
-  // 6. PILOT / TANDEM RIDERS (Seated in cockpit with life vest & helmet)
-  buildPilotMesh(pilotGroup, chassisPart.id);
+  // 6. PILOT (Seated in cockpit with life vest & helmet)
+  buildPilotMesh(pilotGroup);
 
-  // 7. DETACHABLE LAUNCH TROLLEY / RACING WHEELS / BICYCLE RIMS (Underneath)
+  // 7. DETACHABLE LAUNCH TROLLEY (Underneath)
   buildTrolleyMesh(trolleyGroup, trolleyPart.id);
 
   // 8. 4 PUSH CREW MEMBERS (Behind craft on the ramp)
   buildPushCrewMesh(crewGroup, theme.bodyHex);
 
   // 9. MAGNETIC SNAP SOCKET HALOS (For Hangar mode)
-  const socketMarkers = createSocketMarkers(airframeGroup, trolleyGroup, chassisPart.id);
+  const socketMarkers = createSocketMarkers(airframeGroup, trolleyGroup);
   const socketMarkerList: THREE.Mesh[] = [];
   for (const ringMesh of Object.values(socketMarkers)) {
     socketMarkerList.push(ringMesh);
@@ -239,189 +239,7 @@ function buildChassisMesh(
   bodyHex: string,
   stripeHex: string
 ): void {
-  // --- SOAPBOX RACE CHASSIS ---
-  if (id === 'sb_chassis_hotdog') {
-    // Jumbo Wienermobile Cart: Toasted Bun Sides, Giant Grilled Frankfurter & Wavy Mustard Ribbon!
-    [-0.36, 0.36].forEach((z) => {
-      const bunSide = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.32, 0.32, 2.55, 16),
-        makeMat('#f59e0b', 0.55)
-      );
-      bunSide.rotation.z = Math.PI / 2;
-      bunSide.position.set(0, -0.05, z);
-      group.add(bunSide);
-    });
-    const dogFrank = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.4, 0.4, 2.95, 20),
-      makeMat('#dc2626', 0.35)
-    );
-    dogFrank.rotation.z = Math.PI / 2;
-    dogFrank.position.set(0, 0.1, 0);
-    group.add(dogFrank);
-
-    // Wavy yellow mustard squiggle along top
-    for (let i = -4; i <= 4; i++) {
-      const dab = new THREE.Mesh(
-        new THREE.SphereGeometry(0.11, 10, 10),
-        makeMat('#fde047', 0.25)
-      );
-      dab.position.set(i * 0.26, 0.48, Math.sin(i * 1.1) * 0.14);
-      group.add(dab);
-    }
-    return;
-  }
-
-  if (id === 'sb_chassis_cigar' || id === 'sb_chassis_rb19') {
-    const isF1 = id === 'sb_chassis_rb19';
-    const hull = new THREE.Mesh(
-      new THREE.CylinderGeometry(isF1 ? 0.36 : 0.46, isF1 ? 0.48 : 0.42, 2.75, 20),
-      makeMat(bodyHex, 0.22, 0.35)
-    );
-    hull.rotation.z = Math.PI / 2;
-    hull.scale.set(1, 1, 0.86);
-    group.add(hull);
-
-    // Sidepods for RB19 or Racing Stripes for Vintage Cigar Streamliner
-    [-0.5, 0.5].forEach((z) => {
-      const pod = new THREE.Mesh(
-        new THREE.BoxGeometry(isF1 ? 1.55 : 2.1, 0.32, isF1 ? 0.38 : 0.12),
-        makeMat(stripeHex, 0.28, 0.25)
-      );
-      pod.position.set(-0.1, -0.06, z);
-      group.add(pod);
-    });
-
-    // Roll Hoop behind driver
-    const hoop = new THREE.Mesh(
-      new THREE.TorusGeometry(0.32, 0.045, 8, 16, Math.PI),
-      makeMat('#facc15', 0.25, 0.7)
-    );
-    hoop.rotation.y = Math.PI / 2;
-    hoop.position.set(-0.45, 0.35, 0);
-    group.add(hoop);
-    return;
-  }
-
-  if (id === 'sb_chassis_cardboard_box') {
-    const box = new THREE.Mesh(
-      new THREE.BoxGeometry(2.45, 0.72, 1.16),
-      makeMat('#d97706', 0.75)
-    );
-    box.position.y = 0.04;
-    const stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(2.48, 0.18, 1.2),
-      makeMat('#38bdf8', 0.4)
-    );
-    stripe.position.y = 0.12;
-    group.add(box, stripe);
-    return;
-  }
-
-  // --- TANDEM ROLLERCOASTER FRAMES ---
-  if (id.startsWith('rc_frame_')) {
-    const frameColor =
-      id === 'rc_frame_bamboo'
-        ? '#65a30d'
-        : id === 'rc_frame_swan'
-        ? '#f8fafc'
-        : id === 'rc_frame_castiron'
-        ? '#1e293b'
-        : id === 'rc_frame_carbon'
-        ? '#0f172a'
-        : bodyHex;
-    const tubeRadius = id === 'rc_frame_carbon' ? 0.08 : 0.055;
-
-    // Main horizontal top tube + bottom tube connecting front & rear tandem cranks
-    const topTube = new THREE.Mesh(
-      new THREE.CylinderGeometry(tubeRadius, tubeRadius, 2.35, 12),
-      makeMat(frameColor, 0.25, 0.6)
-    );
-    topTube.rotation.z = Math.PI / 2;
-    topTube.position.set(0, 0.18, 0);
-
-    const bottomTube = new THREE.Mesh(
-      new THREE.CylinderGeometry(tubeRadius, tubeRadius, 2.35, 12),
-      makeMat(frameColor, 0.25, 0.6)
-    );
-    bottomTube.rotation.z = Math.PI / 2;
-    bottomTube.position.set(0, -0.22, 0);
-    group.add(topTube, bottomTube);
-
-    if (id === 'rc_frame_carbon') {
-      const aeroSpine = new THREE.Mesh(
-        new THREE.BoxGeometry(2.2, 0.18, 0.09),
-        makeMat('#06b6d4', 0.2, 0.7)
-      );
-      aeroSpine.position.set(0, -0.02, 0);
-      group.add(aeroSpine);
-    }
-
-    // 2 Seat Posts + 2 Saddles (Captain at x=+0.38, Stoker at x=-0.58)
-    [0.38, -0.58].forEach((sx) => {
-      const post = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.05, 0.68, 10),
-        makeMat(frameColor, 0.3, 0.5)
-      );
-      post.position.set(sx, 0.04, 0);
-      post.rotation.z = 0.18;
-
-      const saddle = new THREE.Mesh(
-        new THREE.BoxGeometry(0.32, 0.09, 0.24),
-        makeMat('#0f172a', 0.6)
-      );
-      saddle.position.set(sx - 0.06, 0.36, 0);
-      group.add(post, saddle);
-    });
-
-    // Head tube at front (x = +1.12)
-    const headTube = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.055, 0.055, 0.72, 10),
-      makeMat(stripeHex, 0.3, 0.5)
-    );
-    headTube.position.set(1.12, 0.08, 0);
-    headTube.rotation.z = 0.2;
-    group.add(headTube);
-
-    if (id === 'rc_frame_swan') {
-      // Sculpted White Swan Boat Shell & Graceful Curved Swan Neck at the front!
-      const swanHull = new THREE.Mesh(
-        new THREE.SphereGeometry(0.65, 18, 14),
-        makeMat('#ffffff', 0.25)
-      );
-      swanHull.scale.set(2.1, 0.55, 0.85);
-      swanHull.position.set(-0.1, 0.02, 0);
-      const swanNeck = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.09, 0.14, 0.95, 12),
-        makeMat('#ffffff', 0.25)
-      );
-      swanNeck.position.set(1.22, 0.55, 0);
-      swanNeck.rotation.z = -0.25;
-      const swanBeak = new THREE.Mesh(
-        new THREE.ConeGeometry(0.09, 0.28, 10),
-        makeMat('#f97316', 0.3)
-      );
-      swanBeak.rotation.z = -Math.PI / 2;
-      swanBeak.position.set(1.48, 0.92, 0);
-      group.add(swanHull, swanNeck, swanBeak);
-    } else if (id === 'rc_frame_castiron') {
-      // Steam Locomotive Boiler Drum & Smokestack!
-      const boiler = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.36, 0.36, 2.2, 16),
-        makeMat('#1e293b', 0.35, 0.8)
-      );
-      boiler.rotation.z = Math.PI / 2;
-      boiler.position.set(0.05, 0.02, 0);
-      const stack = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.14, 0.1, 0.55, 12),
-        makeMat('#ef4444', 0.3, 0.6)
-      );
-      stack.position.set(0.95, 0.48, 0);
-      group.add(boiler, stack);
-    }
-    return;
-  }
-
-  if (id === 'chassis_bathtub' || id === 'sb_chassis_bathtub') {
+  if (id === 'chassis_bathtub') {
     // Detailed Vintage Clawfoot Porcelain Bathtub with Swan Faucet, Bubbles & Rubber Ducky!
     const tubOuter = new THREE.Mesh(
       new THREE.CylinderGeometry(0.76, 0.6, 2.55, 20),
@@ -667,119 +485,6 @@ function buildWingsMesh(
   wingHex: string,
   stripeHex: string
 ): void {
-  // --- SOAPBOX SUSPENSION & STEERING ARMS ---
-  if (id.startsWith('sb_susp_')) {
-    const shockColor =
-      id === 'sb_susp_monster'
-        ? '#22c55e'
-        : id === 'sb_susp_coilover'
-        ? '#eab308'
-        : id === 'sb_susp_rope'
-        ? '#d97706'
-        : '#64748b';
-
-    // Front & Rear A-arm struts + 4 vertical coilover shock springs
-    [-0.74, 0.74].forEach((x) => {
-      const axleStrut = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.045, 0.045, 1.38, 10),
-        makeMat('#334155', 0.4, 0.7)
-      );
-      axleStrut.rotation.x = Math.PI / 2;
-      axleStrut.position.set(x, -0.35, 0);
-      group.add(axleStrut);
-
-      [-0.54, 0.54].forEach((z) => {
-        const spring = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.08, 0.08, 0.42, 10),
-          makeMat(shockColor, 0.3, 0.4)
-        );
-        spring.position.set(x, -0.18, z);
-        group.add(spring);
-      });
-    });
-
-    // Cockpit Steering Wheel
-    const wheelRing = new THREE.Mesh(
-      new THREE.TorusGeometry(0.16, 0.03, 8, 16),
-      makeMat('#0f172a', 0.5)
-    );
-    wheelRing.rotation.y = Math.PI / 2;
-    wheelRing.rotation.z = 0.4;
-    wheelRing.position.set(0.55, 0.52, 0);
-    group.add(wheelRing);
-    return;
-  }
-
-  // --- TANDEM ROLLERCOASTER BALANCE OUTRIGGERS & BARS ---
-  if (id.startsWith('rc_bal_')) {
-    // Captain & Stoker Dual Handlebars
-    [1.06, 0.14].forEach((bx, idx) => {
-      const bar = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.03, 0.03, idx === 0 ? 0.92 : 0.72, 10),
-        makeMat('#e2e8f0', 0.2, 0.8)
-      );
-      bar.rotation.x = Math.PI / 2;
-      bar.position.set(bx, 0.56 - idx * 0.08, 0);
-      group.add(bar);
-    });
-
-    if (id === 'rc_bal_tightrope') {
-      // 14-Ft Circus Tightrope Balance Pole across Z with glowing red end-weights!
-      const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.035, 0.035, 4.6, 12),
-        makeMat('#facc15', 0.3, 0.3)
-      );
-      pole.rotation.x = Math.PI / 2;
-      pole.position.set(0.15, 0.65, 0);
-      group.add(pole);
-
-      [-2.3, 2.3].forEach((z) => {
-        const tipWeight = new THREE.Mesh(
-          new THREE.SphereGeometry(0.16, 12, 12),
-          makeMat('#dc2626', 0.3)
-        );
-        tipWeight.position.set(0.15, 0.65, z);
-        group.add(tipWeight);
-      });
-    } else if (id === 'rc_bal_noodles') {
-      // Twin Pool-Noodle Side Pontoons on Outrigger Struts
-      [-0.88, 0.88].forEach((z, idx) => {
-        const noodle = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.12, 0.12, 1.95, 14),
-          makeMat(idx === 0 ? '#06b6d4' : '#ec4899', 0.4)
-        );
-        noodle.rotation.z = Math.PI / 2;
-        noodle.position.set(0, -0.08, z);
-        const strut = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.03, 0.03, 0.88, 8),
-          makeMat('#94a3b8', 0.3, 0.6)
-        );
-        strut.rotation.x = Math.PI / 2;
-        strut.position.set(0, 0.0, z * 0.5);
-        group.add(noodle, strut);
-      });
-    } else if (id === 'rc_bal_gyro') {
-      // Counter-Rotating Golden Brass Gyro Ring mounted mid-frame
-      const gyroGroup = new THREE.Group();
-      gyroGroup.position.set(-0.08, 0.28, 0);
-      gyroGroup.userData.isWheelSpinner = true;
-
-      const gyroRing = new THREE.Mesh(
-        new THREE.TorusGeometry(0.42, 0.065, 10, 20),
-        makeMat('#facc15', 0.2, 0.85)
-      );
-      const spokeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.82, 8);
-      const spokeMat = makeMat('#f59e0b', 0.25, 0.8);
-      const spoke1 = new THREE.Mesh(spokeGeo, spokeMat);
-      const spoke2 = new THREE.Mesh(spokeGeo, spokeMat);
-      spoke2.rotation.z = Math.PI / 2;
-
-      gyroGroup.add(gyroRing, spoke1, spoke2);
-      group.add(gyroGroup);
-    }
-    return;
-  }
-
   if (id === 'wing_stubby_toast') {
     // Corrugated Pizza-Box Cardboard Flaps with Duct-Tape Hinges
     [-1, 1].forEach((side) => {
@@ -1024,108 +729,6 @@ function buildTailMesh(
 ): void {
   if (id === 'tail_none') return;
 
-  // --- SOAPBOX REAR BRAKES & SPOILERS ---
-  if (id.startsWith('sb_tail_')) {
-    if (id === 'sb_tail_gtwing') {
-      [-0.35, 0.35].forEach((z) => {
-        const strut = new THREE.Mesh(
-          new THREE.BoxGeometry(0.18, 0.65, 0.05),
-          makeMat('#0f172a', 0.4)
-        );
-        strut.position.set(-1.18, 0.48, z);
-        group.add(strut);
-      });
-      const wing = new THREE.Mesh(
-        new THREE.BoxGeometry(0.45, 0.08, 1.65),
-        makeMat(stripeHex, 0.25)
-      );
-      wing.position.set(-1.22, 0.82, 0);
-      wing.rotation.z = 0.18;
-      group.add(wing);
-    } else if (id === 'sb_tail_anchor') {
-      const shank = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.06, 0.78, 10),
-        makeMat('#334155', 0.4, 0.8)
-      );
-      shank.position.set(-1.32, 0.15, 0);
-      const fluke = new THREE.Mesh(
-        new THREE.TorusGeometry(0.28, 0.055, 8, 14, Math.PI),
-        makeMat('#334155', 0.4, 0.8)
-      );
-      fluke.rotation.z = Math.PI;
-      fluke.position.set(-1.32, -0.1, 0);
-      group.add(shank, fluke);
-    } else if (id === 'sb_tail_chute') {
-      [-0.28, 0.28].forEach((z) => {
-        const pack = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.16, 0.16, 0.42, 12),
-          makeMat('#ec4899', 0.35)
-        );
-        pack.rotation.z = Math.PI / 2;
-        pack.position.set(-1.25, 0.22, z);
-        group.add(pack);
-      });
-    } else {
-      // 2x4 Wood Scrub Brake Lever
-      const lever = new THREE.Mesh(
-        new THREE.BoxGeometry(0.14, 0.82, 0.12),
-        makeMat('#b45309', 0.7)
-      );
-      lever.position.set(-0.95, 0.18, 0.55);
-      lever.rotation.z = 0.32;
-      group.add(lever);
-    }
-    return;
-  }
-
-  // --- TANDEM ROLLERCOASTER DRIVETRAIN & SPROCKETS ---
-  if (id.startsWith('rc_gear_')) {
-    const gearColor =
-      id === 'rc_gear_hillclimb'
-        ? '#16a34a'
-        : id === 'rc_gear_overdrive'
-        ? '#dc2626'
-        : id === 'rc_gear_leadweight'
-        ? '#334155'
-        : '#f59e0b';
-    const radius =
-      id === 'rc_gear_leadweight' ? 0.34 : id === 'rc_gear_hillclimb' ? 0.28 : 0.19;
-    const rearThickness = id === 'rc_gear_leadweight' ? 0.14 : 0.04;
-
-    // Front, Mid, and Rear Chainring Sprockets + Crank Arms along right side (z = +0.16)
-    const crankArmGeo = new THREE.BoxGeometry(0.32, 0.035, 0.025);
-    const crankMat = makeMat('#e2e8f0', 0.25, 0.8);
-    [0.35, -0.55, -1.15].forEach((gx, idx) => {
-      const sprocketGroup = new THREE.Group();
-      sprocketGroup.position.set(gx, -0.22, 0.16);
-      sprocketGroup.userData.isWheelSpinner = true;
-
-      const sprocket = new THREE.Mesh(
-        new THREE.CylinderGeometry(
-          idx === 2 ? radius : 0.18,
-          idx === 2 ? radius : 0.18,
-          idx === 2 ? rearThickness : 0.04,
-          16
-        ),
-        makeMat(gearColor, 0.25, 0.7)
-      );
-      sprocket.rotation.x = Math.PI / 2;
-
-      const crankBar = new THREE.Mesh(crankArmGeo, crankMat);
-      crankBar.position.z = 0.025;
-      sprocketGroup.add(sprocket, crankBar);
-      group.add(sprocketGroup);
-    });
-
-    const chainBar = new THREE.Mesh(
-      new THREE.BoxGeometry(1.55, 0.06, 0.03),
-      makeMat('#334155', 0.4, 0.8)
-    );
-    chainBar.position.set(-0.4, -0.22, 0.16);
-    group.add(chainBar);
-    return;
-  }
-
   // Twin Tail Boom Truss connecting fuselage to rear stabilizer
   [-0.18, 0.18].forEach((z) => {
     const boom = new THREE.Mesh(
@@ -1235,102 +838,6 @@ function buildNoseMesh(
   stripeHex: string,
   wingHex: string
 ): THREE.Object3D | null {
-  // --- SOAPBOX FRONT BUMPERS ---
-  if (id.startsWith('sb_nose_')) {
-    if (id === 'sb_nose_mustache') {
-      [-1, 1].forEach((side) => {
-        const curl = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.12, 0.16, 0.65, 12),
-          makeMat('#451a03', 0.65)
-        );
-        curl.rotation.x = Math.PI / 2;
-        curl.rotation.z = side * 0.28;
-        curl.position.set(1.42, 0.05, side * 0.3);
-        group.add(curl);
-      });
-      return null;
-    }
-    if (id === 'sb_nose_spoiler') {
-      const wing = new THREE.Mesh(
-        new THREE.BoxGeometry(0.38, 0.07, 1.48),
-        makeMat(stripeHex, 0.25)
-      );
-      wing.position.set(1.48, -0.22, 0);
-      group.add(wing);
-      return null;
-    }
-    // Hayplow Wedge or Anvil Bumper
-    const wedge = new THREE.Mesh(
-      new THREE.ConeGeometry(0.46, 0.65, 4),
-      makeMat(id === 'sb_nose_anvil' ? '#1e293b' : '#ef4444', 0.35, 0.6)
-    );
-    wedge.rotation.z = -Math.PI / 2;
-    wedge.rotation.x = Math.PI / 4;
-    wedge.position.set(1.48, -0.08, 0);
-    group.add(wedge);
-    return null;
-  }
-
-  // --- TANDEM ROLLERCOASTER FRONT BASKET & BELLS ---
-  if (id.startsWith('rc_nose_')) {
-    if (id === 'rc_nose_tulips') {
-      const basket = new THREE.Mesh(
-        new THREE.BoxGeometry(0.36, 0.32, 0.48),
-        makeMat('#d97706', 0.7)
-      );
-      basket.position.set(1.32, 0.42, 0);
-      group.add(basket);
-      [-0.14, 0, 0.14].forEach((tz, idx) => {
-        const flower = new THREE.Mesh(
-          new THREE.SphereGeometry(0.09, 10, 10),
-          makeMat(idx === 0 ? '#ef4444' : idx === 1 ? '#facc15' : '#ec4899', 0.3)
-        );
-        flower.position.set(1.32, 0.64, tz);
-        group.add(flower);
-      });
-      return null;
-    }
-    if (id === 'rc_nose_keg') {
-      const barrel = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.24, 0.24, 0.56, 14),
-        makeMat('#78350f', 0.6)
-      );
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(1.36, 0.35, 0);
-      group.add(barrel);
-      return null;
-    }
-    if (id === 'rc_nose_siren') {
-      // Aero Track Fairing Shield + Twin Red Airhorn Bugles!
-      const fairing = new THREE.Mesh(
-        new THREE.SphereGeometry(0.32, 16, 12, 0, Math.PI, 0, Math.PI / 2),
-        makeMat('#06b6d4', 0.18, 0.4)
-      );
-      fairing.rotation.z = -Math.PI / 4;
-      fairing.position.set(1.32, 0.46, 0);
-      group.add(fairing);
-
-      [-0.18, 0.18].forEach((hz) => {
-        const horn = new THREE.Mesh(
-          new THREE.ConeGeometry(0.09, 0.36, 12),
-          makeMat('#ef4444', 0.25, 0.65)
-        );
-        horn.rotation.z = Math.PI / 2;
-        horn.position.set(1.38, 0.64, hz);
-        group.add(horn);
-      });
-      return null;
-    }
-    // Brass Canal Bell on Front Bars
-    const bellDome = new THREE.Mesh(
-      new THREE.SphereGeometry(0.2, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-      makeMat('#facc15', 0.18, 0.85)
-    );
-    bellDome.position.set(1.26, 0.62, 0);
-    group.add(bellDome);
-    return null;
-  }
-
   if (id === 'nose_duck_bill') {
     // Sculpted Giant Yellow Duck Head with Curved Flat Orange Bill, Nostrils & Feather Tuft!
     const head = new THREE.Mesh(
@@ -2446,147 +1953,50 @@ function buildTopperMesh(group: THREE.Group, id: string): void {
   group.add(rooster);
 }
 
-function buildPilotMesh(group: THREE.Group, chassisId = ''): void {
-  const isTandem = chassisId.startsWith('rc_');
-  const isSoapbox = chassisId.startsWith('sb_');
+function buildPilotMesh(group: THREE.Group): void {
+  const x = 0.15;
+  const y = 0.45;
+  const torsoHex = '#f97316';
+  const helmetHex = '#2563eb';
 
-  const riderOffsets = isTandem
-    ? [
-        { x: 0.34, y: 0.62, torsoHex: '#f97316', helmetHex: '#2563eb' },
-        { x: -0.62, y: 0.62, torsoHex: '#facc15', helmetHex: '#dc2626' },
-      ]
-    : isSoapbox
-    ? [
-        { x: 0.22, y: 0.42, torsoHex: '#f97316', helmetHex: '#2563eb' },
-        { x: -0.36, y: 0.46, torsoHex: '#22c55e', helmetHex: '#eab308' },
-      ]
-    : [{ x: 0.15, y: 0.45, torsoHex: '#f97316', helmetHex: '#2563eb' }];
+  const torso = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.2, 0.52, 12),
+    makeMat(torsoHex, 0.45)
+  );
+  torso.position.set(x, y, 0);
 
-  const legGeo = isTandem ? new THREE.CylinderGeometry(0.06, 0.05, 0.46, 8) : null;
-  const legMat = isTandem ? makeMat('#1e293b', 0.55) : null;
-
-  riderOffsets.forEach(({ x, y, torsoHex, helmetHex }, riderIdx) => {
-    const torso = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.2, 0.52, 12),
-      makeMat(torsoHex, 0.45)
+  [-0.22, 0.22].forEach((z) => {
+    const arm = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.05, 0.38, 8),
+      makeMat('#1e3a8a', 0.5)
     );
-    torso.position.set(x, y, 0);
-
-    [-0.22, 0.22].forEach((z) => {
-      const arm = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.055, 0.05, 0.38, 8),
-        makeMat('#1e3a8a', 0.5)
-      );
-      arm.position.set(x + 0.15, y + 0.03, z);
-      arm.rotation.z = -1.1;
-      group.add(arm);
-    });
-
-    if (isTandem && legGeo && legMat) {
-      [-0.13, 0.13].forEach((lz, legIdx) => {
-        const leg = new THREE.Mesh(legGeo, legMat);
-        const phaseUp = (riderIdx + legIdx) % 2 === 0;
-        leg.position.set(x + 0.08, y - 0.36 + (phaseUp ? 0.05 : -0.04), lz);
-        leg.rotation.z = phaseUp ? -0.38 : -0.15;
-        group.add(leg);
-      });
-    }
-
-    const helmet = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 16, 16),
-      makeMat(helmetHex, 0.2, 0.35)
-    );
-    helmet.position.set(x + 0.03, y + 0.39, 0);
-
-    const helmetStripe = new THREE.Mesh(
-      new THREE.BoxGeometry(0.45, 0.08, 0.12),
-      makeMat('#facc15', 0.25)
-    );
-    helmetStripe.position.set(x + 0.03, y + 0.49, 0);
-
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.16, 0.12, 0.3),
-      makeMat('#0f172a', 0.1, 0.85)
-    );
-    visor.position.set(x + 0.17, y + 0.39, 0);
-
-    group.add(torso, helmet, helmetStripe, visor);
+    arm.position.set(x + 0.15, y + 0.03, z);
+    arm.rotation.z = -1.1;
+    group.add(arm);
   });
+
+  const helmet = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 16, 16),
+    makeMat(helmetHex, 0.2, 0.35)
+  );
+  helmet.position.set(x + 0.03, y + 0.39, 0);
+
+  const helmetStripe = new THREE.Mesh(
+    new THREE.BoxGeometry(0.45, 0.08, 0.12),
+    makeMat('#facc15', 0.25)
+  );
+  helmetStripe.position.set(x + 0.03, y + 0.49, 0);
+
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.16, 0.12, 0.3),
+    makeMat('#0f172a', 0.1, 0.85)
+  );
+  visor.position.set(x + 0.17, y + 0.39, 0);
+
+  group.add(torso, helmet, helmetStripe, visor);
 }
 
 function buildTrolleyMesh(group: THREE.Group, id: string): void {
-  // --- TANDEM ROLLERCOASTER INLINE BICYCLE WHEELS ---
-  if (id.startsWith('rc_wheels_')) {
-    const isClogs = id === 'rc_wheels_clogs';
-    const isFlanged = id === 'rc_wheels_flanged';
-    const tireColor = isClogs ? '#d97706' : isFlanged ? '#22c55e' : '#0f172a';
-    const rimColor = isClogs ? '#facc15' : isFlanged ? '#facc15' : '#f8fafc';
-
-    const tireGeo = new THREE.TorusGeometry(0.44, 0.075, 10, 24);
-    const rimGeo = new THREE.TorusGeometry(0.35, 0.035, 8, 20);
-    const flangeGeo = isFlanged ? new THREE.TorusGeometry(0.49, 0.022, 8, 24) : null;
-    const spokeGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.72, 6);
-    const tireMat = makeMat(tireColor, 0.55);
-    const rimMat = makeMat(rimColor, 0.25, 0.6);
-
-    [1.15, -1.15].forEach((wx) => {
-      const wheelGroup = new THREE.Group();
-      wheelGroup.position.set(wx, -0.32, 0);
-      wheelGroup.userData.isWheelSpinner = true;
-      wheelGroup.add(new THREE.Mesh(tireGeo, tireMat));
-      wheelGroup.add(new THREE.Mesh(rimGeo, rimMat));
-
-      if (flangeGeo) {
-        [-0.06, 0.06].forEach((fz) => {
-          const flange = new THREE.Mesh(flangeGeo, rimMat);
-          flange.position.z = fz;
-          wheelGroup.add(flange);
-        });
-      }
-
-      for (let s = 0; s < 4; s++) {
-        const spoke = new THREE.Mesh(spokeGeo, rimMat);
-        spoke.rotation.z = (s * Math.PI) / 4;
-        wheelGroup.add(spoke);
-      }
-      group.add(wheelGroup);
-    });
-    return;
-  }
-
-  // --- SOAPBOX RACE 4-WHEEL RACING TIRES ---
-  if (id.startsWith('sb_wheels_')) {
-    const isCheese = id === 'sb_wheels_cheese';
-    const isSlicks = id === 'sb_wheels_slicks';
-    const wheelRadius = isCheese ? 0.3 : isSlicks ? 0.26 : 0.25;
-    const width = isSlicks ? 0.24 : 0.16;
-    const wheelGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, width, 18);
-    wheelGeo.rotateX(Math.PI / 2);
-    const hubGeo = new THREE.CylinderGeometry(wheelRadius * 0.48, wheelRadius * 0.48, width + 0.02, 12);
-    hubGeo.rotateX(Math.PI / 2);
-    const lugGeo = new THREE.BoxGeometry(wheelRadius * 1.4, 0.04, width + 0.03);
-
-    const wheelMat = makeMat(isCheese ? '#facc15' : '#0f172a', 0.6);
-    const hubMat = makeMat(isCheese ? '#f97316' : isSlicks ? '#eab308' : '#ef4444', 0.3, 0.5);
-
-    [
-      [-0.78, 0.68],
-      [-0.78, -0.68],
-      [0.78, 0.68],
-      [0.78, -0.68],
-    ].forEach(([x, z]) => {
-      const wheelGroup = new THREE.Group();
-      wheelGroup.position.set(x, -0.42, z);
-      wheelGroup.userData.isWheelSpinner = true;
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      const hub = new THREE.Mesh(hubGeo, hubMat);
-      const lug = new THREE.Mesh(lugGeo, hubMat);
-      wheelGroup.add(wheel, hub, lug);
-      group.add(wheelGroup);
-    });
-    return;
-  }
-
   const frameColor =
     id === 'trolley_monster_wheels'
       ? '#22c55e'
@@ -2686,12 +2096,8 @@ function buildPushCrewMesh(group: THREE.Group, jerseyHex: string): void {
 
 function createSocketMarkers(
   airframeGroup: THREE.Group,
-  trolleyGroup: THREE.Group,
-  chassisId = ''
+  trolleyGroup: THREE.Group
 ): Record<PartCategory, THREE.Mesh> {
-  const isTandem = chassisId.startsWith('rc_');
-  const isSoapbox = chassisId.startsWith('sb_');
-
   const sharedRingGeo = getCachedGeo('socket_ring_geo', () => {
     const g = new THREE.RingGeometry(0.24, 0.4, 24);
     g.rotateX(-Math.PI / 2);
@@ -2744,28 +2150,6 @@ function createSocketMarkers(
     parent.add(mesh);
     return mesh;
   };
-
-  if (isTandem) {
-    return {
-      chassis: makeRing('chassis', 0x38bdf8, [0, 0.1, 0], airframeGroup),
-      wings: makeRing('wings', 0xfacc15, [0.15, 0.62, 0], airframeGroup),
-      tail: makeRing('tail', 0xf43f5e, [-0.4, -0.22, 0.2], airframeGroup),
-      nose: makeRing('nose', 0x22c55e, [1.32, 0.48, 0], airframeGroup),
-      topper: makeRing('topper', 0xa855f7, [0, 1.02, 0], airframeGroup),
-      trolley: makeRing('trolley', 0xf97316, [1.15, -0.32, 0], trolleyGroup),
-    };
-  }
-
-  if (isSoapbox) {
-    return {
-      chassis: makeRing('chassis', 0x38bdf8, [0, 0.05, 0], airframeGroup),
-      wings: makeRing('wings', 0xfacc15, [0, -0.28, 0.65], airframeGroup),
-      tail: makeRing('tail', 0xf43f5e, [-1.45, 0.32, 0], airframeGroup),
-      nose: makeRing('nose', 0x22c55e, [1.48, 0.08, 0], airframeGroup),
-      topper: makeRing('topper', 0xa855f7, [0, 0.92, 0], airframeGroup),
-      trolley: makeRing('trolley', 0xf97316, [0.78, -0.42, 0.68], trolleyGroup),
-    };
-  }
 
   return {
     chassis: makeRing('chassis', 0x38bdf8, [0, 0.05, 0], airframeGroup),

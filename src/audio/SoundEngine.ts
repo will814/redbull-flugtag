@@ -4,9 +4,11 @@ class FlugtagSoundEngine {
   private compressor: DynamicsCompressorNode | null = null;
   private splashNoiseBuffer: AudioBuffer | null = null;
   private _muted: boolean = false;
-  private lastAirhornTime: number = 0;
-  private lastPushTime: number = 0;
-  private lastSnapTime: number = 0;
+  private lastAirhornTime: number = -1;
+  private lastPushTime: number = -1;
+  private lastSnapTime: number = -1;
+  private lastTireScreechTime: number = -1;
+  private lastBrakeHumTime: number = -1;
 
   public get muted(): boolean {
     return this._muted;
@@ -15,6 +17,7 @@ class FlugtagSoundEngine {
   public set muted(val: boolean) {
     this._muted = val;
     if (this.masterGain && this.ctx) {
+      this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
       this.masterGain.gain.setTargetAtTime(val ? 0 : 1, this.ctx.currentTime, 0.015);
     }
   }
@@ -228,7 +231,8 @@ class FlugtagSoundEngine {
     if (!bus || !this.splashNoiseBuffer) return;
     const { ctx, out } = bus;
     const now = ctx.currentTime;
-    const duration = 0.55 + (intensity / 100) * 0.45;
+    const clampedIntensity = Number.isFinite(intensity) ? Math.max(0, Math.min(100, intensity)) : 60;
+    const duration = 0.55 + (clampedIntensity / 100) * 0.45;
 
     const noise = ctx.createBufferSource();
     noise.buffer = this.splashNoiseBuffer;
@@ -273,6 +277,59 @@ class FlugtagSoundEngine {
     notes.forEach((f, i) => {
       this.scheduleTone(ctx, out, 'triangle', f, null, now + i * 0.07, 0.32, 0.18);
     });
+  }
+
+  /** Tire screech / drift chirp for Soapbox Derby cornering */
+  public playTireScreech(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    if (now - this.lastTireScreechTime < 0.12) return;
+    this.lastTireScreechTime = now;
+    this.scheduleTone(ctx, out, 'sawtooth', 620, 480, now, 0.16, 0.08);
+    this.scheduleTone(ctx, out, 'triangle', 940, 710, now + 0.02, 0.14, 0.06);
+  }
+
+  /** Low impact thud for hay-bale collisions, suspension bottoming out, or coaster derailment */
+  public playCrashThud(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    this.scheduleTone(ctx, out, 'triangle', 140, 42, now, 0.24, 0.28);
+    this.scheduleTone(ctx, out, 'sawtooth', 95, 34, now, 0.19, 0.16);
+  }
+
+  /** Starting gate drop clank + race green-light chime */
+  public playStartGateDrop(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    this.scheduleTone(ctx, out, 'triangle', 220, 90, now, 0.12, 0.22);
+    this.scheduleTone(ctx, out, 'sine', 880, 1046.5, now + 0.04, 0.25, 0.18);
+  }
+
+  /** Electric LIM magnetic launch surge for Rollercoaster launch & kinetic booster */
+  public playLimLaunchWhoosh(perfect: boolean = true): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    this.scheduleTone(ctx, out, 'sawtooth', 160, perfect ? 640 : 440, now, 0.36, 0.14);
+    this.scheduleTone(ctx, out, 'sine', 320, perfect ? 960 : 660, now + 0.03, 0.34, 0.16);
+  }
+
+  /** Eddy-current magnetic brake hum */
+  public playMagnetBrakeHum(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    if (now - this.lastBrakeHumTime < 0.09) return;
+    this.lastBrakeHumTime = now;
+    this.scheduleTone(ctx, out, 'sine', 420, 260, now, 0.14, 0.11);
   }
 }
 

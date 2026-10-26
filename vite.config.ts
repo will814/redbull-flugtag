@@ -9,11 +9,23 @@ export default defineConfig({
     port: 5173,
   },
   build: {
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
-        manualChunks: {
-          three: ['three'],
-          vendor: ['react', 'react-dom', 'lucide-react', 'canvas-confetti'],
+        manualChunks(id) {
+          if (id.includes('node_modules/three')) return 'three';
+          if (id.includes('node_modules/')) return 'vendor';
+          if (id.includes('/src/soapbox/')) return 'game-soapbox';
+          if (id.includes('/src/coaster/')) return 'game-coaster';
+          if (
+            id.includes('/src/flugtag/') ||
+            id.includes('/src/builder/') ||
+            id.includes('/src/physics/') ||
+            id.includes('/src/scene/')
+          ) {
+            return 'game-flugtag';
+          }
+          return undefined;
         },
       },
     },

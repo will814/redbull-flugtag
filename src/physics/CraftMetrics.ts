@@ -58,13 +58,9 @@ export function computeCraftMetrics(loadout: CraftLoadout): ComputedCraftMetrics
   const topper = getPartById(loadout.topper);
   const trolley = getPartById(loadout.trolley);
 
-  const isWheeledCourse =
-    chassis.competition === 'soapbox' || chassis.competition === 'rollercoaster';
-  const activeParts = isWheeledCourse
-    ? [chassis, wings, tail, nose, topper, trolley]
-    : [chassis, wings, tail, nose, topper];
+  const airborneParts = [chassis, wings, tail, nose, topper];
 
-  let activePartsMassLbs = 0;
+  let partsMassLbs = 0;
   let partsMoment = 0;
   let rawWingAreaM2 = 0;
   let aeroWeightedMoment = 0;
@@ -73,11 +69,11 @@ export function computeCraftMetrics(loadout: CraftLoadout): ComputedCraftMetrics
   let dragSum = 0;
   let stabilitySum = 0;
   let toughnessSum = 0;
-  let rawCreativity = isWheeledCourse ? 0 : trolley.creativityPoints;
+  let rawCreativity = trolley.creativityPoints;
 
-  for (let i = 0; i < activeParts.length; i++) {
-    const p = activeParts[i];
-    activePartsMassLbs += p.massLbs;
+  for (let i = 0; i < airborneParts.length; i++) {
+    const p = airborneParts[i];
+    partsMassLbs += p.massLbs;
     partsMoment += p.massLbs * p.cgOffsetX;
     rawWingAreaM2 += p.wingAreaM2;
     const effLift = Math.max(0.2, p.liftMultiplier);
@@ -90,13 +86,11 @@ export function computeCraftMetrics(loadout: CraftLoadout): ComputedCraftMetrics
     rawCreativity += p.creativityPoints;
   }
 
-  const gliderMassLbs =
-    chassis.massLbs + wings.massLbs + tail.massLbs + nose.massLbs + topper.massLbs + PILOT_MASS_LBS;
-  const rampTotalMassLbs = gliderMassLbs + trolley.massLbs;
-  const airborneMassLbs = isWheeledCourse ? rampTotalMassLbs : gliderMassLbs;
+  const airborneMassLbs = partsMassLbs + PILOT_MASS_LBS;
+  const rampTotalMassLbs = airborneMassLbs + trolley.massLbs;
 
   // Compute Center of Gravity (CG) along longitudinal axis (+X = nose, -X = tail)
-  // Pilot sits near cockpit/saddle center (+0.04m)
+  // Pilot sits near cockpit center (+0.04m)
   const pilotMoment = PILOT_MASS_LBS * 0.04;
   const cgX = (pilotMoment + partsMoment) / airborneMassLbs;
 
@@ -104,55 +98,35 @@ export function computeCraftMetrics(loadout: CraftLoadout): ComputedCraftMetrics
   const totalWingAreaM2 = Math.max(1.5, rawWingAreaM2);
   const acX = aeroWeightedMoment / Math.max(1.0, aeroWeightDenom);
 
-  // Static margin: CG relative to AC (for Flugtag gliders) or longitudinal CG balance (for wheeled courses)
+  // Static margin: CG relative to AC.
+  // Ideal balanced range: +0.02m to +0.34m (CG slightly in front of AC, balanced by tail elevator trim)
   const staticMargin = cgX - acX;
 
   let balanceStatus: BalanceStatus = 'balanced';
-  let seesawTiltDeg = 0;
-  let balancePenalty = 0;
-
-  if (isWheeledCourse) {
-    // Wheeled vehicles balance around the wheelbase center (+0.04m)
-    if (cgX > 0.14) {
-      balanceStatus = 'nose_heavy';
-    } else if (cgX < -0.05) {
-      balanceStatus = 'tail_heavy';
-    }
-    const rawTilt =
-      balanceStatus === 'balanced' ? (0.04 - cgX) * 32 : (0.04 - cgX) * 95;
-    seesawTiltDeg = Math.max(-26, Math.min(26, rawTilt));
-    balancePenalty =
-      balanceStatus === 'balanced'
-        ? 0
-        : Math.max(0, (Math.abs(cgX - 0.04) - 0.09) * 85);
-  } else {
-    // Ideal balanced glider range: +0.02m to +0.34m (CG slightly in front of AC)
-    if (staticMargin > 0.35) {
-      balanceStatus = 'nose_heavy';
-    } else if (staticMargin < -0.01) {
-      balanceStatus = 'tail_heavy';
-    }
-    const rawTilt = (0.17 - staticMargin) * 58;
-    seesawTiltDeg = Math.max(-26, Math.min(26, rawTilt));
-    balancePenalty = Math.abs(staticMargin - 0.17) * 115;
+  if (staticMargin > 0.35) {
+    balanceStatus = 'nose_heavy';
+  } else if (staticMargin < -0.01) {
+    balanceStatus = 'tail_heavy';
   }
+
+  // Convert staticMargin into a visual seesaw tilt angle:
+  // Ideal center is +0.17m -> 0 deg tilt.
+  // > +0.35m tilts nose down (-deg); < -0.01m tilts tail down (+deg)
+  const rawTilt = (0.17 - staticMargin) * 58;
+  const seesawTiltDeg = Math.max(-26, Math.min(26, rawTilt));
 
   const effectiveAspectRatio = Math.max(2.2, wings.aspectRatio * 0.8 + tail.aspectRatio * 0.2);
   const effectiveLiftMultiplier = weightedLiftSum / totalWingAreaM2;
   const baseDragCoeff = Math.max(0.035, dragSum);
   const pitchStability = Math.max(0.05, stabilitySum);
-  const structuralToughness = toughnessSum / activeParts.length;
+  const structuralToughness = toughnessSum / airborneParts.length;
   const pushEfficiency = trolley.pushEfficiency ?? 1.0;
 
   // Kid-friendly 0-100 visual meters
-  const liftDenom = isWheeledCourse ? 20.5 : 18.5;
-  const liftScore = Math.min(
-    100,
-    Math.round(((totalWingAreaM2 * effectiveLiftMultiplier * (isWheeledCourse ? Math.sqrt(pushEfficiency) : 1)) / liftDenom) * 100)
-  );
+  const liftScore = Math.min(100, Math.round(((totalWingAreaM2 * effectiveLiftMultiplier) / 18.5) * 100));
   const weightScore = Math.min(100, Math.round((rampTotalMassLbs / MAX_FLUGTAG_WEIGHT_LBS) * 100));
-  const stabilityScale = isWheeledCourse ? 54 : 65;
-  const stabilityScore = Math.max(10, Math.min(100, Math.round(pitchStability * stabilityScale - balancePenalty + 25)));
+  const balancePenalty = Math.abs(staticMargin - 0.17) * 115;
+  const stabilityScore = Math.max(10, Math.min(100, Math.round(pitchStability * 65 - balancePenalty + 25)));
   const creativityScore = Math.min(100, Math.round((rawCreativity / 135) * 100));
 
   return {
