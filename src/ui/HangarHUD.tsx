@@ -96,6 +96,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   const [showGarageModal, setShowGarageModal] = useState(false);
   const [showPaintDrawer, setShowPaintDrawer] = useState(false);
   const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [hoveredPartId, setHoveredPartId] = useState<string | null>(null);
   const [customBuildName, setCustomBuildName] = useState('');
   const [justSavedToast, setJustSavedToast] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -111,19 +112,66 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   );
   const currentEquippedId = loadout[selectedCategory];
 
-  // Precompute saved build summaries so computeCraftMetrics is not re-run inside map() on every render
-  const savedBuildSummaries = useMemo(
-    () =>
-      savedBuilds.map((slot) => ({
+  const previewMetrics = useMemo(() => {
+    if (!hoveredPartId || hoveredPartId === currentEquippedId || showPaintDrawer) {
+      return null;
+    }
+    if (!categoryParts.some((p) => p.id === hoveredPartId)) {
+      return null;
+    }
+    return computeCraftMetrics({ ...loadout, [selectedCategory]: hoveredPartId });
+  }, [hoveredPartId, currentEquippedId, showPaintDrawer, categoryParts, loadout, selectedCategory]);
+
+  const displayMetrics = previewMetrics ?? metrics;
+  const liftDelta = previewMetrics ? previewMetrics.liftScore - metrics.liftScore : 0;
+  const stabilityDelta = previewMetrics
+    ? previewMetrics.stabilityScore - metrics.stabilityScore
+    : 0;
+  const massDelta = previewMetrics
+    ? previewMetrics.rampTotalMassLbs - metrics.rampTotalMassLbs
+    : 0;
+  const creativityDelta = previewMetrics
+    ? previewMetrics.creativityScore - metrics.creativityScore
+    : 0;
+
+  // Precompute saved build summaries only when the Garage Modal is open
+  const savedBuildSummaries = useMemo(() => {
+    if (!showGarageModal) return [];
+    return savedBuilds.map((slot) => {
+      const chassis = getPartById(slot.loadout.chassis);
+      const compId: CompetitionId =
+        slot.competition ??
+        (chassis.competition === 'soapbox' || chassis.competition === 'rollercoaster'
+          ? chassis.competition
+          : 'flugtag');
+      return {
         slot,
-        chassis: getPartById(slot.loadout.chassis),
+        compId,
+        compEmoji: COMPETITIONS[compId].emoji,
+        chassis,
         wings: getPartById(slot.loadout.wings),
-        topper: getPartById(slot.loadout.topper),
+        tail: getPartById(slot.loadout.tail),
         nose: getPartById(slot.loadout.nose),
+        topper: getPartById(slot.loadout.topper),
+        trolley: getPartById(slot.loadout.trolley),
         metrics: computeCraftMetrics(slot.loadout),
-      })),
-    [savedBuilds]
-  );
+      };
+    });
+  }, [savedBuilds, showGarageModal]);
+
+  const presetBuildSummaries = useMemo(() => {
+    if (!showGarageModal) return [];
+    return PRESET_BLUEPRINTS_BY_COMPETITION[competition].map((preset) => ({
+      preset,
+      chassis: getPartById(preset.chassis),
+      wings: getPartById(preset.wings),
+      tail: getPartById(preset.tail),
+      nose: getPartById(preset.nose),
+      topper: getPartById(preset.topper),
+      trolley: getPartById(preset.trolley),
+      metrics: computeCraftMetrics(preset),
+    }));
+  }, [competition, showGarageModal]);
 
   // Scroll the equipped part card into view when switching categories
   useEffect(() => {
@@ -149,7 +197,8 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   useEffect(() => {
     setShowPaintDrawer(false);
     setDockCollapsed(false);
-  }, [selectedCategory]);
+    setHoveredPartId(null);
+  }, [selectedCategory, competition]);
 
   // Desktop / Chromebook Keyboard Shortcuts in Hangar Mode
   useEffect(() => {
@@ -233,7 +282,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   ]);
 
   const balanceConfig =
-    metrics.balanceStatus === 'balanced'
+    displayMetrics.balanceStatus === 'balanced'
       ? {
           label:
             competition === 'flugtag'
@@ -244,15 +293,15 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
           sub: 'Sweet Spot!',
           bg: 'bg-emerald-600/95 border-emerald-300',
         }
-      : metrics.balanceStatus === 'nose_heavy'
+      : displayMetrics.balanceStatus === 'nose_heavy'
       ? {
-          label: 'NOSE HEAVY!',
-          sub: competition === 'flugtag' ? 'Dives Fast!' : 'Front Heavy!',
+          label: competition === 'flugtag' ? 'NOSE HEAVY!' : 'FRONT WEIGHTED!',
+          sub: competition === 'flugtag' ? 'Dives Fast!' : 'Downhill Drive!',
           bg: 'bg-amber-500/95 border-amber-200 text-slate-950',
         }
       : {
-          label: 'TAIL HEAVY!',
-          sub: competition === 'flugtag' ? 'Flips Up!' : 'Rear Heavy!',
+          label: competition === 'flugtag' ? 'TAIL HEAVY!' : 'REAR WEIGHTED!',
+          sub: competition === 'flugtag' ? 'Flips Up!' : 'Rear Biased!',
           bg: 'bg-purple-600/95 border-purple-300',
         };
 
@@ -270,284 +319,372 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
     <div className="safe-area-hud pointer-events-none fixed inset-0 z-10 flex flex-col justify-between">
       {/* TOP GROUP: Single-Row Header Bar + Mobile Telemetry Strip + Optional Wind Tunnel Banner */}
       <div className="flex flex-col gap-1">
-        <div className="pointer-events-auto flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar rounded-2xl bg-slate-900/95 px-2.5 py-1.5 border border-white/15 shadow-xl">
-          {/* Left: 3-Competition Switcher + Stars & Record & Mute */}
-          <div className="flex shrink-0 items-center gap-1.5">
-            <div
-              className="flex items-center gap-0.5 rounded-xl bg-slate-950/90 p-0.5 border border-white/15"
-              role="tablist"
-              aria-label="Select Red Bull Competition"
-            >
-              {COMPETITION_LIST.map((compId) => {
-                const c = COMPETITIONS[compId];
-                const isActive = competition === compId;
-                return (
-                  <button
-                    key={compId}
-                    role="tab"
-                    aria-selected={isActive}
-                    onClick={() => onSelectCompetition(compId)}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 font-display text-[11px] sm:text-xs font-black tracking-wide transition cursor-pointer ${
-                      isActive
-                        ? 'bg-gradient-to-r from-red-600 to-amber-500 text-white shadow'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    }`}
-                    title={c.fullName}
-                  >
-                    <span>{c.emoji}</span>
-                    <span className="hidden sm:inline">{c.shortName}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div
-              className="flex items-center gap-1 rounded-xl bg-amber-400/20 border border-amber-400/50 px-2 py-1 text-xs sm:text-sm font-extrabold text-amber-300"
-              title="Judge Stars Earned — Unlocks New Parts Across All 3 Events!"
-            >
-              <span>⭐</span>
-              <span>{totalStars}</span>
-            </div>
-
-            <div
-              className="flex items-center gap-1 rounded-xl bg-sky-500/20 border border-sky-400/40 px-2 py-1 text-xs sm:text-sm font-extrabold text-sky-200"
-              title={`Best ${compMeta.shortName} Distance (Goal: ${compMeta.goalFeet} ft!)`}
-            >
-              <span>🏆</span>
-              <span>{bestDistanceFeet} FT</span>
-            </div>
-
-            <button
-              onClick={onToggleMute}
-              aria-pressed={muted}
-              className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 active:scale-95 transition cursor-pointer"
-              aria-label={muted ? 'Unmute Sound' : 'Mute Sound'}
-            >
-              {muted ? (
-                <VolumeX className="h-4 w-4 text-rose-400" />
-              ) : (
-                <Volume2 className="h-4 w-4 text-emerald-400" />
-              )}
-            </button>
-          </div>
-
-          {/* Center: Kid-Friendly Balance Seesaw & Desktop Weight/Lift/Stability/Fun Meters */}
-          <div className="flex shrink-0 items-center gap-2">
-            {/* Animated Balance Seesaw Pill with Nose/Tail Orientation & Subtitle */}
-            <div
-              className={`flex items-center gap-1.5 rounded-xl border px-2 py-1 text-xs font-extrabold shadow ${balanceConfig.bg}`}
-              title="Center of Gravity Balance Seesaw"
-            >
-              <div className="relative flex h-5 w-12 items-center justify-between rounded-lg bg-black/30 px-1">
-                <span className="text-[8px] font-black uppercase opacity-80">T</span>
-                <div
-                  className="h-1.5 w-6 rounded-full bg-yellow-300 transition-transform duration-300"
-                  style={{ transform: `rotate(${-metrics.seesawTiltDeg}deg)` }}
-                />
-                <span className="text-[9px] leading-none">{compMeta.emoji}</span>
-                <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rotate-45 bg-white" />
-              </div>
-              <div className="leading-tight">
-                <div className="text-[11px] sm:text-xs font-black tracking-wide">
-                  {balanceConfig.label}
-                </div>
-                <div className="text-[10px] font-bold opacity-90 hidden sm:block">
-                  {balanceConfig.sub}
-                </div>
-              </div>
-            </div>
-
-            {/* Desktop Weight, Lift/Speed/Pedal, Stability & Fun Bars */}
-            <div className="hidden lg:flex items-center gap-2.5 rounded-xl bg-slate-800/95 px-2.5 py-1 border border-white/10 text-xs">
-              <div className="flex items-center gap-1" title={compMeta.meterLabels.lift}>
-                <span>{compMeta.meterLabels.liftEmoji}</span>
-                <span className="font-bold text-sky-300">{compMeta.meterLabels.lift}</span>
-                <div className="h-2 w-11 rounded-full bg-slate-700 overflow-hidden">
-                  <div
-                    className="h-full w-full origin-left bg-gradient-to-r from-sky-400 to-emerald-400 transition-transform duration-300"
-                    style={{ transform: `scaleX(${metrics.liftScore / 100})` }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1" title={compMeta.meterLabels.stability}>
-                <span>{compMeta.meterLabels.stabilityEmoji}</span>
-                <span className="font-bold text-emerald-300">{compMeta.meterLabels.stability}</span>
-                <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
-                  <div
-                    className="h-full w-full origin-left bg-gradient-to-r from-emerald-400 to-teal-300 transition-transform duration-300"
-                    style={{ transform: `scaleX(${metrics.stabilityScore / 100})` }}
-                  />
-                </div>
+        <div className="pointer-events-auto flex items-center justify-between gap-1.5 rounded-2xl bg-slate-900/95 px-2.5 py-1.5 border border-white/15 shadow-xl">
+          {/* Scrollable Left + Center + Secondary Tools Region */}
+          <div className="flex flex-1 min-w-0 items-center justify-between gap-1.5 overflow-x-auto no-scrollbar touch-pan-x pr-0.5">
+            {/* Left: 3-Competition Switcher + Stars & Record & Mute */}
+            <div className="flex shrink-0 items-center gap-1.5">
+              <div
+                className="flex items-center gap-0.5 rounded-xl bg-slate-950/90 p-0.5 border border-white/15"
+                role="tablist"
+                aria-label="Select Red Bull Competition"
+              >
+                {COMPETITION_LIST.map((compId) => {
+                  const c = COMPETITIONS[compId];
+                  const isActive = competition === compId;
+                  return (
+                    <button
+                      key={compId}
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => onSelectCompetition(compId)}
+                      className={`flex items-center gap-1 rounded-lg px-2 py-1 font-display text-[11px] sm:text-xs font-black tracking-wide transition cursor-pointer ${
+                        isActive
+                          ? 'bg-gradient-to-r from-red-600 to-amber-500 text-white shadow'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      }`}
+                      title={c.fullName}
+                    >
+                      <span>{c.emoji}</span>
+                      <span className="hidden sm:inline">{c.shortName}</span>
+                    </button>
+                  );
+                })}
               </div>
 
               <div
-                className="flex items-center gap-1"
-                title="Total Weight (Over 400 lbs triggers Heavyweight Inertia & Cannonball Bonus!)"
+                className="flex items-center gap-1 rounded-xl bg-amber-400/20 border border-amber-400/50 px-2 py-1 text-xs sm:text-sm font-extrabold text-amber-300"
+                title="Judge Stars Earned — Unlocks New Parts Across All 3 Events!"
               >
-                <span>⚖️</span>
-                <span
-                  className={`font-bold ${
-                    metrics.isOverWeightLimit
-                      ? 'text-rose-400 animate-pulse'
-                      : 'text-amber-300'
-                  }`}
-                >
-                  {metrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS} lb
-                  {metrics.isOverWeightLimit ? ' ⚠️' : ''}
-                </span>
+                <span>⭐</span>
+                <span>{totalStars}</span>
               </div>
 
-              <div className="flex items-center gap-1" title="Judge Creativity Score">
-                <span>🎭</span>
-                <span className="font-bold text-pink-300">Fun</span>
-                <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
+              <div
+                className="flex items-center gap-1 rounded-xl bg-sky-500/20 border border-sky-400/40 px-2 py-1 text-xs sm:text-sm font-extrabold text-sky-200"
+                title={`Best ${compMeta.shortName} Distance (Goal: ${compMeta.goalFeet} ft!)`}
+              >
+                <span>🏆</span>
+                <span>{bestDistanceFeet} FT</span>
+              </div>
+
+              <button
+                onClick={onToggleMute}
+                aria-pressed={muted}
+                className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 active:scale-95 transition cursor-pointer"
+                aria-label={muted ? 'Unmute Sound' : 'Mute Sound'}
+              >
+                {muted ? (
+                  <VolumeX className="h-4 w-4 text-rose-400" />
+                ) : (
+                  <Volume2 className="h-4 w-4 text-emerald-400" />
+                )}
+              </button>
+            </div>
+
+            {/* Center: Kid-Friendly Balance Seesaw & Desktop Weight/Lift/Stability/Fun Meters */}
+            <div className="flex shrink-0 items-center gap-2">
+              {/* Animated Balance Seesaw Pill with Nose/Tail Orientation & Subtitle */}
+              <div
+                className={`flex items-center gap-1.5 rounded-xl border px-2 py-1 text-xs font-extrabold shadow ${balanceConfig.bg}`}
+                title="Center of Gravity Balance Seesaw"
+              >
+                <div className="relative flex h-5 w-12 items-center justify-between rounded-lg bg-black/30 px-1">
+                  <span className="text-[8px] font-black uppercase opacity-80">
+                    {competition === 'flugtag' ? 'T' : 'R'}
+                  </span>
                   <div
-                    className="h-full w-full origin-left bg-gradient-to-r from-pink-500 to-amber-400 transition-transform duration-300"
-                    style={{ transform: `scaleX(${metrics.creativityScore / 100})` }}
+                    className="h-1.5 w-6 rounded-full bg-yellow-300 transition-transform duration-300"
+                    style={{ transform: `rotate(${-displayMetrics.seesawTiltDeg}deg)` }}
                   />
+                  <span className="text-[9px] leading-none">{compMeta.emoji}</span>
+                  <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rotate-45 bg-white" />
+                </div>
+                <div className="leading-tight">
+                  <div className="text-[11px] sm:text-xs font-black tracking-wide">
+                    {balanceConfig.label}
+                  </div>
+                  <div className="text-[10px] font-bold opacity-90 hidden sm:block">
+                    {balanceConfig.sub}
+                  </div>
+                </div>
+              </div>
+
+              {/* Desktop Weight, Lift/Speed/Pedal, Stability & Fun Bars */}
+              <div className="hidden xl:flex items-center gap-2.5 rounded-xl bg-slate-800/95 px-2.5 py-1 border border-white/10 text-xs">
+                <div className="flex items-center gap-1" title={compMeta.meterLabels.lift}>
+                  <span>{compMeta.meterLabels.liftEmoji}</span>
+                  <span className="font-bold text-sky-300">{compMeta.meterLabels.lift}</span>
+                  <div className="h-2 w-11 rounded-full bg-slate-700 overflow-hidden">
+                    <div
+                      className="h-full w-full origin-left bg-gradient-to-r from-sky-400 to-emerald-400 transition-transform duration-300"
+                      style={{ transform: `scaleX(${displayMetrics.liftScore / 100})` }}
+                    />
+                  </div>
+                  {liftDelta !== 0 && (
+                    <span
+                      className={`text-[10px] font-black tabular-nums ${
+                        liftDelta > 0 ? 'text-emerald-300' : 'text-rose-400'
+                      }`}
+                    >
+                      {liftDelta > 0 ? `+${liftDelta}` : liftDelta}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1" title={compMeta.meterLabels.stability}>
+                  <span>{compMeta.meterLabels.stabilityEmoji}</span>
+                  <span className="font-bold text-emerald-300">{compMeta.meterLabels.stability}</span>
+                  <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
+                    <div
+                      className="h-full w-full origin-left bg-gradient-to-r from-emerald-400 to-teal-300 transition-transform duration-300"
+                      style={{ transform: `scaleX(${displayMetrics.stabilityScore / 100})` }}
+                    />
+                  </div>
+                  {stabilityDelta !== 0 && (
+                    <span
+                      className={`text-[10px] font-black tabular-nums ${
+                        stabilityDelta > 0 ? 'text-emerald-300' : 'text-rose-400'
+                      }`}
+                    >
+                      {stabilityDelta > 0 ? `+${stabilityDelta}` : stabilityDelta}
+                    </span>
+                  )}
+                </div>
+
+                <div
+                  className="flex items-center gap-1"
+                  title={
+                    competition === 'rollercoaster'
+                      ? 'Total Weight (Over 400 lbs slows camelback climbs & widens curve drift, +1 Creativity Bonus!)'
+                      : 'Total Weight (Over 400 lbs triggers Heavyweight Inertia & +1 Creativity Bonus!)'
+                  }
+                >
+                  <span>⚖️</span>
+                  <span
+                    className={`font-bold tabular-nums ${
+                      displayMetrics.isOverWeightLimit
+                        ? 'text-rose-400 animate-pulse'
+                        : 'text-amber-300'
+                    }`}
+                  >
+                    {displayMetrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS} lb
+                    {displayMetrics.isOverWeightLimit ? ' ⚠️' : ''}
+                  </span>
+                  {massDelta !== 0 && (
+                    <span
+                      className={`text-[10px] font-black tabular-nums ${
+                        massDelta < 0 ? 'text-sky-300' : 'text-amber-200'
+                      }`}
+                    >
+                      ({massDelta > 0 ? `+${massDelta}` : massDelta})
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1" title="Judge Creativity Score">
+                  <span>🎭</span>
+                  <span className="font-bold text-pink-300">Fun</span>
+                  <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
+                    <div
+                      className="h-full w-full origin-left bg-gradient-to-r from-pink-500 to-amber-400 transition-transform duration-300"
+                      style={{ transform: `scaleX(${displayMetrics.creativityScore / 100})` }}
+                    />
+                  </div>
+                  {creativityDelta !== 0 && (
+                    <span
+                      className={`text-[10px] font-black tabular-nums ${
+                        creativityDelta > 0 ? 'text-emerald-300' : 'text-rose-400'
+                      }`}
+                    >
+                      {creativityDelta > 0 ? `+${creativityDelta}` : creativityDelta}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
+
+            {/* Secondary Workshop Tools: Undo/Redo, Wind Tunnel / Test Rig, Mix, Save Build, Garage */}
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={onUndo}
+                disabled={!canUndo}
+                className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl border transition cursor-pointer ${
+                  canUndo
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/15 active:scale-95'
+                    : 'bg-slate-900/50 text-slate-600 border-white/5 cursor-not-allowed'
+                }`}
+                title="Undo Change (Ctrl+Z)"
+                aria-label="Undo Craft Change"
+              >
+                <Undo2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              </button>
+
+              <button
+                onClick={onRedo}
+                disabled={!canRedo}
+                className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl border transition cursor-pointer ${
+                  canRedo
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/15 active:scale-95'
+                    : 'bg-slate-900/50 text-slate-600 border-white/5 cursor-not-allowed'
+                }`}
+                title="Redo Change (Ctrl+Y)"
+                aria-label="Redo Craft Change"
+              >
+                <Redo2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              </button>
+
+              <button
+                onClick={onToggleWindTunnel}
+                aria-pressed={windTunnelActive}
+                className={`flex items-center gap-1 rounded-xl px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold border transition active:scale-95 cursor-pointer ${
+                  windTunnelActive
+                    ? 'bg-emerald-500 text-slate-950 border-emerald-200 shadow-lg shadow-emerald-500/30'
+                    : 'bg-slate-800 text-sky-200 border-sky-400/40 hover:bg-slate-700'
+                }`}
+                title="Test Craft in Workshop Rig (W)"
+              >
+                <Wind className={`h-4 w-4 ${windTunnelActive ? 'animate-spin' : ''}`} />
+                <span>
+                  {windTunnelActive ? compMeta.testButtonActiveLabel : compMeta.testButtonLabel}
+                </span>
+              </button>
+
+              <button
+                onClick={onRandomizeCraft}
+                className="flex items-center gap-1 rounded-xl bg-purple-600 hover:bg-purple-500 border border-purple-300/40 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold text-white active:scale-95 transition cursor-pointer"
+                title="Random Funny Craft! (R — Undoable!)"
+              >
+                <Shuffle className="h-4 w-4" />
+                <span className="hidden sm:inline">Mix!</span>
+              </button>
+
+              <button
+                onClick={handleQuickSave}
+                className={`flex items-center gap-1 rounded-xl border px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold transition active:scale-95 cursor-pointer ${
+                  justSavedToast
+                    ? 'bg-emerald-500 text-slate-950 border-emerald-200'
+                    : 'bg-slate-800 hover:bg-slate-700 text-emerald-300 border-emerald-400/40'
+                }`}
+                title="Save Current Craft Configuration"
+              >
+                {justSavedToast ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    <span>Saved!</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    <span className="hidden sm:inline">Save</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => {
+                  setConfirmDeleteId(null);
+                  setShowGarageModal((v) => !v);
+                }}
+                aria-expanded={showGarageModal}
+                className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/40 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold text-amber-200 active:scale-95 transition cursor-pointer"
+                title="Open Saved Builds & Famous Presets (G)"
+              >
+                <FolderOpen className="h-4 w-4 text-amber-300" />
+                <span>Builds ({savedBuilds.length})</span>
+              </button>
+            </div>
           </div>
 
-          {/* Right: Undo/Redo, Wind Tunnel / Test Rig, Mix, Save Build, Garage & LAUNCH! */}
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              onClick={onUndo}
-              disabled={!canUndo}
-              className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl border transition cursor-pointer ${
-                canUndo
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/15 active:scale-95'
-                  : 'bg-slate-900/50 text-slate-600 border-white/5 cursor-not-allowed'
-              }`}
-              title="Undo Change (Ctrl+Z)"
-              aria-label="Undo Craft Change"
-            >
-              <Undo2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-            </button>
-
-            <button
-              onClick={onRedo}
-              disabled={!canRedo}
-              className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl border transition cursor-pointer ${
-                canRedo
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/15 active:scale-95'
-                  : 'bg-slate-900/50 text-slate-600 border-white/5 cursor-not-allowed'
-              }`}
-              title="Redo Change (Ctrl+Y)"
-              aria-label="Redo Craft Change"
-            >
-              <Redo2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-            </button>
-
-            <button
-              onClick={onToggleWindTunnel}
-              aria-pressed={windTunnelActive}
-              className={`flex items-center gap-1 rounded-xl px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold border transition active:scale-95 cursor-pointer ${
-                windTunnelActive
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-200 shadow-lg shadow-emerald-500/30'
-                  : 'bg-slate-800 text-sky-200 border-sky-400/40 hover:bg-slate-700'
-              }`}
-              title="Test Craft in Hangar Rig (W)"
-            >
-              <Wind className={`h-4 w-4 ${windTunnelActive ? 'animate-spin' : ''}`} />
-              <span>{windTunnelActive ? compMeta.testButtonActiveLabel : compMeta.testButtonLabel}</span>
-            </button>
-
-            <button
-              onClick={onRandomizeCraft}
-              className="flex items-center gap-1 rounded-xl bg-purple-600 hover:bg-purple-500 border border-purple-300/40 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold text-white active:scale-95 transition cursor-pointer"
-              title="Random Funny Craft! (R — Undoable!)"
-            >
-              <Shuffle className="h-4 w-4" />
-              <span className="hidden sm:inline">Mix!</span>
-            </button>
-
-            <button
-              onClick={handleQuickSave}
-              className={`flex items-center gap-1 rounded-xl border px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold transition active:scale-95 cursor-pointer ${
-                justSavedToast
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-200'
-                  : 'bg-slate-800 hover:bg-slate-700 text-emerald-300 border-emerald-400/40'
-              }`}
-              title="Save Current Craft Configuration"
-            >
-              {justSavedToast ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span>Saved!</span>
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4" />
-                  <span className="hidden sm:inline">Save</span>
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={() => {
-                setConfirmDeleteId(null);
-                setShowGarageModal((v) => !v);
-              }}
-              aria-expanded={showGarageModal}
-              className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/40 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold text-amber-200 active:scale-95 transition cursor-pointer"
-              title="Open Saved Builds & Famous Presets"
-            >
-              <FolderOpen className="h-4 w-4 text-amber-300" />
-              <span>Builds ({savedBuilds.length})</span>
-            </button>
-
-            <button
-              onClick={onStartFlight}
-              className="animate-pulse-glow flex items-center gap-1 rounded-xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 px-3 sm:px-4 py-1 font-display text-xs sm:text-base font-black text-slate-950 border-2 border-yellow-200 shadow-lg active:scale-95 transition cursor-pointer"
-              title={`Launch ${compMeta.fullName}! (Space)`}
-            >
-              <Rocket className="h-4 w-4" />
-              <span>{compMeta.launchLabel}</span>
-            </button>
-          </div>
+          {/* Primary Launch CTA Button — Pinned outside overflow-x-auto so it is never clipped */}
+          <button
+            onClick={onStartFlight}
+            className="animate-pulse-glow flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 px-3 sm:px-4 py-1 font-display text-xs sm:text-base font-black text-slate-950 border-2 border-yellow-200 shadow-lg active:scale-95 transition cursor-pointer"
+            title={`Launch ${compMeta.fullName}! (Space)`}
+          >
+            <Rocket className="h-4 w-4" />
+            <span>{compMeta.launchLabel}</span>
+          </button>
         </div>
 
-        {/* COMPACT MOBILE / TABLET (<1024px) TELEMETRY BAR */}
-        <div className="pointer-events-auto flex lg:hidden items-center justify-center gap-2 self-center rounded-xl bg-slate-900/95 border border-white/15 px-3 py-1 text-[11px] shadow-md">
-          <span className="font-extrabold text-sky-300">
-            {compMeta.meterLabels.liftEmoji} {compMeta.meterLabels.lift} {metrics.liftScore}%
+        {/* COMPACT MOBILE / TABLET (<1280px) TELEMETRY BAR */}
+        <div className="pointer-events-auto flex xl:hidden flex-wrap max-w-full items-center justify-center gap-x-2 gap-y-0.5 self-center rounded-xl bg-slate-900/95 border border-white/15 px-3 py-1 text-[11px] shadow-md">
+          <span className="font-extrabold text-sky-300 tabular-nums">
+            {compMeta.meterLabels.liftEmoji} {compMeta.meterLabels.lift} {displayMetrics.liftScore}%
+            {liftDelta !== 0 && (
+              <span className={liftDelta > 0 ? ' text-emerald-300' : ' text-rose-400'}>
+                {' '}
+                ({liftDelta > 0 ? `+${liftDelta}` : liftDelta})
+              </span>
+            )}
           </span>
           <span className="text-slate-600">•</span>
-          <span className="font-extrabold text-emerald-300">
-            {compMeta.meterLabels.stabilityEmoji} {compMeta.meterLabels.stability} {metrics.stabilityScore}%
+          <span className="font-extrabold text-emerald-300 tabular-nums">
+            {compMeta.meterLabels.stabilityEmoji} {compMeta.meterLabels.stability}{' '}
+            {displayMetrics.stabilityScore}%
+            {stabilityDelta !== 0 && (
+              <span className={stabilityDelta > 0 ? ' text-emerald-300' : ' text-rose-400'}>
+                {' '}
+                ({stabilityDelta > 0 ? `+${stabilityDelta}` : stabilityDelta})
+              </span>
+            )}
           </span>
           <span className="text-slate-600">•</span>
           <span
-            className={`font-extrabold ${
-              metrics.isOverWeightLimit ? 'text-rose-400 animate-pulse' : 'text-amber-300'
+            className={`font-extrabold tabular-nums ${
+              displayMetrics.isOverWeightLimit ? 'text-rose-400 animate-pulse' : 'text-amber-300'
             }`}
           >
-            ⚖️ {metrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS}lb
-            {metrics.isOverWeightLimit ? ' (HEAVY!)' : ''}
+            ⚖️ {displayMetrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS}lb
+            {displayMetrics.isOverWeightLimit ? ' (HEAVY!)' : ''}
+            {massDelta !== 0 && (
+              <span className={massDelta < 0 ? ' text-sky-300' : ' text-amber-200'}>
+                {' '}
+                ({massDelta > 0 ? `+${massDelta}` : massDelta})
+              </span>
+            )}
           </span>
           <span className="text-slate-600">•</span>
-          <span className="font-extrabold text-pink-300">🎭 Fun {metrics.creativityScore}%</span>
+          <span className="font-extrabold text-pink-300 tabular-nums">
+            🎭 Fun {displayMetrics.creativityScore}%
+            {creativityDelta !== 0 && (
+              <span className={creativityDelta > 0 ? ' text-emerald-300' : ' text-rose-400'}>
+                {' '}
+                ({creativityDelta > 0 ? `+${creativityDelta}` : creativityDelta})
+              </span>
+            )}
+          </span>
         </div>
 
         {/* HANGAR TEST RIG LIVE FEEDBACK BANNER */}
         {windTunnelActive && (
           <div className="pointer-events-none self-center rounded-xl bg-slate-900/95 border border-sky-400/50 px-3 py-0.5 text-center shadow-md">
             <div className="text-[11px] sm:text-xs font-extrabold text-sky-300">
-              💨 {compMeta.testButtonActiveLabel}:{' '}
-              {metrics.isOverWeightLimit
-                ? '⚠️ OVER 400 LB RULE! Harder start push, but massive downhill momentum & +1 Creativity Bonus!'
+              {competition === 'rollercoaster' ? '🚲' : competition === 'soapbox' ? '🏎️' : '💨'}{' '}
+              {compMeta.testButtonActiveLabel}:{' '}
+              {competition === 'rollercoaster'
+                ? displayMetrics.isOverWeightLimit
+                  ? '⚠️ OVER 400 LB! Slower on camelback climbs & wider S-curve drift, but +1 Creativity Bonus!'
+                  : displayMetrics.stabilityScore >= 60 && displayMetrics.liftScore >= 55
+                  ? '✨ High Rail Balance & Pedal Drive! Ready to ring all 3 canal bells & beat 320 ft!'
+                  : displayMetrics.balanceStatus === 'nose_heavy'
+                  ? '⬇️ Front-weighted tandem! Fast down camelback drops — watch your lean in S-curves!'
+                  : displayMetrics.balanceStatus === 'tail_heavy'
+                  ? '⬆️ Rear-weighted tandem! Try a Front Basket or Gyro Stabilizer to center weight!'
+                  : '🛞 Rollers spinning! Equip Flanged Rims or Carbon Sprockets for stronger climb speed!'
                 : competition === 'soapbox'
-                ? '🏎️ Suspension & Steering checked! Steer Left/Right around hay bales and hit the orange kicker ramps!'
-                : competition === 'rollercoaster'
-                ? '🚲 Tandem Balance checked! Lean Left/Right to stay centered on the floating canal rail & ring the bells!'
-                : metrics.balanceStatus === 'balanced' && metrics.liftScore >= 45
+                ? displayMetrics.isOverWeightLimit
+                  ? '⚠️ OVER 400 LB! Harder start push, but massive downhill momentum & +1 Creativity Bonus!'
+                  : displayMetrics.stabilityScore >= 60 && displayMetrics.liftScore >= 55
+                  ? '✨ High Downhill Speed & Cornering Grip! Ready to clear all chicanes & kicker ramps!'
+                  : '🛞 Dyno spinning! Upgrade Slick Tires or Rear Spoiler for sharper chicane grip!'
+                : displayMetrics.isOverWeightLimit
+                ? '⚠️ OVER 400 LB RULE! Harder start push, but massive cannonball momentum & +1 Creativity Bonus!'
+                : displayMetrics.balanceStatus === 'balanced' && displayMetrics.liftScore >= 45
                 ? '✨ Awesome Lift & Balance! Ready for a huge flight!'
-                : metrics.balanceStatus === 'nose_heavy'
+                : displayMetrics.balanceStatus === 'nose_heavy'
                 ? '⬇️ Nose is heavy! Try bigger Wings or a lighter Nose Cone!'
-                : metrics.balanceStatus === 'tail_heavy'
+                : displayMetrics.balanceStatus === 'tail_heavy'
                 ? '⬆️ Back is heavy! Try a Sleek Nose or lighter Tail Fin!'
                 : '🍞 Tiny wings! It will drop fast for a big cannonball splash!'}
             </div>
@@ -565,7 +702,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
           onClick={() => setShowGarageModal(false)}
         >
           <div
-            className="rounded-3xl bg-slate-900/98 border-2 border-amber-400/80 p-3 sm:p-4 shadow-2xl max-w-xl w-full max-h-[80vh] overflow-y-auto no-scrollbar"
+            className="rounded-3xl bg-slate-900/98 border-2 border-amber-400/80 p-3 sm:p-4 shadow-2xl max-w-xl w-full max-h-[80dvh] overflow-y-auto no-scrollbar touch-pan-y"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-white/15 pb-2 mb-2.5">
@@ -590,6 +727,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             <div className="flex items-center gap-2 rounded-2xl bg-slate-800/90 border border-emerald-400/40 p-2 mb-3">
               <input
                 type="text"
+                aria-label="Custom craft name"
                 value={customBuildName}
                 onChange={(e) => setCustomBuildName(e.target.value)}
                 onKeyDown={(e) => {
@@ -621,7 +759,17 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {savedBuildSummaries.map(
-                    ({ slot, chassis, wings, topper, nose, metrics: slotMetrics }) => {
+                    ({
+                      slot,
+                      compEmoji,
+                      chassis,
+                      wings,
+                      tail,
+                      nose,
+                      topper,
+                      trolley,
+                      metrics: slotMetrics,
+                    }) => {
                       const isConfirming = confirmDeleteId === slot.id;
                       return (
                         <div
@@ -635,15 +783,20 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                             }}
                             className="flex flex-1 flex-col text-left min-w-0 cursor-pointer"
                           >
-                            <div className="truncate font-display text-xs sm:text-sm font-black text-white">
-                              {slot.name}
+                            <div className="flex items-center gap-1 truncate font-display text-xs sm:text-sm font-black text-white">
+                              <span className="rounded bg-white/10 px-1 text-[10px]">
+                                {compEmoji}
+                              </span>
+                              <span className="truncate">{slot.name}</span>
                             </div>
-                            <div className="mt-1 flex items-center gap-1.5 text-base">
+                            <div className="mt-1 flex items-center gap-1 text-sm sm:text-base">
                               <span>{chassis.emoji}</span>
                               <span>{wings.emoji}</span>
-                              <span>{topper.emoji}</span>
+                              <span>{tail.emoji}</span>
                               <span>{nose.emoji}</span>
-                              <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[11px] font-extrabold text-amber-300">
+                              <span>{topper.emoji}</span>
+                              <span>{trolley.emoji}</span>
+                              <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-300 tabular-nums">
                                 ⚖️ {slotMetrics.rampTotalMassLbs}lb
                               </span>
                             </div>
@@ -668,6 +821,9 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                                   setConfirmDeleteId(slot.id);
                                 }
                               }}
+                              aria-label={
+                                isConfirming ? `Confirm delete ${slot.name}` : `Delete ${slot.name}`
+                              }
                               className={`rounded-xl px-2 py-1.5 text-xs font-black active:scale-95 cursor-pointer ${
                                 isConfirming
                                   ? 'bg-rose-600 text-white border border-rose-200'
@@ -692,19 +848,38 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                 🏆 Famous {compMeta.shortName} Starter Blueprints
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {PRESET_BLUEPRINTS_BY_COMPETITION[competition].map((preset) => (
-                  <button
-                    key={preset.name}
-                    onClick={() => {
-                      onApplyPreset(preset);
-                      setShowGarageModal(false);
-                    }}
-                    className="flex items-center justify-between gap-2 rounded-xl bg-slate-800 hover:bg-indigo-600/80 border border-white/15 p-2.5 text-left text-xs sm:text-sm font-bold text-white transition active:scale-95 cursor-pointer"
-                  >
-                    <span>{preset.name}</span>
-                    <span className="text-[11px] font-black text-amber-300">Load ▶</span>
-                  </button>
-                ))}
+                {presetBuildSummaries.map(
+                  ({ preset, chassis, wings, tail, nose, topper, trolley, metrics: pMetrics }) => (
+                    <button
+                      key={preset.name}
+                      onClick={() => {
+                        onApplyPreset(preset);
+                        setShowGarageModal(false);
+                      }}
+                      className="flex items-center justify-between gap-2 rounded-xl bg-slate-800 hover:bg-indigo-600/80 border border-white/15 p-2.5 text-left transition active:scale-95 cursor-pointer"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className="truncate text-xs sm:text-sm font-extrabold text-white">
+                          {preset.name}
+                        </span>
+                        <div className="mt-0.5 flex items-center gap-1 text-xs sm:text-sm">
+                          <span>{chassis.emoji}</span>
+                          <span>{wings.emoji}</span>
+                          <span>{tail.emoji}</span>
+                          <span>{nose.emoji}</span>
+                          <span>{topper.emoji}</span>
+                          <span>{trolley.emoji}</span>
+                          <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-300 tabular-nums">
+                            ⚖️ {pMetrics.rampTotalMassLbs}lb
+                          </span>
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-black text-amber-300">
+                        Load ▶
+                      </span>
+                    </button>
+                  )
+                )}
               </div>
             </div>
           </div>
@@ -714,15 +889,16 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
       {/* BOTTOM SNAP-SOCKET BUILDER DOCK */}
       <div className="pointer-events-auto flex flex-col gap-1.5 rounded-2xl bg-slate-900/95 p-2 border border-white/15 shadow-2xl">
         {/* Category Tabs + Paint Swatch Button + Collapse Toggle */}
-        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
+        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar touch-pan-x">
           <div className="flex items-center gap-1" role="tablist" aria-label="Craft Part Categories">
-            {categoryTabs.map((tab) => {
+            {categoryTabs.map((tab, idx) => {
               const isSelected = !showPaintDrawer && selectedCategory === tab.id;
               return (
                 <button
                   key={tab.id}
                   role="tab"
                   aria-selected={isSelected}
+                  title={`${tab.label} (Key ${idx + 1})`}
                   onClick={() => {
                     setShowPaintDrawer(false);
                     setDockCollapsed(false);
@@ -736,6 +912,13 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                 >
                   <span className="text-base sm:text-lg">{tab.emoji}</span>
                   <span>{tab.label}</span>
+                  <span
+                    className={`hidden xl:inline rounded px-1 text-[10px] font-black ${
+                      isSelected ? 'bg-black/15 text-slate-950' : 'bg-white/10 text-slate-400'
+                    }`}
+                  >
+                    {idx + 1}
+                  </span>
                 </button>
               );
             })}
@@ -743,6 +926,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             <button
               role="tab"
               aria-selected={showPaintDrawer}
+              title="Paint Themes (Key P)"
               onClick={() => {
                 setDockCollapsed(false);
                 setShowPaintDrawer((v) => !v);
@@ -755,6 +939,13 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             >
               <span className="text-base sm:text-lg">🎨</span>
               <span>Paint</span>
+              <span
+                className={`hidden xl:inline rounded px-1 text-[10px] font-black ${
+                  showPaintDrawer ? 'bg-black/20 text-white' : 'bg-white/10 text-slate-400'
+                }`}
+              >
+                P
+              </span>
             </button>
           </div>
 
@@ -762,8 +953,11 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
             <div className="hidden md:flex items-center gap-1.5 text-[11px] font-bold text-slate-300">
               <Sparkles className="h-3.5 w-3.5 text-amber-400" />
               <span>
-                {competition === 'flugtag' &&
-                (selectedCategory === 'wings' || selectedCategory === 'tail')
+                {competition === 'rollercoaster'
+                  ? 'Outriggers + Flanged Rims boost Rail Balance • Drag/Scroll 3D to Spin & Zoom!'
+                  : competition === 'soapbox'
+                  ? 'Spoilers + Slicks boost Cornering Grip • Drag/Scroll 3D to Spin & Zoom!'
+                  : selectedCategory === 'wings' || selectedCategory === 'tail'
                   ? 'Symmetric L/R Pair • Drag/Scroll 3D to Spin & Zoom!'
                   : 'Tap 3D rings or cards to snap on! Drag/Scroll 3D to Spin & Zoom!'}
               </span>
@@ -791,7 +985,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
         {/* Horizontal Carousel of Parts or Paint Themes */}
         {!dockCollapsed &&
           (showPaintDrawer ? (
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar touch-pan-x py-1">
               {PAINT_THEMES.map((theme) => {
                 const active = loadout.paintTheme === theme.id;
                 return (
@@ -830,25 +1024,34 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
               })}
             </div>
           ) : (
-            <div className="flex items-stretch gap-2 overflow-x-auto no-scrollbar py-0.5">
+            <div
+              className="flex items-stretch gap-2 overflow-x-auto no-scrollbar touch-pan-x py-0.5"
+              onPointerLeave={() => setHoveredPartId(null)}
+            >
               {categoryParts.map((part: CraftPart) => {
                 const isEquipped = currentEquippedId === part.id;
                 const isLocked = totalStars < part.unlockStars;
+                const hasBalanceTendency = Math.abs(part.cgOffsetX) >= 0.25;
 
                 return (
                   <button
                     key={part.id}
                     ref={isEquipped ? activePartCardRef : null}
                     aria-pressed={isEquipped}
+                    aria-disabled={isLocked}
+                    onPointerEnter={() => setHoveredPartId(part.id)}
+                    onFocus={() => setHoveredPartId(part.id)}
+                    onBlur={() =>
+                      setHoveredPartId((prev) => (prev === part.id ? null : prev))
+                    }
                     onClick={() => {
                       if (!isLocked) {
                         onEquipPart(selectedCategory, part.id);
                       }
                     }}
-                    disabled={isLocked}
-                    className={`relative flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-1.5 sm:py-2 text-left border-2 transition active:scale-95 min-w-[172px] sm:min-w-[198px] ${
+                    className={`relative flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-1.5 sm:py-2 text-left border-2 transition active:scale-95 min-w-[178px] sm:min-w-[206px] ${
                       isLocked
-                        ? 'bg-slate-900/70 border-slate-700/80 opacity-65 cursor-not-allowed'
+                        ? 'bg-slate-900/75 border-slate-700/80 opacity-75 cursor-not-allowed'
                         : isEquipped
                         ? 'bg-gradient-to-br from-indigo-900/90 to-slate-800 border-yellow-400 shadow-lg shadow-yellow-400/15 cursor-pointer'
                         : 'bg-slate-800/80 border-white/10 hover:border-sky-400/60 hover:bg-slate-800 cursor-pointer'
@@ -875,31 +1078,61 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                         {part.name}
                       </div>
 
-                      {isLocked ? (
-                        <div className="mt-0.5 inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-black text-amber-300">
-                          <span>🔒 Need {part.unlockStars} ⭐</span>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="mt-0.5 inline-block rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-extrabold text-amber-300 w-fit">
-                            {part.kidBadge}
-                          </div>
-                          <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-300">
-                            <span>⚖️ {part.massLbs}lb</span>
-                            {part.wingAreaM2 > 0.5 ? (
-                              <span className="text-sky-300">
-                                {competition === 'flugtag' ? '🦅' : compMeta.meterLabels.liftEmoji}{' '}
-                                +{Math.round(part.wingAreaM2 * part.liftMultiplier)}
-                              </span>
-                            ) : part.pushEfficiency ? (
-                              <span className="text-emerald-300">
-                                🛞 +{Math.round((part.pushEfficiency - 0.85) * 40)}
-                              </span>
-                            ) : null}
-                            <span>✨ +{part.creativityPoints}</span>
-                          </div>
-                        </>
-                      )}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                        {isLocked && (
+                          <span className="inline-flex items-center gap-0.5 rounded-md bg-amber-500/25 border border-amber-400/40 px-1.5 py-0.5 text-[10px] font-black text-amber-300">
+                            🔒 {part.unlockStars}⭐
+                          </span>
+                        )}
+                        <span
+                          className={`inline-block rounded-md px-1.5 py-0.5 text-[10px] sm:text-[11px] font-extrabold ${
+                            isLocked
+                              ? 'bg-white/5 text-slate-300'
+                              : 'bg-white/10 text-amber-300'
+                          }`}
+                        >
+                          {part.kidBadge}
+                        </span>
+                        {hasBalanceTendency && (
+                          <span
+                            className="inline-block rounded-md bg-sky-500/20 border border-sky-400/30 px-1 py-0.5 text-[10px] font-extrabold text-sky-200"
+                            title={
+                              part.cgOffsetX > 0
+                                ? 'Shifts balance toward Nose/Front'
+                                : 'Shifts balance toward Tail/Rear'
+                            }
+                          >
+                            {part.cgOffsetX > 0 ? 'Nose+' : 'Tail+'}
+                          </span>
+                        )}
+                      </div>
+
+                      <div
+                        className={`mt-1 flex items-center gap-2 text-[11px] font-bold ${
+                          isLocked ? 'text-slate-400' : 'text-slate-300'
+                        }`}
+                      >
+                        <span>⚖️ {part.massLbs}lb</span>
+                        {part.category === 'trolley' && part.pushEfficiency ? (
+                          <span className="text-emerald-300">
+                            🛞 +{Math.round((part.pushEfficiency - 0.85) * 40)}
+                          </span>
+                        ) : competition === 'rollercoaster' && part.category === 'wings' ? (
+                          <span className="text-emerald-300">
+                            ⚖️ +{Math.round(part.pitchStability * 12 + part.wingAreaM2 * 1.5)}
+                          </span>
+                        ) : part.wingAreaM2 > 0.5 ? (
+                          <span className="text-sky-300">
+                            {competition === 'flugtag' ? '🦅' : compMeta.meterLabels.liftEmoji}{' '}
+                            +{Math.round(part.wingAreaM2 * part.liftMultiplier)}
+                          </span>
+                        ) : part.pushEfficiency ? (
+                          <span className="text-emerald-300">
+                            🛞 +{Math.round((part.pushEfficiency - 0.85) * 40)}
+                          </span>
+                        ) : null}
+                        <span>✨ +{part.creativityPoints}</span>
+                      </div>
                     </div>
 
                     {isEquipped && !isLocked && (

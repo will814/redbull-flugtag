@@ -18,11 +18,32 @@ export interface Craft3DGroups {
   trolleyGroup: THREE.Group;
   crewGroup: THREE.Group;
   socketMarkers: Record<PartCategory, THREE.Mesh>;
+  socketMarkerList: THREE.Mesh[];
   propSpinner: THREE.Object3D | null;
+  wheelSpinners: THREE.Object3D[];
 }
 
-const MATERIAL_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const MATERIAL_CACHE = new Map<string, THREE.Material>();
 const AIRFOIL_GEO_CACHE = new Map<string, THREE.BufferGeometry>();
+
+function getCachedGeo(key: string, factory: () => THREE.BufferGeometry): THREE.BufferGeometry {
+  const existing = AIRFOIL_GEO_CACHE.get(key);
+  if (existing) return existing;
+  const geo = factory();
+  geo.computeBoundingSphere();
+  geo.userData.cached = true;
+  AIRFOIL_GEO_CACHE.set(key, geo);
+  return geo;
+}
+
+function getCachedMat<T extends THREE.Material>(key: string, factory: () => T): T {
+  const existing = MATERIAL_CACHE.get(key) as T | undefined;
+  if (existing) return existing;
+  const mat = factory();
+  mat.userData.cached = true;
+  MATERIAL_CACHE.set(key, mat);
+  return mat;
+}
 
 function makeMat(
   hex: string | number,
@@ -30,17 +51,15 @@ function makeMat(
   metalness = 0.12
 ): THREE.MeshStandardMaterial {
   const key = `${hex}_${roughness}_${metalness}`;
-  const cached = MATERIAL_CACHE.get(key);
-  if (cached) return cached;
-
-  const mat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(hex),
-    roughness,
-    metalness,
-  });
-  mat.userData.cached = true;
-  MATERIAL_CACHE.set(key, mat);
-  return mat;
+  return getCachedMat(
+    key,
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(hex),
+        roughness,
+        metalness,
+      })
+  );
 }
 
 /**
@@ -50,6 +69,9 @@ export function disposeCraftObject3D(root: THREE.Object3D, disposeCached = false
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if (obj instanceof THREE.InstancedMesh && disposeCached) {
+      obj.dispose();
+    }
     if (mesh.geometry && (disposeCached || !mesh.geometry.userData?.cached)) {
       mesh.geometry.dispose();
     }
@@ -75,44 +97,41 @@ export function disposeCraftObject3D(root: THREE.Object3D, disposeCached = false
  * Creates a true cambered airfoil 3D wing geometry extruded along the span (Z axis).
  */
 function createAirfoilGeometry(chord: number, thickness: number, span: number): THREE.BufferGeometry {
-  const key = `${chord}_${thickness}_${span}`;
-  const existing = AIRFOIL_GEO_CACHE.get(key);
-  if (existing) return existing;
+  const key = `airfoil_${chord}_${thickness}_${span}`;
+  return getCachedGeo(key, () => {
+    const shape = new THREE.Shape();
+    const halfC = chord / 2;
+    // Start at trailing edge (-halfC, 0), curve over cambered top to leading edge (+halfC, 0), then flat/cambered bottom
+    shape.moveTo(-halfC, 0);
+    shape.bezierCurveTo(
+      -halfC * 0.2,
+      thickness * 0.85,
+      halfC * 0.55,
+      thickness * 1.15,
+      halfC,
+      0.02 * thickness
+    );
+    shape.bezierCurveTo(
+      halfC * 0.6,
+      -thickness * 0.45,
+      -halfC * 0.2,
+      -thickness * 0.2,
+      -halfC,
+      0
+    );
 
-  const shape = new THREE.Shape();
-  const halfC = chord / 2;
-  // Start at trailing edge (-halfC, 0), curve over cambered top to leading edge (+halfC, 0), then flat/cambered bottom
-  shape.moveTo(-halfC, 0);
-  shape.bezierCurveTo(
-    -halfC * 0.2,
-    thickness * 0.85,
-    halfC * 0.55,
-    thickness * 1.15,
-    halfC,
-    0.02 * thickness
-  );
-  shape.bezierCurveTo(
-    halfC * 0.6,
-    -thickness * 0.45,
-    -halfC * 0.2,
-    -thickness * 0.2,
-    -halfC,
-    0
-  );
-
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: span,
-    bevelEnabled: true,
-    bevelThickness: 0.02,
-    bevelSize: 0.015,
-    bevelSegments: 2,
-    curveSegments: 12,
+    const geo = new THREE.ExtrudeGeometry(shape, {
+      depth: span,
+      bevelEnabled: true,
+      bevelThickness: 0.02,
+      bevelSize: 0.015,
+      bevelSegments: 2,
+      curveSegments: 12,
+    });
+    // Center along Z axis
+    geo.translate(0, 0, -span / 2);
+    return geo;
   });
-  // Center along Z axis
-  geo.translate(0, 0, -span / 2);
-  geo.userData.cached = true;
-  AIRFOIL_GEO_CACHE.set(key, geo);
-  return geo;
 }
 
 export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
@@ -163,9 +182,22 @@ export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
   buildPushCrewMesh(crewGroup, theme.bodyHex);
 
   // 9. MAGNETIC SNAP SOCKET HALOS (For Hangar mode)
-  const socketMarkers = createSocketMarkers(airframeGroup, trolleyGroup);
+  const socketMarkers = createSocketMarkers(airframeGroup, trolleyGroup, chassisPart.id);
+  const socketMarkerList: THREE.Mesh[] = [];
+  for (const ringMesh of Object.values(socketMarkers)) {
+    socketMarkerList.push(ringMesh);
+    for (const child of ringMesh.children) {
+      if ((child as THREE.Mesh).isMesh) {
+        socketMarkerList.push(child as THREE.Mesh);
+      }
+    }
+  }
+  const wheelSpinners: THREE.Object3D[] = [];
 
   root.traverse((obj) => {
+    if (obj.userData?.isWheelSpinner) {
+      wheelSpinners.push(obj);
+    }
     const mesh = obj as THREE.Mesh;
     if (mesh.isMesh) {
       if (mesh.userData?.isSocketMarker) {
@@ -177,8 +209,9 @@ export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
         mesh.geometry.computeBoundingSphere();
       }
       const radius = mesh.geometry.boundingSphere?.radius ?? 1;
-      mesh.castShadow = radius >= 0.11;
-      mesh.receiveShadow = radius >= 0.16;
+      // Only cast/receive shadows on substantial structural meshes to cut shadow-pass draw calls
+      mesh.castShadow = radius >= 0.25;
+      mesh.receiveShadow = radius >= 0.55;
     }
   });
 
@@ -194,7 +227,9 @@ export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
     trolleyGroup,
     crewGroup,
     socketMarkers,
+    socketMarkerList,
     propSpinner,
+    wheelSpinners,
   };
 }
 
@@ -601,13 +636,17 @@ function buildChassisMesh(
   // Cockpit Windscreen Visor in front of pilot
   const windscreen = new THREE.Mesh(
     new THREE.ConeGeometry(0.36, 0.55, 12, 1, false, 0, Math.PI),
-    new THREE.MeshStandardMaterial({
-      color: '#38bdf8',
-      transparent: true,
-      opacity: 0.7,
-      roughness: 0.1,
-      metalness: 0.4,
-    })
+    getCachedMat(
+      'windscreen_visor',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: '#38bdf8',
+          transparent: true,
+          opacity: 0.7,
+          roughness: 0.1,
+          metalness: 0.4,
+        })
+    )
   );
   windscreen.rotation.z = -Math.PI / 3;
   windscreen.position.set(0.62, 0.42, 0);
@@ -721,13 +760,22 @@ function buildWingsMesh(
       });
     } else if (id === 'rc_bal_gyro') {
       // Counter-Rotating Golden Brass Gyro Ring mounted mid-frame
+      const gyroGroup = new THREE.Group();
+      gyroGroup.position.set(-0.08, 0.28, 0);
+      gyroGroup.userData.isWheelSpinner = true;
+
       const gyroRing = new THREE.Mesh(
         new THREE.TorusGeometry(0.42, 0.065, 10, 20),
         makeMat('#facc15', 0.2, 0.85)
       );
-      gyroRing.rotation.x = Math.PI / 2;
-      gyroRing.position.set(-0.08, 0.28, 0);
-      group.add(gyroRing);
+      const spokeGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.82, 8);
+      const spokeMat = makeMat('#f59e0b', 0.25, 0.8);
+      const spoke1 = new THREE.Mesh(spokeGeo, spokeMat);
+      const spoke2 = new THREE.Mesh(spokeGeo, spokeMat);
+      spoke2.rotation.z = Math.PI / 2;
+
+      gyroGroup.add(gyroRing, spoke1, spoke2);
+      group.add(gyroGroup);
     }
     return;
   }
@@ -788,19 +836,22 @@ function buildWingsMesh(
       const sliceGroup = new THREE.Group();
 
       // Triangular Pizza Dough + Melted Mozzarella Base
-      const triangleShape = new THREE.Shape();
-      triangleShape.moveTo(-0.82, 0);
-      triangleShape.lineTo(0.82, 0);
-      triangleShape.lineTo(0, 2.95);
-      triangleShape.closePath();
+      const sliceGeo = getCachedGeo(`pizza_slice_${side}`, () => {
+        const triangleShape = new THREE.Shape();
+        triangleShape.moveTo(-0.82, 0);
+        triangleShape.lineTo(0.82, 0);
+        triangleShape.lineTo(0, 2.95);
+        triangleShape.closePath();
 
-      const sliceGeo = new THREE.ExtrudeGeometry(triangleShape, {
-        depth: 0.09,
-        bevelEnabled: true,
-        bevelThickness: 0.025,
-        bevelSize: 0.02,
+        const g = new THREE.ExtrudeGeometry(triangleShape, {
+          depth: 0.09,
+          bevelEnabled: true,
+          bevelThickness: 0.025,
+          bevelSize: 0.02,
+        });
+        g.rotateX(side === 1 ? Math.PI / 2 : -Math.PI / 2);
+        return g;
       });
-      sliceGeo.rotateX(side === 1 ? Math.PI / 2 : -Math.PI / 2);
       const cheeseMesh = new THREE.Mesh(sliceGeo, makeMat('#facc15', 0.35));
       cheeseMesh.position.set(0, side === 1 ? 0.04 : -0.04, side * 0.48);
       sliceGroup.add(cheeseMesh);
@@ -851,25 +902,28 @@ function buildWingsMesh(
   if (id === 'wing_bat_glider') {
     // Sculpted Midnight Bat Wings with Scalloped Trailing Edges & Bat Finger Struts!
     [-1, 1].forEach((side) => {
-      const batShape = new THREE.Shape();
-      batShape.moveTo(0.75, 0);
-      batShape.quadraticCurveTo(0.5, 1.6, -0.1, 3.35);
-      // 3 Scalloped bat-membrane arches along trailing edge
-      batShape.quadraticCurveTo(-0.45, 2.6, -0.75, 2.2);
-      batShape.quadraticCurveTo(-0.45, 1.5, -0.78, 1.1);
-      batShape.quadraticCurveTo(-0.45, 0.5, -0.68, 0);
-      batShape.closePath();
+      const batGeo = getCachedGeo(`bat_wing_${side}`, () => {
+        const batShape = new THREE.Shape();
+        batShape.moveTo(0.75, 0);
+        batShape.quadraticCurveTo(0.5, 1.6, -0.1, 3.35);
+        // 3 Scalloped bat-membrane arches along trailing edge
+        batShape.quadraticCurveTo(-0.45, 2.6, -0.75, 2.2);
+        batShape.quadraticCurveTo(-0.45, 1.5, -0.78, 1.1);
+        batShape.quadraticCurveTo(-0.45, 0.5, -0.68, 0);
+        batShape.closePath();
 
-      const batGeo = new THREE.ExtrudeGeometry(batShape, {
-        depth: 0.06,
-        bevelEnabled: true,
-        bevelThickness: 0.015,
-        bevelSize: 0.015,
+        const g = new THREE.ExtrudeGeometry(batShape, {
+          depth: 0.06,
+          bevelEnabled: true,
+          bevelThickness: 0.015,
+          bevelSize: 0.015,
+        });
+        g.rotateX(Math.PI / 2);
+        if (side === -1) {
+          g.scale(1, 1, -1);
+        }
+        return g;
       });
-      batGeo.rotateX(Math.PI / 2);
-      if (side === -1) {
-        batGeo.scale(1, 1, -1);
-      }
       const membrane = new THREE.Mesh(batGeo, makeMat('#5b21b6', 0.35, 0.2));
       membrane.position.set(0, 0.56, side * 0.35);
       group.add(membrane);
@@ -891,22 +945,25 @@ function buildWingsMesh(
 
   if (id === 'wing_foam_delta') {
     // Swept Rogallo Hang-Glider Wing with Aluminum Control Frame & Keel Tube
-    const shape = new THREE.Shape();
-    shape.moveTo(1.05, 0);
-    shape.lineTo(-0.85, 3.25);
-    shape.lineTo(-1.18, 3.25);
-    shape.lineTo(-0.48, 0);
-    shape.lineTo(-1.18, -3.25);
-    shape.lineTo(-0.85, -3.25);
-    shape.closePath();
+    const extrude = getCachedGeo('foam_delta', () => {
+      const shape = new THREE.Shape();
+      shape.moveTo(1.05, 0);
+      shape.lineTo(-0.85, 3.25);
+      shape.lineTo(-1.18, 3.25);
+      shape.lineTo(-0.48, 0);
+      shape.lineTo(-1.18, -3.25);
+      shape.lineTo(-0.85, -3.25);
+      shape.closePath();
 
-    const extrude = new THREE.ExtrudeGeometry(shape, {
-      depth: 0.07,
-      bevelEnabled: true,
-      bevelThickness: 0.02,
-      bevelSize: 0.02,
+      const g = new THREE.ExtrudeGeometry(shape, {
+        depth: 0.07,
+        bevelEnabled: true,
+        bevelThickness: 0.02,
+        bevelSize: 0.02,
+      });
+      g.rotateX(Math.PI / 2);
+      return g;
     });
-    extrude.rotateX(Math.PI / 2);
     const deltaMesh = new THREE.Mesh(extrude, makeMat(wingHex, 0.35));
     deltaMesh.position.set(0.1, 0.72, 0);
     group.add(deltaMesh);
@@ -1035,8 +1092,14 @@ function buildTailMesh(
       id === 'rc_gear_leadweight' ? 0.34 : id === 'rc_gear_hillclimb' ? 0.28 : 0.19;
     const rearThickness = id === 'rc_gear_leadweight' ? 0.14 : 0.04;
 
-    // Front, Mid, and Rear Chainring Sprockets + Timing Chain along right side (z = +0.16)
+    // Front, Mid, and Rear Chainring Sprockets + Crank Arms along right side (z = +0.16)
+    const crankArmGeo = new THREE.BoxGeometry(0.32, 0.035, 0.025);
+    const crankMat = makeMat('#e2e8f0', 0.25, 0.8);
     [0.35, -0.55, -1.15].forEach((gx, idx) => {
+      const sprocketGroup = new THREE.Group();
+      sprocketGroup.position.set(gx, -0.22, 0.16);
+      sprocketGroup.userData.isWheelSpinner = true;
+
       const sprocket = new THREE.Mesh(
         new THREE.CylinderGeometry(
           idx === 2 ? radius : 0.18,
@@ -1047,8 +1110,11 @@ function buildTailMesh(
         makeMat(gearColor, 0.25, 0.7)
       );
       sprocket.rotation.x = Math.PI / 2;
-      sprocket.position.set(gx, -0.22, 0.16);
-      group.add(sprocket);
+
+      const crankBar = new THREE.Mesh(crankArmGeo, crankMat);
+      crankBar.position.z = 0.025;
+      sprocketGroup.add(sprocket, crankBar);
+      group.add(sprocketGroup);
     });
 
     const chainBar = new THREE.Mesh(
@@ -1120,19 +1186,22 @@ function buildTailMesh(
 
   if (id === 'tail_shark_fin') {
     // Curved Sculpted Great White Shark Dorsal Fin + Horizontal Flukes!
-    const finShape = new THREE.Shape();
-    finShape.moveTo(0.45, 0);
-    finShape.quadraticCurveTo(0.15, 0.65, -0.38, 1.15);
-    finShape.quadraticCurveTo(-0.18, 0.55, -0.35, 0);
-    finShape.closePath();
+    const finGeo = getCachedGeo('shark_fin', () => {
+      const finShape = new THREE.Shape();
+      finShape.moveTo(0.45, 0);
+      finShape.quadraticCurveTo(0.15, 0.65, -0.38, 1.15);
+      finShape.quadraticCurveTo(-0.18, 0.55, -0.35, 0);
+      finShape.closePath();
 
-    const finGeo = new THREE.ExtrudeGeometry(finShape, {
-      depth: 0.08,
-      bevelEnabled: true,
-      bevelThickness: 0.02,
-      bevelSize: 0.02,
+      const g = new THREE.ExtrudeGeometry(finShape, {
+        depth: 0.08,
+        bevelEnabled: true,
+        bevelThickness: 0.02,
+        bevelSize: 0.02,
+      });
+      g.translate(0, 0, -0.04);
+      return g;
     });
-    finGeo.translate(0, 0, -0.04);
     const dorsalFin = new THREE.Mesh(finGeo, makeMat('#0284c7', 0.25));
     dorsalFin.position.set(-1.75, 0.2, 0);
 
@@ -1329,11 +1398,15 @@ function buildNoseMesh(
     // Glowing Red Charcoal Bed + Silver Grill Grate
     const coals = new THREE.Mesh(
       new THREE.CylinderGeometry(0.48, 0.45, 0.08, 16),
-      new THREE.MeshStandardMaterial({
-        color: '#ef4444',
-        emissive: '#dc2626',
-        emissiveIntensity: 0.6,
-      })
+      getCachedMat(
+        'grill_coals_emissive',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: '#ef4444',
+            emissive: '#dc2626',
+            emissiveIntensity: 0.6,
+          })
+      )
     );
     coals.position.y = -0.02;
     grillGroup.add(coals);
@@ -1429,17 +1502,30 @@ function buildNoseMesh(
 
     const flame = new THREE.Mesh(
       new THREE.ConeGeometry(0.14, 0.55, 10),
-      new THREE.MeshStandardMaterial({
-        color: '#facc15',
-        emissive: '#f97316',
-        emissiveIntensity: 0.7,
-      })
+      getCachedMat(
+        'dragon_flame_emissive',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: '#facc15',
+            emissive: '#f97316',
+            emissiveIntensity: 0.7,
+          })
+      )
     );
     flame.rotation.z = -Math.PI / 2;
     flame.position.set(0.82, -0.14, 0);
     dragon.add(flame);
 
     // Swept Golden Dragon Horns & Glowing Eyes
+    const dragonEyeMat = getCachedMat(
+      'dragon_eye_emissive',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: '#fde047',
+          emissive: '#eab308',
+          emissiveIntensity: 0.5,
+        })
+    );
     [-0.2, 0.2].forEach((z) => {
       const horn = new THREE.Mesh(
         new THREE.ConeGeometry(0.08, 0.52, 10),
@@ -1449,10 +1535,7 @@ function buildNoseMesh(
       horn.rotation.z = 0.65;
       dragon.add(horn);
 
-      const eye = new THREE.Mesh(
-        new THREE.SphereGeometry(0.08, 10, 10),
-        new THREE.MeshStandardMaterial({ color: '#fde047', emissive: '#eab308', emissiveIntensity: 0.5 })
-      );
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 10), dragonEyeMat);
       eye.position.set(0.15, 0.14, z * 1.35);
       dragon.add(eye);
     });
@@ -1863,25 +1946,28 @@ function buildTopperMesh(group: THREE.Group, id: string): void {
 
     // 1. Extrude a true U-shaped folded tortilla cross-section along X (length = 1.65)
     const tacoLength = 1.65;
-    const shellShape = new THREE.Shape();
-    // Outer U curve (from left lip -> bottom curve -> right lip)
-    shellShape.moveTo(-0.48, 0.68);
-    shellShape.bezierCurveTo(-0.56, -0.15, 0.56, -0.15, 0.48, 0.68);
-    // Inner U curve (thickness = 0.08)
-    shellShape.lineTo(0.4, 0.68);
-    shellShape.bezierCurveTo(0.44, -0.02, -0.44, -0.02, -0.4, 0.68);
-    shellShape.closePath();
+    const shellGeo = getCachedGeo('taco_shell', () => {
+      const shellShape = new THREE.Shape();
+      // Outer U curve (from left lip -> bottom curve -> right lip)
+      shellShape.moveTo(-0.48, 0.68);
+      shellShape.bezierCurveTo(-0.56, -0.15, 0.56, -0.15, 0.48, 0.68);
+      // Inner U curve (thickness = 0.08)
+      shellShape.lineTo(0.4, 0.68);
+      shellShape.bezierCurveTo(0.44, -0.02, -0.44, -0.02, -0.4, 0.68);
+      shellShape.closePath();
 
-    const shellGeo = new THREE.ExtrudeGeometry(shellShape, {
-      depth: tacoLength,
-      bevelEnabled: true,
-      bevelThickness: 0.03,
-      bevelSize: 0.025,
-      curveSegments: 18,
+      const g = new THREE.ExtrudeGeometry(shellShape, {
+        depth: tacoLength,
+        bevelEnabled: true,
+        bevelThickness: 0.03,
+        bevelSize: 0.025,
+        curveSegments: 18,
+      });
+      // Orient extrusion along X axis (+X = nose, -X = tail)
+      g.rotateY(Math.PI / 2);
+      g.translate(-tacoLength / 2, 0, 0);
+      return g;
     });
-    // Orient extrusion along X axis (+X = nose, -X = tail)
-    shellGeo.rotateY(Math.PI / 2);
-    shellGeo.translate(-tacoLength / 2, 0, 0);
 
     const shellMesh = new THREE.Mesh(shellGeo, makeMat('#facc15', 0.55, 0.05));
     tacoGroup.add(shellMesh);
@@ -2245,12 +2331,16 @@ function buildTopperMesh(group: THREE.Group, id: string): void {
     // Faceted Metallic Mirror Disco Sphere on Top
     const mirrorBall = new THREE.Mesh(
       new THREE.IcosahedronGeometry(0.46, 2),
-      new THREE.MeshStandardMaterial({
-        color: '#f8fafc',
-        roughness: 0.08,
-        metalness: 0.92,
-        flatShading: true,
-      })
+      getCachedMat(
+        'disco_mirror_ball',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: '#f8fafc',
+            roughness: 0.08,
+            metalness: 0.92,
+            flatShading: true,
+          })
+      )
     );
     mirrorBall.position.y = 0.82;
     disco.add(mirrorBall);
@@ -2372,7 +2462,10 @@ function buildPilotMesh(group: THREE.Group, chassisId = ''): void {
       ]
     : [{ x: 0.15, y: 0.45, torsoHex: '#f97316', helmetHex: '#2563eb' }];
 
-  riderOffsets.forEach(({ x, y, torsoHex, helmetHex }) => {
+  const legGeo = isTandem ? new THREE.CylinderGeometry(0.06, 0.05, 0.46, 8) : null;
+  const legMat = isTandem ? makeMat('#1e293b', 0.55) : null;
+
+  riderOffsets.forEach(({ x, y, torsoHex, helmetHex }, riderIdx) => {
     const torso = new THREE.Mesh(
       new THREE.CylinderGeometry(0.18, 0.2, 0.52, 12),
       makeMat(torsoHex, 0.45)
@@ -2388,6 +2481,16 @@ function buildPilotMesh(group: THREE.Group, chassisId = ''): void {
       arm.rotation.z = -1.1;
       group.add(arm);
     });
+
+    if (isTandem && legGeo && legMat) {
+      [-0.13, 0.13].forEach((lz, legIdx) => {
+        const leg = new THREE.Mesh(legGeo, legMat);
+        const phaseUp = (riderIdx + legIdx) % 2 === 0;
+        leg.position.set(x + 0.08, y - 0.36 + (phaseUp ? 0.05 : -0.04), lz);
+        leg.rotation.z = phaseUp ? -0.38 : -0.15;
+        group.add(leg);
+      });
+    }
 
     const helmet = new THREE.Mesh(
       new THREE.SphereGeometry(0.22, 16, 16),
@@ -2421,6 +2524,7 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
 
     const tireGeo = new THREE.TorusGeometry(0.44, 0.075, 10, 24);
     const rimGeo = new THREE.TorusGeometry(0.35, 0.035, 8, 20);
+    const flangeGeo = isFlanged ? new THREE.TorusGeometry(0.49, 0.022, 8, 24) : null;
     const spokeGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.72, 6);
     const tireMat = makeMat(tireColor, 0.55);
     const rimMat = makeMat(rimColor, 0.25, 0.6);
@@ -2428,8 +2532,17 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
     [1.15, -1.15].forEach((wx) => {
       const wheelGroup = new THREE.Group();
       wheelGroup.position.set(wx, -0.32, 0);
+      wheelGroup.userData.isWheelSpinner = true;
       wheelGroup.add(new THREE.Mesh(tireGeo, tireMat));
       wheelGroup.add(new THREE.Mesh(rimGeo, rimMat));
+
+      if (flangeGeo) {
+        [-0.06, 0.06].forEach((fz) => {
+          const flange = new THREE.Mesh(flangeGeo, rimMat);
+          flange.position.z = fz;
+          wheelGroup.add(flange);
+        });
+      }
 
       for (let s = 0; s < 4; s++) {
         const spoke = new THREE.Mesh(spokeGeo, rimMat);
@@ -2451,6 +2564,7 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
     wheelGeo.rotateX(Math.PI / 2);
     const hubGeo = new THREE.CylinderGeometry(wheelRadius * 0.48, wheelRadius * 0.48, width + 0.02, 12);
     hubGeo.rotateX(Math.PI / 2);
+    const lugGeo = new THREE.BoxGeometry(wheelRadius * 1.4, 0.04, width + 0.03);
 
     const wheelMat = makeMat(isCheese ? '#facc15' : '#0f172a', 0.6);
     const hubMat = makeMat(isCheese ? '#f97316' : isSlicks ? '#eab308' : '#ef4444', 0.3, 0.5);
@@ -2461,11 +2575,14 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
       [0.78, 0.68],
       [0.78, -0.68],
     ].forEach(([x, z]) => {
+      const wheelGroup = new THREE.Group();
+      wheelGroup.position.set(x, -0.42, z);
+      wheelGroup.userData.isWheelSpinner = true;
       const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.position.set(x, -0.42, z);
       const hub = new THREE.Mesh(hubGeo, hubMat);
-      hub.position.set(x, -0.42, z);
-      group.add(wheel, hub);
+      const lug = new THREE.Mesh(lugGeo, hubMat);
+      wheelGroup.add(wheel, hub, lug);
+      group.add(wheelGroup);
     });
     return;
   }
@@ -2486,12 +2603,18 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
 
   if (id === 'trolley_shopping_cart') {
     // Wire Shopping Cart Basket Sides & Red Push Handle
-    const basket = new THREE.Mesh(
-      new THREE.BoxGeometry(1.75, 0.34, 1.15),
-      new THREE.MeshStandardMaterial({
+    let wireMat = MATERIAL_CACHE.get('shopping_cart_wire') as THREE.MeshStandardMaterial | undefined;
+    if (!wireMat) {
+      wireMat = new THREE.MeshStandardMaterial({
         color: '#cbd5e1',
         wireframe: true,
-      })
+      });
+      wireMat.userData.cached = true;
+      MATERIAL_CACHE.set('shopping_cart_wire', wireMat);
+    }
+    const basket = new THREE.Mesh(
+      new THREE.BoxGeometry(1.75, 0.34, 1.15),
+      wireMat
     );
     basket.position.set(0, -0.28, 0);
     group.add(basket);
@@ -2512,11 +2635,13 @@ function buildTrolleyMesh(group: THREE.Group, id: string): void {
     [0.72, 0.64],
     [0.72, -0.64],
   ].forEach(([x, z]) => {
+    const wheelGroup = new THREE.Group();
+    wheelGroup.position.set(x, -0.64, z);
+    wheelGroup.userData.isWheelSpinner = true;
     const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-    wheel.position.set(x, -0.64, z);
     const hub = new THREE.Mesh(hubGeo, hubMat);
-    hub.position.set(x, -0.64, z);
-    group.add(wheel, hub);
+    wheelGroup.add(wheel, hub);
+    group.add(wheelGroup);
   });
 }
 
@@ -2561,28 +2686,86 @@ function buildPushCrewMesh(group: THREE.Group, jerseyHex: string): void {
 
 function createSocketMarkers(
   airframeGroup: THREE.Group,
-  trolleyGroup: THREE.Group
+  trolleyGroup: THREE.Group,
+  chassisId = ''
 ): Record<PartCategory, THREE.Mesh> {
+  const isTandem = chassisId.startsWith('rc_');
+  const isSoapbox = chassisId.startsWith('sb_');
+
+  const sharedRingGeo = getCachedGeo('socket_ring_geo', () => {
+    const g = new THREE.RingGeometry(0.24, 0.4, 24);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  });
+
+  const sharedHitDiscGeo = getCachedGeo('socket_hit_disc_geo', () => {
+    const g = new THREE.CircleGeometry(0.42, 20);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  });
+
+  const sharedHitDiscMat = getCachedMat(
+    'socket_hit_disc_mat',
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.01,
+        depthWrite: false,
+      })
+  );
+
   const makeRing = (
     category: PartCategory,
     color: number,
     pos: [number, number, number],
     parent: THREE.Group
   ) => {
-    const geo = new THREE.RingGeometry(0.24, 0.4, 24);
-    geo.rotateX(-Math.PI / 2);
-    const mat = new THREE.MeshBasicMaterial({
-      color,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.85,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
+    const matKey = `socket_ring_${color}`;
+    const mat = getCachedMat(
+      matKey,
+      () =>
+        new THREE.MeshBasicMaterial({
+          color,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.85,
+        })
+    );
+    const mesh = new THREE.Mesh(sharedRingGeo, mat);
     mesh.position.set(pos[0], pos[1], pos[2]);
     mesh.userData = { isSocketMarker: true, category };
+
+    const hitDisc = new THREE.Mesh(sharedHitDiscGeo, sharedHitDiscMat);
+    hitDisc.userData = { isSocketMarker: true, category };
+    mesh.add(hitDisc);
+
     parent.add(mesh);
     return mesh;
   };
+
+  if (isTandem) {
+    return {
+      chassis: makeRing('chassis', 0x38bdf8, [0, 0.1, 0], airframeGroup),
+      wings: makeRing('wings', 0xfacc15, [0.15, 0.62, 0], airframeGroup),
+      tail: makeRing('tail', 0xf43f5e, [-0.4, -0.22, 0.2], airframeGroup),
+      nose: makeRing('nose', 0x22c55e, [1.32, 0.48, 0], airframeGroup),
+      topper: makeRing('topper', 0xa855f7, [0, 1.02, 0], airframeGroup),
+      trolley: makeRing('trolley', 0xf97316, [1.15, -0.32, 0], trolleyGroup),
+    };
+  }
+
+  if (isSoapbox) {
+    return {
+      chassis: makeRing('chassis', 0x38bdf8, [0, 0.05, 0], airframeGroup),
+      wings: makeRing('wings', 0xfacc15, [0, -0.28, 0.65], airframeGroup),
+      tail: makeRing('tail', 0xf43f5e, [-1.45, 0.32, 0], airframeGroup),
+      nose: makeRing('nose', 0x22c55e, [1.48, 0.08, 0], airframeGroup),
+      topper: makeRing('topper', 0xa855f7, [0, 0.92, 0], airframeGroup),
+      trolley: makeRing('trolley', 0xf97316, [0.78, -0.42, 0.68], trolleyGroup),
+    };
+  }
 
   return {
     chassis: makeRing('chassis', 0x38bdf8, [0, 0.05, 0], airframeGroup),

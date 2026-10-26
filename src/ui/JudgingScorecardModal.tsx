@@ -45,8 +45,14 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.code === 'Enter') {
+        if (e.repeat || performance.now() - mountedAt < 350) {
+          e.preventDefault();
+          return;
+        }
+        if (document.activeElement instanceof HTMLButtonElement) {
+          return;
+        }
         e.preventDefault();
-        if (e.repeat || performance.now() - mountedAt < 350) return;
         onFlyAgain();
       } else if (e.code === 'Escape' || e.code === 'KeyB') {
         e.preventDefault();
@@ -70,7 +76,7 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
       aria-modal="true"
       aria-labelledby="scorecard-heading"
     >
-      <div className="relative flex w-full max-w-xl flex-col gap-2 rounded-3xl bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-900 px-3.5 py-2.5 sm:p-5 border-4 border-yellow-400 shadow-2xl max-h-[96vh] overflow-y-auto no-scrollbar">
+      <div className="relative flex w-full max-w-xl flex-col gap-2 rounded-3xl bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-900 px-3.5 py-2.5 sm:p-5 border-4 border-yellow-400 shadow-2xl max-h-[96dvh] overflow-y-auto no-scrollbar touch-pan-y">
         {/* TOP HEADER: Distance & Splash Badge + Total Score & Stars */}
         <div className="flex items-center justify-between gap-2 border-b border-white/15 pb-2">
           <div className="flex items-center gap-2">
@@ -106,11 +112,13 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
               <div className="text-[11px] sm:text-xs font-extrabold text-sky-300 mt-0.5">
                 {scores.beatWorldRecord
                   ? comp === 'soapbox'
-                    ? `🏁 CROSSED THE 450 FT FINISH LINE IN ${flightState.courseTimeSeconds.toFixed(1)}S!!`
+                    ? `🏁 CROSSED THE 450 FT FINISH IN ${flightState.courseTimeSeconds.toFixed(1)}S • Push-Off: ${flightState.trolleyReleaseQuality.toUpperCase()}`
                     : comp === 'rollercoaster'
-                    ? `🔔 RANG THE GRAND BELL AT 320 FT IN ${flightState.courseTimeSeconds.toFixed(1)}S!!`
-                    : '👑 YOU BEAT THE 258 FT WORLD RECORD!!'
-                  : `${scores.splashRating} • Start Timing: ${flightState.trolleyReleaseQuality.toUpperCase()}`}
+                    ? `🔔 RANG THE 320 FT GRAND BELL IN ${flightState.courseTimeSeconds.toFixed(1)}S • Drop-In: ${flightState.trolleyReleaseQuality.toUpperCase()}`
+                    : `👑 BEAT THE 258 FT WORLD RECORD • Drop: ${flightState.trolleyReleaseQuality.toUpperCase()}`
+                  : `${scores.splashRating} • ${
+                      comp === 'rollercoaster' ? 'Drop-In' : 'Start Timing'
+                    }: ${flightState.trolleyReleaseQuality.toUpperCase()}`}
               </div>
             </div>
           </div>
@@ -156,6 +164,8 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
               : comp === 'rollercoaster'
               ? flightState.completedCourse
                 ? '🚲 Stayed Dry & Balanced Across the Entire Canal Track!'
+                : flightState.debris.length > 0
+                ? `💦 Derailed at ${flightState.distanceFeet} ft — ${flightState.debris.length} Part(s) Snapped Off in the Canal!`
                 : `💦 Derailed into the Canal at ${flightState.distanceFeet} ft!`
               : flightState.debris.length === 0
               ? '🛠️ Hull Held Together on Water Impact!'
@@ -169,10 +179,10 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
         </div>
 
         {/* THE 3 CELEBRITY JUDGES' SCORECARDS (Staggered Entrance) */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
           {/* Judge 1: Distance / Speed & Line / Track & Bell */}
           <div
-            className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-sky-400/60 p-2 sm:p-2.5 text-center shadow-lg"
+            className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-sky-400/60 p-2 sm:p-2.5 min-w-0 text-center shadow-lg"
             style={{ animationDelay: '60ms' }}
           >
             <div className="flex flex-col items-center">
@@ -202,7 +212,7 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
 
           {/* Judge 2: Creativity */}
           <div
-            className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-pink-400/60 p-2 sm:p-2.5 text-center shadow-lg"
+            className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-pink-400/60 p-2 sm:p-2.5 min-w-0 text-center shadow-lg"
             style={{ animationDelay: '180ms' }}
           >
             <div className="flex flex-col items-center">
@@ -216,13 +226,17 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
               <span className="text-[11px] text-slate-500">/10</span>
             </div>
             <div className="text-[10px] sm:text-[11px] font-bold text-slate-300 leading-tight">
-              {scores.splashRating}
+              {scores.isOverWeightCannonball
+                ? '🛋️ Heavyweight Flair Bonus!'
+                : scores.creativityJudge >= 9
+                ? '🎭 Show-Stopping Craft Flair!'
+                : '🎨 Custom Craft & Style'}
             </div>
           </div>
 
           {/* Judge 3: Showmanship */}
           <div
-            className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-amber-400/60 p-2 sm:p-2.5 text-center shadow-lg"
+            className="animate-card-pop flex flex-col items-center justify-between rounded-2xl bg-slate-800/95 border-2 border-amber-400/60 p-2 sm:p-2.5 min-w-0 text-center shadow-lg"
             style={{ animationDelay: '300ms' }}
           >
             <div className="flex flex-col items-center">
@@ -247,7 +261,9 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/25 via-yellow-500/25 to-emerald-500/25 border-2 border-yellow-300 px-2.5 py-1.5">
             <div className="flex items-center gap-1.5 font-display text-[11px] sm:text-xs font-black text-yellow-300 mb-1">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>NEW PARTS UNLOCKED IN THE HANGAR!</span>
+              <span>
+                NEW PARTS UNLOCKED IN THE {comp === 'flugtag' ? 'HANGAR' : 'WORKSHOP'}!
+              </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {newlyUnlockedParts.map((part) => (
@@ -296,7 +312,7 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
           <button
             onClick={onBackToHangar}
             className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 border-2 border-white py-2 sm:py-2.5 font-display text-xs sm:text-base font-black text-slate-950 shadow-xl active:scale-95 transition cursor-pointer"
-            title="Return to Hangar (B / Esc)"
+            title={`Return to ${comp === 'flugtag' ? 'Hangar' : 'Workshop'} (B / Esc)`}
           >
             <Wrench className="h-4 w-4 sm:h-5 sm:w-5" />
             <span>BUILD & UPGRADE!</span>

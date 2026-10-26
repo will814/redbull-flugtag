@@ -125,6 +125,8 @@ export interface FlightSimulationState {
   courseTimeSeconds: number;
   /** Soapbox downhill obstacles (hay bales & kicker ramps) */
   soapboxObstacles: SoapboxObstacle[];
+  /** Timestamp of last mid-course pedal/boost tap to enforce cadence cooldown */
+  lastActionTapPhaseTime?: number;
 }
 
 const FEET_PER_METER = 3.28084;
@@ -139,39 +141,63 @@ const STEP_RESULT = {
   justCollectedThermal: false,
 };
 
+const SOAPBOX_PROFILE_OUT = {
+  yFeet: 30,
+  slopeDeg: 0,
+};
+
+const COASTER_PROFILE_OUT = {
+  yFeet: 30,
+  slopeDeg: 0,
+  targetLeanDeg: 0,
+};
+
 /**
  * Shared mathematical road profile for the 450-ft Red Bull Soapbox downhill course.
+ * Mutates and returns `out` (defaults to shared module struct for zero-allocation 120Hz physics).
  */
-export function getSoapboxTrackElevationFeet(xFeet: number): {
+export function getSoapboxTrackElevationFeet(
+  xFeet: number,
+  out = SOAPBOX_PROFILE_OUT
+): {
   yFeet: number;
   slopeDeg: number;
 } {
   if (xFeet <= 0) {
-    return { yFeet: RAMP_HEIGHT_FEET, slopeDeg: 0 };
+    out.yFeet = RAMP_HEIGHT_FEET;
+    out.slopeDeg = 0;
+    return out;
   }
   const clampedX = Math.min(480, Math.max(0, xFeet));
   // Smooth downhill descent from 30 ft at x=0 down to 1.5 ft at x=450 ft with rolling terraces
   const baseDrop = RAMP_HEIGHT_FEET - (clampedX / 450) * 28.2;
   const wave = Math.sin(clampedX * 0.042) * 1.65 + Math.cos(clampedX * 0.019) * 0.9;
-  const yFeet = Math.max(1.2, baseDrop + wave - 0.9);
+  out.yFeet = Math.max(1.2, baseDrop + wave - 0.9);
   const dyDx =
     -28.2 / 450 +
     0.042 * 1.65 * Math.cos(clampedX * 0.042) -
     0.019 * 0.9 * Math.sin(clampedX * 0.019);
-  const slopeDeg = (Math.atan(dyDx) * 180) / Math.PI;
-  return { yFeet, slopeDeg };
+  out.slopeDeg = (Math.atan(dyDx) * 180) / Math.PI;
+  return out;
 }
 
 /**
  * Shared mathematical rail profile for the 320-ft Red Bull Tandem Rollercoaster over water.
+ * Mutates and returns `out` (defaults to shared module struct for zero-allocation 120Hz physics).
  */
-export function getRollercoasterTrackProfile(xFeet: number): {
+export function getRollercoasterTrackProfile(
+  xFeet: number,
+  out = COASTER_PROFILE_OUT
+): {
   yFeet: number;
   slopeDeg: number;
   targetLeanDeg: number;
 } {
   if (xFeet <= 0) {
-    return { yFeet: RAMP_HEIGHT_FEET, slopeDeg: 0, targetLeanDeg: 0 };
+    out.yFeet = RAMP_HEIGHT_FEET;
+    out.slopeDeg = 0;
+    out.targetLeanDeg = 0;
+    return out;
   }
   const x = Math.min(340, Math.max(0, xFeet));
   // Camelback hills over the canal: starts at 30 ft, drops into valley, climbs 3 camelback humps, finishes at 14 ft
@@ -179,20 +205,20 @@ export function getRollercoasterTrackProfile(xFeet: number): {
   const camelbacks =
     -Math.sin((x / 320) * Math.PI * 3.5) * 6.2 +
     Math.sin((x / 320) * Math.PI * 7.0) * 2.1;
-  const yFeet = Math.max(4.5, baseLine + camelbacks);
+  out.yFeet = Math.max(4.5, baseLine + camelbacks);
 
   const dBase = -15.5 / 320;
   const dCamel =
     -(Math.PI * 3.5 / 320) * 6.2 * Math.cos((x / 320) * Math.PI * 3.5) +
     (Math.PI * 7.0 / 320) * 2.1 * Math.cos((x / 320) * Math.PI * 7.0);
-  const slopeDeg = (Math.atan(dBase + dCamel) * 180) / Math.PI;
+  out.slopeDeg = (Math.atan(dBase + dCamel) * 180) / Math.PI;
 
   // Banking & seesaw tilt challenge along the narrow rail (smoothly ramped in over the first 20 ft)
   const rampIn = Math.min(1, x / 20);
-  const targetLeanDeg =
+  out.targetLeanDeg =
     rampIn * (Math.sin(x * 0.055) * 12 + Math.sin(x * 0.095) * 7);
 
-  return { yFeet, slopeDeg, targetLeanDeg };
+  return out;
 }
 
 export function createInitialFlightState(
@@ -293,6 +319,7 @@ export function createInitialFlightState(
     completedCourse: false,
     courseTimeSeconds: 0,
     soapboxObstacles,
+    lastActionTapPhaseTime: -1,
   };
 }
 
@@ -334,17 +361,25 @@ export function triggerHypeOrPushTap(
 
   // Mid-run action tap for Soapbox (Gravity Tuck Boost) & Tandem Rollercoaster (Pedal Sprint!)
   if (state.phase === 'airborne') {
+    if (state.phaseTime - (state.lastActionTapPhaseTime ?? -1) < 0.16) {
+      return { event: 'none' };
+    }
+    state.lastActionTapPhaseTime = state.phaseTime;
+
     if (state.competition === 'rollercoaster') {
       const overWeightExcess = Math.max(0, metrics.rampTotalMassLbs - 400);
       const overWeightInertia = 1 / (1 + overWeightExcess * 0.0035);
       const pedalBoost = 3.2 * metrics.effectiveLiftMultiplier * overWeightInertia;
-      state.vxFeet = Math.min(44, state.vxFeet + pedalBoost);
-      // Pedaling rhythmically also helps steady moderate wobble
-      state.leanVelDeg *= 0.82;
+      state.vxFeet = Math.max(state.vxFeet, Math.min(46, state.vxFeet + pedalBoost));
+      // Pedaling rhythmically also helps steady moderate wobble without erasing rail physics
+      state.leanVelDeg *= 0.86;
       return { event: 'push_boost' };
     }
     if (state.competition === 'soapbox') {
-      state.vxFeet = Math.min(54, state.vxFeet + 2.4 * metrics.pushEfficiency);
+      state.vxFeet = Math.max(
+        state.vxFeet,
+        Math.min(58, state.vxFeet + 2.4 * metrics.pushEfficiency)
+      );
       return { event: 'push_boost' };
     }
   }
@@ -472,6 +507,18 @@ export function stepFlightSimulation(
 
     let remainingDt = clampedDt;
 
+    const stallAngle = 14.5;
+    const arFactor = metrics.effectiveAspectRatio / (metrics.effectiveAspectRatio + 2.0);
+    const liftSlope = 2 * Math.PI * arFactor * metrics.effectiveLiftMultiplier;
+    const peakCl = liftSlope * ((stallAngle * Math.PI) / 180);
+    const oswaldEfficiency = 0.8;
+    const inducedDragFactor = 1 / (Math.PI * oswaldEfficiency * metrics.effectiveAspectRatio);
+    const effectiveArea = metrics.totalWingAreaM2 * 1.24;
+    const massKg = metrics.airborneMassKg;
+    const balanceOffset = 0.17 - metrics.staticMargin;
+    const staticPitchTorque = balanceOffset * 82;
+    const weathervaneGain = 2.4 + metrics.pitchStability * 3.5;
+
     while (remainingDt > 1e-6 && state.phase === 'airborne') {
       const subDt = Math.min(remainingDt, MAX_AIRBORNE_SUBSTEP);
       remainingDt -= subDt;
@@ -527,12 +574,9 @@ export function stepFlightSimulation(
 
       // Airfoil Lift Curve with realistic stall above 14.5 degrees
       const aoaRad = (aoaDeg * Math.PI) / 180;
-      const arFactor = metrics.effectiveAspectRatio / (metrics.effectiveAspectRatio + 2.0);
-      const liftSlope = 2 * Math.PI * arFactor * metrics.effectiveLiftMultiplier;
 
       let cl = 0;
       let stallDragPenalty = 0;
-      const stallAngle = 14.5;
 
       if (Math.abs(aoaDeg) <= stallAngle) {
         cl = liftSlope * aoaRad;
@@ -541,7 +585,6 @@ export function stepFlightSimulation(
         state.isStalling = aoaDeg > stallAngle;
         const sign = Math.sign(aoaDeg);
         const excessDeg = Math.min(35, Math.abs(aoaDeg) - stallAngle);
-        const peakCl = liftSlope * ((stallAngle * Math.PI) / 180);
         cl = sign * Math.max(0.1, peakCl * (1 - excessDeg / 22));
         stallDragPenalty = 0.025 * excessDeg;
       }
@@ -559,13 +602,11 @@ export function stepFlightSimulation(
       }
 
       // Induced Drag + Parasitic Drag
-      const oswaldEfficiency = 0.8;
-      const inducedDrag = (cl * cl) / (Math.PI * oswaldEfficiency * metrics.effectiveAspectRatio);
+      const inducedDrag = cl * cl * inducedDragFactor;
       const cd = Math.max(0.036, metrics.baseDragCoeff + inducedDrag * 0.68 + stallDragPenalty);
 
       // Dynamic pressure & tuned lifting surface scale
       const dynamicPressure = 0.5 * AIR_DENSITY_RHO * airspeedSq;
-      const effectiveArea = metrics.totalWingAreaM2 * 1.24;
 
       const liftForceN = dynamicPressure * effectiveArea * cl;
       const dragForceN = dynamicPressure * effectiveArea * cd;
@@ -577,7 +618,6 @@ export function stepFlightSimulation(
       const fxAeroN = -dragForceN * cosG - liftForceN * sinG;
       const fyAeroN = -dragForceN * sinG + liftForceN * cosG;
 
-      const massKg = metrics.airborneMassKg;
       const axMps2 = fxAeroN / massKg;
       const ayMps2 = fyAeroN / massKg - GRAVITY_MPS2 * 0.88;
 
@@ -599,10 +639,8 @@ export function stepFlightSimulation(
       }
 
       // Pitch Torque Dynamics:
-      const balanceOffset = 0.17 - metrics.staticMargin;
-      const staticPitchTorque = balanceOffset * 82;
       const trimTargetPitch = flightPathDeg + 4.8 + balanceOffset * 30;
-      const weathervaneTorque = (trimTargetPitch - state.pitchDeg) * (2.4 + metrics.pitchStability * 3.5);
+      const weathervaneTorque = (trimTargetPitch - state.pitchDeg) * weathervaneGain;
       const stallRecoveryTorque = state.isStalling
         ? -Math.min(48, Math.max(8, (aoaDeg - stallAngle) * 14))
         : 0;
@@ -682,14 +720,39 @@ export function stepFlightSimulation(
       state.pitchDeg = road.slopeDeg;
       state.leanDeg *= Math.pow(0.08, clampedDt);
     } else if (state.competition === 'rollercoaster' && state.completedCourse) {
+      // Brake smoothly under the 320-ft Grand Bell Arch without coasting off the 328-ft 3D rail
+      state.xFeet = Math.min(324, state.xFeet);
       const prof = getRollercoasterTrackProfile(state.xFeet);
       state.yFeet = prof.yFeet;
       state.pitchDeg = prof.slopeDeg;
       state.leanDeg *= Math.pow(0.1, clampedDt);
+      state.lateralZFeet *= Math.pow(0.1, clampedDt);
+    } else if (state.competition === 'rollercoaster' && !state.completedCourse) {
+      // Smooth derailment fall from the coaster rail elevation down into the canal water
+      state.lateralVzFeet *= Math.pow(0.25, clampedDt);
+      state.lateralZFeet = Math.max(
+        -6.5,
+        Math.min(6.5, state.lateralZFeet + state.lateralVzFeet * clampedDt)
+      );
+      if (state.yFeet > 0.28 || state.vyFeet > 0) {
+        state.vyFeet -= 42 * clampedDt;
+        state.yFeet = Math.max(0.18, state.yFeet + state.vyFeet * clampedDt);
+        state.leanDeg =
+          Math.sign(state.leanDeg || 1) *
+          Math.min(72, Math.abs(state.leanDeg) + 45 * clampedDt);
+      } else {
+        state.vyFeet = 0;
+        state.yFeet = 0.18 + Math.sin(state.phaseTime * 3.2) * 0.16;
+        const pitchDecay = Math.pow(0.05, clampedDt);
+        const targetBobPitch = Math.cos(state.phaseTime * 2.6) * 2.5;
+        state.pitchDeg = state.pitchDeg * pitchDecay + targetBobPitch * (1 - pitchDecay);
+        state.leanDeg *= Math.pow(0.15, clampedDt);
+      }
     } else {
       state.yFeet = 0.18 + Math.sin(state.phaseTime * 3.2) * 0.16;
-      state.pitchDeg =
-        state.pitchDeg * Math.pow(0.05, clampedDt) + Math.cos(state.phaseTime * 2.6) * 2.5 * 0.1;
+      const pitchDecay = Math.pow(0.05, clampedDt);
+      const targetBobPitch = Math.cos(state.phaseTime * 2.6) * 2.5;
+      state.pitchDeg = state.pitchDeg * pitchDecay + targetBobPitch * (1 - pitchDecay);
       state.leanDeg *= Math.pow(0.15, clampedDt);
     }
 
@@ -737,31 +800,37 @@ function stepSoapboxCourse(
 ) {
   let remainingDt = clampedDt;
 
+  const overWeightGravityBonus = metrics.isOverWeightLimit
+    ? Math.min(4.2, (metrics.rampTotalMassLbs - 400) * 0.015)
+    : 0;
+  const baseDownhillFactor =
+    14.5 * metrics.effectiveLiftMultiplier * metrics.pushEfficiency + overWeightGravityBonus;
+  const cornerScrubUnit = 1.8 / Math.max(0.4, metrics.pitchStability);
+  const dragFactor = Math.max(0.0045, 0.0055 + metrics.baseDragCoeff * 0.025);
+  const overWeightSteerInertia = metrics.isOverWeightLimit ? 0.76 : 1.0;
+  const steerAuthority = (24 + metrics.stabilityScore * 0.22) * overWeightSteerInertia;
+
+  const initialRoad = getSoapboxTrackElevationFeet(state.xFeet);
+  let roadY = initialRoad.yFeet;
+  let roadSlopeDeg = initialRoad.slopeDeg;
+
   while (remainingDt > 1e-6 && state.phase === 'airborne') {
     const subDt = Math.min(remainingDt, MAX_AIRBORNE_SUBSTEP);
     remainingDt -= subDt;
 
-    const road = getSoapboxTrackElevationFeet(state.xFeet);
-    state.trackSlopeDeg = road.slopeDeg;
+    state.trackSlopeDeg = roadSlopeDeg;
 
     // Gravity acceleration down the hill: heavy soapboxes (>400 lb) gain extra downhill gravity pull!
-    const overWeightGravityBonus = metrics.isOverWeightLimit
-      ? Math.min(4.2, (metrics.rampTotalMassLbs - 400) * 0.015)
-      : 0;
-    const downhillAccel =
-      (14.5 * metrics.effectiveLiftMultiplier * metrics.pushEfficiency + overWeightGravityBonus) *
-      Math.max(0.35, -road.slopeDeg / 5.5);
+    const downhillAccel = baseDownhillFactor * Math.max(0.35, -roadSlopeDeg / 5.5);
 
-    // Aerodynamic & tire rolling drag + cornering scrub
-    const cornerScrub = Math.abs(state.pilotPitchInput) * (1.8 / Math.max(0.4, metrics.pitchStability));
-    const dragDecel = 0.0085 * state.vxFeet * state.vxFeet + cornerScrub;
+    // Aerodynamic & tire rolling drag (scaled by craft baseDragCoeff) + cornering scrub
+    const cornerScrub = Math.abs(state.pilotPitchInput) * cornerScrubUnit;
+    const dragDecel = dragFactor * state.vxFeet * state.vxFeet + cornerScrub;
 
     state.vxFeet = Math.min(56, Math.max(12, state.vxFeet + (downhillAccel - dragDecel) * subDt));
 
     // Lateral steering (pilotPitchInput: -1 = Steer Left [-Z], +1 = Steer Right [+Z])
     // Heavy >400 lb soapboxes have higher lateral inertia so you must anticipate chicanes!
-    const overWeightSteerInertia = metrics.isOverWeightLimit ? 0.76 : 1.0;
-    const steerAuthority = (24 + metrics.stabilityScore * 0.22) * overWeightSteerInertia;
     const targetVz = state.pilotPitchInput * steerAuthority;
     state.lateralVzFeet += (targetVz - state.lateralVzFeet) * Math.min(1, subDt * 9.5);
     state.lateralZFeet = Math.max(-11.5, Math.min(11.5, state.lateralZFeet + state.lateralVzFeet * subDt));
@@ -773,25 +842,27 @@ function stepSoapboxCourse(
     // Advance X and vertical jump physics above road
     state.xFeet += state.vxFeet * subDt;
     const nextRoad = getSoapboxTrackElevationFeet(state.xFeet);
+    roadY = nextRoad.yFeet;
+    roadSlopeDeg = nextRoad.slopeDeg;
 
-    if (state.yFeet > nextRoad.yFeet + 0.08 || state.vyFeet > 0) {
+    if (state.yFeet > roadY + 0.08 || state.vyFeet > 0) {
       // Airborne off a wooden kicker ramp!
       state.vyFeet -= GRAVITY_MPS2 * FEET_PER_METER * 0.85 * subDt;
       state.yFeet += state.vyFeet * subDt;
       state.pitchDeg = Math.max(-18, Math.min(20, state.vyFeet * 0.75));
-      if (state.yFeet <= nextRoad.yFeet) {
-        state.yFeet = nextRoad.yFeet;
+      if (state.yFeet <= roadY) {
+        state.yFeet = roadY;
         state.vyFeet = 0;
-        state.pitchDeg = nextRoad.slopeDeg;
+        state.pitchDeg = roadSlopeDeg;
       }
     } else {
-      state.yFeet = nextRoad.yFeet;
+      state.yFeet = roadY;
       state.vyFeet = 0;
-      state.pitchDeg = nextRoad.slopeDeg;
+      state.pitchDeg = roadSlopeDeg;
     }
 
     state.windGustWarning =
-      state.yFeet > nextRoad.yFeet + 0.35 || state.vyFeet > 1 ? 'headwind_gust' : 'calm';
+      state.yFeet > roadY + 0.35 || state.vyFeet > 1 ? 'headwind_gust' : 'calm';
 
     state.distanceFeet = Math.min(450, Math.max(0, Math.round(state.xFeet)));
 
@@ -826,7 +897,7 @@ function stepSoapboxCourse(
             STEP_RESULT.justCollectedThermal = true;
           } else {
             // Clipped a hay-bale chicane!
-            const jumpClearance = state.yFeet - nextRoad.yFeet;
+            const jumpClearance = state.yFeet - roadY;
             if (jumpClearance < 2.2) {
               state.obstaclesHit += 1;
               state.pitchZone = 'too_high';
@@ -886,6 +957,21 @@ function stepRollercoasterCourse(
 ) {
   let remainingDt = clampedDt;
 
+  const overWeightMassRatio = metrics.rampTotalMassLbs / 260;
+  const cgBias = metrics.cgX - 0.04;
+  const downhillBoostFactor = Math.min(
+    1.5,
+    Math.sqrt(overWeightMassRatio) * (1 + Math.max(0, cgBias) * 0.35)
+  );
+  const uphillBoostFactor = Math.max(0.82, 1 - Math.max(0, -cgBias) * 0.3);
+  const overWeightClimbDragVal = metrics.isOverWeightLimit
+    ? (metrics.rampTotalMassLbs - 400) * 0.022
+    : 0;
+  const basePedalAccelBase = 6.2 * metrics.effectiveLiftMultiplier * metrics.pushEfficiency;
+  const dragFactor = Math.max(0.0038, 0.0052 + metrics.baseDragCoeff * 0.022);
+  const stabilityFactor = 0.55 + (metrics.stabilityScore / 100) * 0.65;
+  const invStabilityFactor = 1 / stabilityFactor;
+
   while (remainingDt > 1e-6 && state.phase === 'airborne') {
     const subDt = Math.min(remainingDt, MAX_AIRBORNE_SUBSTEP);
     remainingDt -= subDt;
@@ -898,22 +984,16 @@ function stepRollercoasterCourse(
     state.windGustWarning = profile.slopeDeg > 2.2 ? 'downdraft' : 'calm';
 
     // Slope momentum physics:
-    // Downhill drops accelerate strongly (extra boost for >400 lb heavy builds),
-    // while uphill camelbacks require momentum + rider pedaling!
+    // Downhill drops accelerate strongly (extra boost for >400 lb heavy builds & front-weighted CG),
+    // while uphill camelbacks require momentum + rider pedaling (helped by rear flywheel momentum)!
     const slopeRad = (profile.slopeDeg * Math.PI) / 180;
-    const overWeightMassRatio = metrics.rampTotalMassLbs / 260;
-    const gravitySlopeAccel =
-      -Math.sin(slopeRad) *
-      36 *
-      (profile.slopeDeg < 0 ? Math.min(1.45, Math.sqrt(overWeightMassRatio)) : 1.0);
+    const downhillWeightBoost = profile.slopeDeg < 0 ? downhillBoostFactor : uphillBoostFactor;
+    const gravitySlopeAccel = -Math.sin(slopeRad) * 36 * downhillWeightBoost;
 
-    // Base tandem rider cadence keeps a steady baseline push, scaled by gear/frame efficiency
-    const overWeightClimbDrag =
-      profile.slopeDeg > 0 && metrics.isOverWeightLimit
-        ? (metrics.rampTotalMassLbs - 400) * 0.022
-        : 0;
-    const basePedalAccel = 6.2 * metrics.effectiveLiftMultiplier * metrics.pushEfficiency - overWeightClimbDrag;
-    const rollingDrag = 0.0075 * state.vxFeet * state.vxFeet;
+    // Base tandem rider cadence keeps a steady baseline push, scaled by gear/frame/wheel efficiency
+    const overWeightClimbDrag = profile.slopeDeg > 0 ? overWeightClimbDragVal : 0;
+    const basePedalAccel = basePedalAccelBase - overWeightClimbDrag;
+    const rollingDrag = dragFactor * state.vxFeet * state.vxFeet;
 
     state.vxFeet = Math.min(
       46,
@@ -923,15 +1003,18 @@ function stepRollercoasterCourse(
     // 3D Rail Balance Physics:
     // The narrow floating track banks & wobbles toward profile.targetLeanDeg.
     // Rider input (pilotPitchInput: -1 = Lean Left, +1 = Lean Right) applies corrective torque!
-    const stabilityFactor = 0.55 + (metrics.stabilityScore / 100) * 0.65;
-    const railCamberTorque = (profile.targetLeanDeg - state.leanDeg * 0.35) * (2.6 / stabilityFactor);
-    const speedWobble = Math.sin(state.xFeet * 0.18) * (7.5 / stabilityFactor);
+    const cgCamberDrift = cgBias * profile.targetLeanDeg * 0.4;
+    const railCamberTorque =
+      (profile.targetLeanDeg + cgCamberDrift - state.leanDeg * 0.35) * (2.6 * invStabilityFactor);
+    const speedWobble = Math.sin(state.xFeet * 0.18) * (7.5 * invStabilityFactor);
     const riderLeanTorque = state.pilotPitchInput * (92 * stabilityFactor);
     const selfCenteringDamping = -state.leanDeg * (1.4 * stabilityFactor) - state.leanVelDeg * 3.8;
 
     const leanAccel = railCamberTorque + speedWobble + riderLeanTorque + selfCenteringDamping;
     state.leanVelDeg += leanAccel * subDt;
     state.leanDeg = Math.max(-52, Math.min(52, state.leanDeg + state.leanVelDeg * subDt));
+    // Subtle lateral tire drift across the rail beam as the bike leans
+    state.lateralZFeet = (state.leanDeg / 43) * 1.45;
 
     // Update HUD balance zone indicators
     const absLean = Math.abs(state.leanDeg);
@@ -953,10 +1036,10 @@ function stepRollercoasterCourse(
     state.xFeet += state.vxFeet * subDt;
     state.distanceFeet = Math.min(320, Math.max(0, Math.round(state.xFeet)));
 
-    // Check Hanging Canal Bells (thermalRings)
+    // Check Hanging Canal Bells (thermalRings) — requires staying out of the extreme danger zone (|leanDeg| <= 22°)
     for (const bell of state.thermalRings) {
       if (!bell.collected && Math.abs(state.xFeet - bell.xFeet) <= 5.5) {
-        if (absLean <= 30) {
+        if (absLean <= 22) {
           bell.collected = true;
           state.thermalsCollected += 1;
           STEP_RESULT.justCollectedThermal = true;
@@ -973,8 +1056,10 @@ function stepRollercoasterCourse(
       STEP_RESULT.justSplashedDown = true;
       state.impactXFeet = state.xFeet;
       state.distanceFeet = Math.max(8, Math.round(state.xFeet));
-      state.lateralZFeet = Math.sign(state.leanDeg) * 4.5;
-      state.yFeet = 0.18;
+      // Start fall from the current rail elevation and drift outward into the canal
+      state.yFeet = profile.yFeet;
+      state.vyFeet = -6.0;
+      state.lateralVzFeet = Math.sign(state.leanDeg) * 11.5;
       state.splashIntensity = Math.min(
         100,
         Math.round(58 + (state.vxFeet / 42) * 30 + (metrics.isOverWeightLimit ? 18 : 0))
@@ -1058,7 +1143,7 @@ function calculateJudgeScores(
     state.competition === 'soapbox' && state.completedCourse
       ? Math.max(0, 1.5 - state.obstaclesHit * 0.5)
       : state.competition === 'rollercoaster' && state.completedCourse
-      ? 1.5
+      ? 0.6 + state.thermalsCollected * 0.3 + (state.courseTimeSeconds <= 13.5 ? 0.3 : 0.1)
       : state.competition === 'flugtag' && state.distanceFeet >= targetForTen
       ? 0.8
       : 0;

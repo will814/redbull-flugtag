@@ -1754,7 +1754,7 @@ export const PART_CATALOG: CraftPart[] = [
     creativityPoints: 38,
     toughness: 0.96,
     unlockStars: 0,
-    kidBadge: 'Heavy Nose Dive!',
+    kidBadge: 'Downhill Momentum!',
   },
   {
     id: 'rc_nose_siren',

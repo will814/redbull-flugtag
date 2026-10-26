@@ -31,10 +31,10 @@ const MIME_TYPES = {
 const COMPRESSIBLE_EXTS = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg']);
 const assetCache = new Map();
 
-async function getAssetEntry(filePath, ext) {
-  const stat = await fs.stat(filePath);
+async function getAssetEntry(filePath, ext, stat) {
+  const resolvedStat = stat || (await fs.stat(filePath));
   const cached = assetCache.get(filePath);
-  if (cached && cached.mtimeMs === stat.mtimeMs) {
+  if (cached && cached.mtimeMs === resolvedStat.mtimeMs) {
     return cached;
   }
 
@@ -50,7 +50,7 @@ async function getAssetEntry(filePath, ext) {
     ]);
   }
 
-  const entry = { mtimeMs: stat.mtimeMs, raw, br, gzip };
+  const entry = { mtimeMs: resolvedStat.mtimeMs, raw, br, gzip };
   assetCache.set(filePath, entry);
   return entry;
 }
@@ -64,20 +64,23 @@ const server = http.createServer(async (req, res) => {
     let relPath = safePath === '/' || safePath === '' ? 'index.html' : safePath.replace(/^[/\\]+/, '');
     let filePath = path.join(DIST_DIR, relPath);
 
+    let stat = null;
     try {
-      const stat = await fs.stat(filePath);
+      stat = await fs.stat(filePath);
       if (stat.isDirectory()) {
         relPath = 'index.html';
         filePath = path.join(DIST_DIR, 'index.html');
+        stat = null;
       }
     } catch {
       relPath = 'index.html';
       filePath = path.join(DIST_DIR, 'index.html');
+      stat = null;
     }
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    const entry = await getAssetEntry(filePath, ext);
+    const entry = await getAssetEntry(filePath, ext, stat);
 
     const isHashedAsset = relPath.startsWith('assets/') || relPath.startsWith('assets\\');
     const cacheControl =

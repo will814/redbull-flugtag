@@ -6,6 +6,7 @@ class FlugtagSoundEngine {
   private _muted: boolean = false;
   private lastAirhornTime: number = 0;
   private lastPushTime: number = 0;
+  private lastSnapTime: number = 0;
 
   public get muted(): boolean {
     return this._muted;
@@ -42,8 +43,8 @@ class FlugtagSoundEngine {
         this.compressor = compressor;
         this.masterGain = masterGain;
 
-        // Pre-generate 1.1s white noise buffer once so splashdown never stalls the main thread
-        const bufferSize = Math.floor(ctx.sampleRate * 1.1);
+        // Pre-generate 0.25s looped white noise buffer once so splashdown never stalls the main thread
+        const bufferSize = Math.floor(ctx.sampleRate * 0.25);
         const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
@@ -96,7 +97,10 @@ class FlugtagSoundEngine {
     const bus = this.ensureContext();
     if (!bus) return;
     const { ctx, out } = bus;
-    this.scheduleTone(ctx, out, 'sine', 320, 760, ctx.currentTime, 0.11, 0.22);
+    const now = ctx.currentTime;
+    if (now - this.lastSnapTime < 0.03) return;
+    this.lastSnapTime = now;
+    this.scheduleTone(ctx, out, 'sine', 320, 760, now, 0.11, 0.22);
   }
 
   public playAirhorn(): void {
@@ -107,23 +111,27 @@ class FlugtagSoundEngine {
     if (now - this.lastAirhornTime < 0.085) return;
     this.lastAirhornTime = now;
 
+    const sharedGain = ctx.createGain();
+    sharedGain.gain.setValueAtTime(0.0001, now);
+    sharedGain.gain.linearRampToValueAtTime(0.065, now + 0.01);
+    sharedGain.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
+    sharedGain.connect(out);
+
     const freqs = [392, 493.88, 587.33]; // G major stadium horn chord
+    let endedCount = 0;
     freqs.forEach((f) => {
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
       osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(f * 0.96, now);
       osc.frequency.linearRampToValueAtTime(f, now + 0.05);
 
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.linearRampToValueAtTime(0.065, now + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
-
-      osc.connect(gain);
-      gain.connect(out);
+      osc.connect(sharedGain);
       osc.onended = () => {
         osc.disconnect();
-        gain.disconnect();
+        endedCount += 1;
+        if (endedCount === freqs.length) {
+          sharedGain.disconnect();
+        }
       };
       osc.start(now);
       osc.stop(now + 0.39);
@@ -139,6 +147,56 @@ class FlugtagSoundEngine {
     this.lastPushTime = now;
 
     this.scheduleTone(ctx, out, 'triangle', 150, 290, now, 0.09, 0.18);
+  }
+
+  /** Crisp bicycle chain & sprocket crank click for Tandem Coaster pedaling */
+  public playPedalCrank(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    if (now - this.lastPushTime < 0.045) return;
+    this.lastPushTime = now;
+
+    this.scheduleTone(ctx, out, 'triangle', 240, 460, now, 0.055, 0.15);
+    this.scheduleTone(ctx, out, 'sine', 680, 980, now + 0.032, 0.045, 0.11);
+  }
+
+  /** Metallic brass canal bell chime (double Ding-Ding for mid-course bells, resonant Grand Bell chord at 320 ft) */
+  public playCanalBell(isGrand: boolean = false): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+
+    if (isGrand) {
+      const grandChord = [523.25, 783.99, 1046.5, 1567.98];
+      grandChord.forEach((freq, i) => {
+        this.scheduleTone(ctx, out, 'sine', freq, null, now, 0.65, 0.15 - i * 0.02);
+        this.scheduleTone(ctx, out, 'triangle', freq * 2, null, now, 0.35, 0.06);
+        this.scheduleTone(ctx, out, 'sine', freq, null, now + 0.18, 0.75, 0.16 - i * 0.02);
+      });
+    } else {
+      // Classic Dutch bicycle / canal brass double-ring ("Tring-Tring!")
+      [0, 0.085].forEach((offset) => {
+        this.scheduleTone(ctx, out, 'sine', 1174.66, null, now + offset, 0.28, 0.16);
+        this.scheduleTone(ctx, out, 'triangle', 2349.32, null, now + offset, 0.18, 0.09);
+        this.scheduleTone(ctx, out, 'sine', 3135.96, null, now + offset, 0.11, 0.05);
+      });
+    }
+  }
+
+  /** Rhythmic freewheel ratchet + roller spin when testing a Tandem Coaster on Hangar Rollers */
+  public playRollersWhir(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 5; i++) {
+      this.scheduleTone(ctx, out, 'triangle', 520 + i * 70, 820 + i * 80, now + i * 0.05, 0.04, 0.1);
+    }
+    this.scheduleTone(ctx, out, 'sine', 987.77, null, now + 0.24, 0.22, 0.12);
   }
 
   public playTrolleyDetach(perfect: boolean): void {
@@ -174,6 +232,7 @@ class FlugtagSoundEngine {
 
     const noise = ctx.createBufferSource();
     noise.buffer = this.splashNoiseBuffer;
+    noise.loop = true;
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'bandpass';

@@ -148,25 +148,42 @@ function loadInitialMuted(): boolean {
   }
 }
 
+function pickCleanWord(name: string, fromEnd = false): string {
+  const tokens = name
+    .split(' ')
+    .filter((w) => w.length > 1 && !/^\d/.test(w));
+  if (tokens.length === 0) return 'Custom';
+  return fromEnd ? tokens[tokens.length - 1] : tokens[0];
+}
+
 export const App: React.FC = () => {
+  const initialStartup = useMemo(() => {
+    const comp = loadInitialCompetition();
+    const crafts = loadInitialCraftsByComp();
+    return {
+      comp,
+      crafts,
+      activeCraft: crafts[comp],
+      firstCat: COMPETITIONS[comp].categories[0].id,
+    };
+  }, []);
+
   const [mode, setMode] = useState<'hangar' | 'flight'>('hangar');
-  const [competition, setCompetition] = useState<CompetitionId>(loadInitialCompetition);
+  const [competition, setCompetition] = useState<CompetitionId>(initialStartup.comp);
   const [craftsByComp, setCraftsByComp] = useState<Record<CompetitionId, CraftLoadout>>(
-    loadInitialCraftsByComp
+    initialStartup.crafts
   );
-  const [loadout, setLoadout] = useState<CraftLoadout>(
-    () => loadInitialCraftsByComp()[loadInitialCompetition()]
-  );
-  const [historyState, setHistoryState] = useState<{
-    entries: CraftLoadout[];
-    index: number;
-  }>(() => ({
-    entries: [loadInitialCraftsByComp()[loadInitialCompetition()]],
-    index: 0,
+  const [loadout, setLoadout] = useState<CraftLoadout>(initialStartup.activeCraft);
+  const [historyByComp, setHistoryByComp] = useState<
+    Record<CompetitionId, { entries: CraftLoadout[]; index: number }>
+  >(() => ({
+    flugtag: { entries: [initialStartup.crafts.flugtag], index: 0 },
+    soapbox: { entries: [initialStartup.crafts.soapbox], index: 0 },
+    rollercoaster: { entries: [initialStartup.crafts.rollercoaster], index: 0 },
   }));
   const [savedBuilds, setSavedBuilds] = useState<SavedCraftSlot[]>(loadInitialSavedBuilds);
   const [selectedCategory, setSelectedCategory] = useState<PartCategory>(
-    () => COMPETITIONS[loadInitialCompetition()].categories[0].id
+    initialStartup.firstCat
   );
   const [windTunnelActive, setWindTunnelActive] = useState<boolean>(false);
   const [totalStars, setTotalStars] = useState<number>(loadInitialStars);
@@ -180,6 +197,10 @@ export const App: React.FC = () => {
   // Refs for latest values inside stable callbacks
   const competitionRef = useRef(competition);
   competitionRef.current = competition;
+  const loadoutRef = useRef(loadout);
+  loadoutRef.current = loadout;
+  const historyByCompRef = useRef(historyByComp);
+  historyByCompRef.current = historyByComp;
   const totalStarsRef = useRef(totalStars);
   totalStarsRef.current = totalStars;
   const bestDistByCompRef = useRef(bestDistByComp);
@@ -202,18 +223,17 @@ export const App: React.FC = () => {
   metricsRef.current = metrics;
 
   const persistLoadout = useCallback((next: CraftLoadout, compId: CompetitionId) => {
-    setCraftsByComp((prev) => {
-      const updated = { ...prev, [compId]: next };
-      try {
-        localStorage.setItem(STORAGE_KEY_LOADOUT_BY_COMP, JSON.stringify(updated));
-        if (compId === 'flugtag') {
-          localStorage.setItem(STORAGE_KEY_LOADOUT_LEGACY, JSON.stringify(next));
-        }
-      } catch {
-        // ignore
+    const updated = { ...craftsByCompRef.current, [compId]: next };
+    craftsByCompRef.current = updated;
+    setCraftsByComp(updated);
+    try {
+      localStorage.setItem(STORAGE_KEY_LOADOUT_BY_COMP, JSON.stringify(updated));
+      if (compId === 'flugtag') {
+        localStorage.setItem(STORAGE_KEY_LOADOUT_LEGACY, JSON.stringify(next));
       }
-      return updated;
-    });
+    } catch {
+      // ignore
+    }
   }, []);
 
   const handleSelectCompetition = useCallback((nextComp: CompetitionId) => {
@@ -228,96 +248,120 @@ export const App: React.FC = () => {
     } catch {
       // ignore
     }
+    const compHistory = historyByCompRef.current[nextComp];
     const targetCraft =
-      craftsByCompRef.current[nextComp] ?? PRESET_BLUEPRINTS_BY_COMPETITION[nextComp][0];
+      compHistory?.entries[compHistory.index] ??
+      craftsByCompRef.current[nextComp] ??
+      PRESET_BLUEPRINTS_BY_COMPETITION[nextComp][0];
+    loadoutRef.current = targetCraft;
     setLoadout(targetCraft);
-    setHistoryState({
-      entries: [targetCraft],
-      index: 0,
-    });
   }, []);
 
   const pushLoadoutChange = useCallback(
     (updater: CraftLoadout | ((prev: CraftLoadout) => CraftLoadout)) => {
-      setLoadout((prev) => {
-        const next = typeof updater === 'function' ? updater(prev) : updater;
-        persistLoadout(next, competitionRef.current);
-        setHistoryState((h) => {
-          const sliced = h.entries.slice(0, h.index + 1);
-          const updated = [...sliced, next].slice(-MAX_HISTORY_LENGTH);
-          return {
-            entries: updated,
-            index: updated.length - 1,
-          };
-        });
-        return next;
-      });
+      const compId = competitionRef.current;
+      const prev = loadoutRef.current;
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next === prev) return;
+
+      loadoutRef.current = next;
+      setLoadout(next);
+      persistLoadout(next, compId);
+
+      const h = historyByCompRef.current[compId];
+      const sliced = h.entries.slice(0, h.index + 1);
+      const updated = [...sliced, next].slice(-MAX_HISTORY_LENGTH);
+      const nextHistory = {
+        ...historyByCompRef.current,
+        [compId]: {
+          entries: updated,
+          index: updated.length - 1,
+        },
+      };
+      historyByCompRef.current = nextHistory;
+      setHistoryByComp(nextHistory);
     },
     [persistLoadout]
   );
 
-  const canUndo = historyState.index > 0;
-  const canRedo = historyState.index < historyState.entries.length - 1;
+  const currentHistory = historyByComp[competition];
+  const canUndo = currentHistory.index > 0;
+  const canRedo = currentHistory.index < currentHistory.entries.length - 1;
 
   const handleUndo = useCallback(() => {
-    setHistoryState((h) => {
-      if (h.index <= 0) return h;
-      const nextIndex = h.index - 1;
-      const target = h.entries[nextIndex];
-      soundEngine.playSnapPop();
-      setLoadout(target);
-      persistLoadout(target, competitionRef.current);
-      return { ...h, index: nextIndex };
-    });
+    const compId = competitionRef.current;
+    const h = historyByCompRef.current[compId];
+    if (!h || h.index <= 0) return;
+    const nextIndex = h.index - 1;
+    const target = h.entries[nextIndex];
+    soundEngine.playSnapPop();
+    loadoutRef.current = target;
+    setLoadout(target);
+    persistLoadout(target, compId);
+    const nextHistory = {
+      ...historyByCompRef.current,
+      [compId]: { ...h, index: nextIndex },
+    };
+    historyByCompRef.current = nextHistory;
+    setHistoryByComp(nextHistory);
   }, [persistLoadout]);
 
   const handleRedo = useCallback(() => {
-    setHistoryState((h) => {
-      if (h.index >= h.entries.length - 1) return h;
-      const nextIndex = h.index + 1;
-      const target = h.entries[nextIndex];
-      soundEngine.playSnapPop();
-      setLoadout(target);
-      persistLoadout(target, competitionRef.current);
-      return { ...h, index: nextIndex };
-    });
+    const compId = competitionRef.current;
+    const h = historyByCompRef.current[compId];
+    if (!h || h.index >= h.entries.length - 1) return;
+    const nextIndex = h.index + 1;
+    const target = h.entries[nextIndex];
+    soundEngine.playSnapPop();
+    loadoutRef.current = target;
+    setLoadout(target);
+    persistLoadout(target, compId);
+    const nextHistory = {
+      ...historyByCompRef.current,
+      [compId]: { ...h, index: nextIndex },
+    };
+    historyByCompRef.current = nextHistory;
+    setHistoryByComp(nextHistory);
   }, [persistLoadout]);
 
-  const handleSaveCurrentBuild = useCallback(
-    (customName?: string) => {
-      soundEngine.playUnlockFanfare();
-      setSavedBuilds((prevBuilds) => {
-        const currentLoadout = historyState.entries[historyState.index] ?? loadout;
-        const topperPart = getPartById(currentLoadout.topper);
-        const chassisPart = getPartById(currentLoadout.chassis);
-        const wingPart = getPartById(currentLoadout.wings);
+  const handleSaveCurrentBuild = useCallback((customName?: string) => {
+    soundEngine.playUnlockFanfare();
+    const currentLoadout = loadoutRef.current;
+    const compId = inferLoadoutCompetition(currentLoadout);
+    const topperPart = getPartById(currentLoadout.topper);
+    const chassisPart = getPartById(currentLoadout.chassis);
+    const wingPart = getPartById(currentLoadout.wings);
 
-        const autoName = `${topperPart.emoji} ${
-          topperPart.id !== 'topper_none'
-            ? topperPart.name.split(' ').slice(-1)[0]
-            : wingPart.name.split(' ')[0]
-        } ${chassisPart.name.split(' ')[0]} #${prevBuilds.length + 1}`;
+    const badgeEmoji =
+      topperPart.id !== 'topper_none'
+        ? topperPart.emoji
+        : COMPETITIONS[compId].emoji;
+    const leadWord =
+      topperPart.id !== 'topper_none'
+        ? pickCleanWord(topperPart.name, true)
+        : pickCleanWord(wingPart.name, false);
+    const frameWord = pickCleanWord(chassisPart.name, false);
 
-        const finalName = customName || autoName;
-        const newSlot: SavedCraftSlot = {
-          id: `build_${Date.now()}`,
-          name: finalName,
-          competition: inferLoadoutCompetition(currentLoadout),
-          loadout: { ...currentLoadout, name: finalName },
-          createdAt: Date.now(),
-        };
+    setSavedBuilds((prevBuilds) => {
+      const autoName = `${badgeEmoji} ${leadWord} ${frameWord} #${prevBuilds.length + 1}`;
+      const finalName = customName || autoName;
+      const newSlot: SavedCraftSlot = {
+        id: `build_${Date.now()}`,
+        name: finalName,
+        competition: compId,
+        loadout: { ...currentLoadout, name: finalName },
+        createdAt: Date.now(),
+      };
 
-        const updated = [newSlot, ...prevBuilds].slice(0, 12);
-        try {
-          localStorage.setItem(STORAGE_KEY_SAVED_BUILDS, JSON.stringify(updated));
-        } catch {
-          // ignore
-        }
-        return updated;
-      });
-    },
-    [historyState, loadout]
-  );
+      const updated = [newSlot, ...prevBuilds].slice(0, 12);
+      try {
+        localStorage.setItem(STORAGE_KEY_SAVED_BUILDS, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+  }, []);
 
   const handleDeleteSavedBuild = useCallback((id: string) => {
     soundEngine.playSnapPop();
@@ -366,18 +410,11 @@ export const App: React.FC = () => {
         } catch {
           // ignore
         }
-        const next = { ...preset };
-        setLoadout(next);
-        persistLoadout(next, targetComp);
-        setHistoryState({
-          entries: [next],
-          index: 0,
-        });
-      } else {
-        pushLoadoutChange({ ...preset });
+        loadoutRef.current = craftsByCompRef.current[targetComp];
       }
+      pushLoadoutChange({ ...preset });
     },
-    [persistLoadout, pushLoadoutChange]
+    [pushLoadoutChange]
   );
 
   const handleRandomizeCraft = useCallback(() => {
@@ -406,7 +443,11 @@ export const App: React.FC = () => {
   }, [pushLoadoutChange]);
 
   const handleToggleWindTunnel = useCallback(() => {
-    soundEngine.playFanWhoosh();
+    if (competitionRef.current === 'rollercoaster') {
+      soundEngine.playRollersWhir();
+    } else {
+      soundEngine.playFanWhoosh();
+    }
     setWindTunnelActive((prev) => !prev);
   }, []);
 
@@ -448,10 +489,16 @@ export const App: React.FC = () => {
     }
 
     const res = triggerHypeOrPushTap(sim, metricsRef.current);
+    if (res.event === 'none') return;
+
     if (res.event === 'hype_tap') {
       soundEngine.playAirhorn();
     } else if (res.event === 'push_boost') {
-      soundEngine.playPushBoost();
+      if (sim.competition === 'rollercoaster') {
+        soundEngine.playPedalCrank();
+      } else {
+        soundEngine.playPushBoost();
+      }
     } else if (res.event === 'trolley_perfect') {
       soundEngine.playTrolleyDetach(sim.trolleyReleaseQuality === 'perfect');
     }
@@ -467,7 +514,11 @@ export const App: React.FC = () => {
       const overWeightExcess = Math.max(0, curMetrics.rampTotalMassLbs - 400);
       const overWeightInertia = 1 / (1 + overWeightExcess * 0.0035);
       sim.vxFeet = 11 * curMetrics.pushEfficiency * overWeightInertia;
-      soundEngine.playPushBoost();
+      if (sim.competition === 'rollercoaster') {
+        soundEngine.playPedalCrank();
+      } else {
+        soundEngine.playPushBoost();
+      }
       setHudFlightState({ ...sim });
     }
   }, []);
@@ -545,10 +596,11 @@ export const App: React.FC = () => {
   );
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-slate-950 select-none">
+    <div className="relative h-dvh w-dvw overflow-hidden bg-slate-950 select-none">
       {/* 3D WebGL Canvas */}
       <FlugtagCanvas3D
         mode={mode}
+        paused={showJudgingModal}
         loadout={loadout}
         metrics={metrics}
         selectedCategory={selectedCategory}
@@ -594,6 +646,7 @@ export const App: React.FC = () => {
       {mode === 'flight' && !showJudgingModal && (
         <FlightHUD
           flightState={hudFlightState}
+          flightStateRef={flightStateRef}
           bestDistanceFeet={bestDistanceFeet}
           onActionTap={handleActionTap}
           onSkipSkitToPush={handleSkipSkitToPush}
