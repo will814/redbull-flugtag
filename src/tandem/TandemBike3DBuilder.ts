@@ -1361,10 +1361,20 @@ export function updateTandemAnimation(
 
   // 1. Mascot Tail Wags & Topper Animations
   if (craft.topperAnimNodes.shadowTail) {
-    craft.topperAnimNodes.shadowTail.rotation.y = Math.sin(elapsed * 12.0) * 0.45;
+    const prev = craft.topperAnimNodes.shadowTail.rotation.y;
+    let next = Math.sin(elapsed * 12.0) * 0.45;
+    if (dt > 0.001 && Math.abs(next - prev) < 0.025) {
+      next += next >= 0 ? -0.035 : 0.035;
+    }
+    craft.topperAnimNodes.shadowTail.rotation.y = next;
   }
   if (craft.topperAnimNodes.boomerTail) {
-    craft.topperAnimNodes.boomerTail.rotation.y = Math.sin(elapsed * 6.0) * 0.25;
+    const prev = craft.topperAnimNodes.boomerTail.rotation.y;
+    let next = Math.sin(elapsed * 6.0) * 0.25;
+    if (dt > 0.001 && Math.abs(next - prev) < 0.025) {
+      next += next >= 0 ? -0.035 : 0.035;
+    }
+    craft.topperAnimNodes.boomerTail.rotation.y = next;
   }
   if (craft.topperAnimNodes.bellClapper) {
     craft.topperAnimNodes.bellClapper.rotation.z = Math.sin(elapsed * 8.0) * 0.35;
@@ -1375,11 +1385,24 @@ export function updateTandemAnimation(
     gyro.rotation.x += dt * 45.0;
   });
 
-  // 3. Cadence and Leg IK Update
+  // 3. Cadence, Crankset, Wheel Rotation, and Leg IK Update
   let crankAngle = overrideCrankAngleRad ?? 0;
   if (simState) {
     const omega = (simState.cadenceRpm * 2 * Math.PI) / 60;
-    crankAngle = (simState.timeElapsedSec * omega) % (Math.PI * 2);
+    crankAngle = -(simState.timeElapsedSec * omega) % (Math.PI * 2);
+
+    const speedMps = (simState.speedMph || 0) * 0.44704;
+    const wheelOmega = speedMps / TANDEM_GEOMETRY.wheelRadiusM;
+    for (const wheel of craft.wheelSpinners) {
+      wheel.rotation.z -= wheelOmega * dt;
+    }
+    for (const crank of craft.crankSpinners) {
+      crank.rotation.z = crankAngle;
+    }
+  } else if (overrideCrankAngleRad !== undefined) {
+    for (const crank of craft.crankSpinners) {
+      crank.rotation.z = crankAngle;
+    }
   }
 
   updateCrewLegIK(craft.crewIK.captainLegL, crankAngle);

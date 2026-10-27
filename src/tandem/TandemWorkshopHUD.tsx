@@ -495,6 +495,48 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
             </div>
           </div>
 
+          {/* Quick-Select Curated Builds Bar */}
+          <div className="border-t border-slate-800/80 pt-2 flex flex-col gap-1">
+            <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+              <span>Quick Builds:</span>
+              <span className="text-indigo-300 font-semibold">1-Click Equip</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {TANDEM_PRESETS.map((preset) => {
+                const isCurrent =
+                  loadout.frameId === preset.loadout.frameId &&
+                  loadout.wheelsId === preset.loadout.wheelsId &&
+                  loadout.drivetrainId === preset.loadout.drivetrainId &&
+                  loadout.steeringId === preset.loadout.steeringId &&
+                  loadout.stabilizerId === preset.loadout.stabilizerId &&
+                  loadout.topperId === preset.loadout.topperId;
+                const shortLabel = preset.name
+                  .replace(/^[^\w]+/, '')
+                  .replace(/^The\s+/i, '')
+                  .split(' ')[0];
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playSnapPop();
+                      onApplyPreset(preset.loadout);
+                    }}
+                    title={`${preset.name}: ${preset.tagline}`}
+                    className={`py-1 px-1.5 rounded-lg text-[10px] font-extrabold border transition flex items-center justify-center gap-1 truncate cursor-pointer ${
+                      isCurrent
+                        ? 'bg-indigo-600/90 text-white border-indigo-400 shadow-sm'
+                        : 'bg-slate-900/90 hover:bg-slate-800 text-slate-300 border-slate-700/80'
+                    }`}
+                  >
+                    <span>{preset.emoji}</span>
+                    <span className="truncate">{shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Interactive Balance Tilt Rig Controls (Active when dynoActive is on) */}
           <div className="border-t border-slate-800/80 pt-2 flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[11px] font-bold">

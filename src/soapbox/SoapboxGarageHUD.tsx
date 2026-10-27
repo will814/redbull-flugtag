@@ -542,6 +542,34 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
           >
             {handlingBadge.label}
           </div>
+
+          {/* 1-Click Quick-Build Archetype Pills */}
+          <div className="mt-2 border-t border-white/10 pt-2">
+            <div className="mb-1 flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-slate-400">
+              <span>⚡ Instant Blueprints</span>
+              <span>1-Click Loadout</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {SOAPBOX_PRESETS.map((preset) => {
+                const isActivePreset = loadout.name === preset.name;
+                return (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    onClick={() => onApplyPreset(preset)}
+                    className={`truncate rounded-lg border px-1.5 py-1 text-left text-[10px] font-extrabold transition cursor-pointer ${
+                      isActivePreset
+                        ? 'border-amber-400 bg-amber-400/20 text-amber-200'
+                        : 'border-white/10 bg-slate-900/80 text-slate-300 hover:border-amber-400/50 hover:text-white'
+                    }`}
+                    title={`Equip ${preset.name}`}
+                  >
+                    {preset.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -592,14 +620,19 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setDockCollapsed((c) => !c)}
-            className="rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 p-1.5 text-slate-300 cursor-pointer"
-            title={dockCollapsed ? 'Expand Part Dock' : 'Collapse Part Dock'}
-          >
-            {dockCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="hidden lg:inline-block text-[10px] font-bold text-slate-400">
+              🖱️ Drag 3D Paddock to Orbit • Scroll to Zoom • Click Socket Rings
+            </span>
+            <button
+              type="button"
+              onClick={() => setDockCollapsed((c) => !c)}
+              className="rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 p-1.5 text-slate-300 cursor-pointer"
+              title={dockCollapsed ? 'Expand Part Dock' : 'Collapse Part Dock'}
+            >
+              {dockCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
 
         {/* Paint Theme Swatches or Horizontal Part Cards */}

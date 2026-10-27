@@ -235,6 +235,29 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
           ))}
         </div>
 
+        {/* COACH'S POST-RUN TELEMETRY & TIP */}
+        <div className="rounded-2xl bg-sky-950/50 border border-sky-500/30 px-3.5 py-2 text-[11px] text-sky-100 flex items-center gap-2.5">
+          <span className="text-base shrink-0">{completed ? '🏁' : '🧭'}</span>
+          <div className="leading-snug">
+            <span className="font-black text-sky-300 uppercase tracking-wider mr-1.5">
+              {completed ? 'Pro Speedrun Tip:' : 'Wipeout Telemetry:'}
+            </span>
+            {completed
+              ? (scorecard.finishTimeSec ?? 99) < 20
+                ? 'World-class pace! Try different mascot toppers in the Workshop to max out Judge 1 Creativity.'
+                : 'Hold [Space] Sprint on the straightaways and equip high-wattage drivetrains to break the 20.0s barrier!'
+              : scorecard.distanceFt >= 152 && scorecard.distanceFt < 185
+              ? 'Came up short on the 25-ft Canal Gap Jump! Clearing the gap requires ~14+ MPH — hold [Space] Sprint approaching 160 FT or equip a higher-wattage Drivetrain in the Workshop!'
+              : Math.abs(simState.lateralOffsetFt || 0) >= 1.35
+              ? 'Drifted off the narrow pier beam edge! Feather [A/←] and [D/→] to stay centered, especially past the 140 FT Water Cannons.'
+              : Math.abs(simState.rollAngleRad || 0) >= 0.45
+              ? 'Tipped past the rollover threshold! Tap [Q] / [E] to counter-lean or equip wider Outriggers / Gyro in the Workshop.'
+              : scorecard.distanceFt >= 100 && scorecard.distanceFt < 140
+              ? 'Stalled on the +10° Seesaw Bridge! Keep pedaling [W/↑] up to the 120 FT pivot so gravity does not pull you backward.'
+              : 'Tipped into the canal! Tap [Q] / [E] to counter-lean and feather [A/D] to keep your tires centered on the timber beam.'}
+          </div>
+        </div>
+
         {/* STAR PROGRESSION & UNLOCK STATUS */}
         <div className="flex items-center justify-between rounded-2xl bg-slate-950/70 border border-white/10 px-3.5 py-2">
           <div className="flex items-center gap-2">

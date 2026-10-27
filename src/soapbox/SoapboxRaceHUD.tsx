@@ -54,6 +54,50 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
   const courseLength = simState.courseLengthFeet || activeCourse.lengthFeet || SOAPBOX_COURSE_LENGTH_FEET;
   const intactPartsCount = Object.values(simState.attachedParts).filter(Boolean).length;
 
+  const upcomingCallout = useMemo(() => {
+    if (simState.phase !== 'racing' || simState.isWrecked) return null;
+    const nextObs = simState.obstacles.find(
+      (o) => !o.triggered && o.sFeet > simState.sFeet && o.sFeet - simState.sFeet <= 135
+    );
+    if (!nextObs) return null;
+    const distAhead = Math.max(5, Math.round(nextObs.sFeet - simState.sFeet));
+    const sideLabel =
+      nextObs.lateralCenterFeet < -2
+        ? 'LEFT LANE'
+        : nextObs.lateralCenterFeet > 2
+        ? 'RIGHT LANE'
+        : 'CENTER';
+    switch (nextObs.type) {
+      case 'hay_bale':
+        return {
+          text: `🌾 HAY BALE (${sideLabel}) IN ${distAhead} FT — STEER ${
+            nextObs.lateralCenterFeet >= 0 ? 'LEFT ⯇' : 'RIGHT ⯈'
+          }`,
+          cls: 'border-amber-400/80 bg-amber-950/85 text-amber-200',
+        };
+      case 'water_slick':
+        return {
+          text: `🫧 SOAPY SLICK (${sideLabel}) IN ${distAhead} FT`,
+          cls: 'border-cyan-400/80 bg-cyan-950/85 text-cyan-200',
+        };
+      case 'kicker_jump':
+        return {
+          text: `🚀 KICKER RAMP AHEAD (${distAhead} FT) — LINE UP!`,
+          cls: 'border-orange-400/80 bg-orange-950/85 text-orange-200',
+        };
+      case 'speed_gate':
+        return {
+          text: `⚡ SPEED BOOST GATE (${sideLabel}) IN ${distAhead} FT!`,
+          cls: 'border-emerald-400/80 bg-emerald-950/85 text-emerald-200',
+        };
+      default:
+        return {
+          text: `🪨 COBBLESTONE STRIP IN ${distAhead} FT`,
+          cls: 'border-slate-400/80 bg-slate-900/85 text-slate-200',
+        };
+    }
+  }, [simState.phase, simState.isWrecked, simState.obstacles, simState.sFeet]);
+
   const heldLeftRef = useRef<Set<string>>(new Set());
   const heldRightRef = useRef<Set<string>>(new Set());
   const heldPushKeysRef = useRef<Set<string>>(new Set());
@@ -181,6 +225,11 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
         onReturnToGarage();
         return;
       }
+      if (e.code === 'Enter' && simStateRef.current?.phase === 'skit') {
+        e.preventDefault();
+        onDropGateNow();
+        return;
+      }
 
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
@@ -272,10 +321,12 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
   }, [
     onActionTap,
     onBrakeChange,
+    onDropGateNow,
     onPushTuckChange,
     onRestartRace,
     onReturnToGarage,
     onSteerChange,
+    simStateRef,
   ]);
 
   return (
@@ -501,6 +552,15 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
           </div>
         )}
 
+        {/* Upcoming Course Radar / Obstacle Lookahead Callout */}
+        {upcomingCallout && !simState.statusBanner && (
+          <div
+            className={`rounded-full border px-3.5 py-1 text-[11px] sm:text-xs font-black shadow-xl backdrop-blur-md transition ${upcomingCallout.cls}`}
+          >
+            {upcomingCallout.text}
+          </div>
+        )}
+
         {/* Phase 1: Hilltop Start Pavilion Hype & Drop Gate Prompt */}
         {simState.phase === 'skit' && (
           <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-3xl bg-slate-950/90 border-2 border-amber-400 p-3.5 shadow-2xl backdrop-blur-md max-w-md w-full">
@@ -516,20 +576,20 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
                 }}
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-2">
               <button
                 type="button"
                 onClick={onActionTap}
                 className="rounded-xl bg-amber-400 hover:bg-amber-300 px-3.5 py-1.5 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
               >
-                🎺 HONK AIRHORN (+HYPE)
+                🎺 HONK AIRHORN [Space]
               </button>
               <button
                 type="button"
                 onClick={onDropGateNow}
                 className="rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3.5 py-1.5 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
               >
-                🏁 DROP GATE NOW!
+                🏁 DROP GATE NOW! [Enter]
               </button>
             </div>
           </div>
@@ -537,8 +597,8 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
 
         {/* Phase 2: Steep Starter Chute (-40..0 ft) with Green Push-Bar Shove Window */}
         {simState.phase === 'start_ramp' && (
-          <div className="pointer-events-auto flex flex-col items-center gap-1.5 rounded-3xl bg-slate-950/90 border-2 border-emerald-400 p-3 shadow-2xl backdrop-blur-md max-w-md w-full">
-            <div className="text-xs font-black uppercase text-emerald-300">
+          <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-3xl bg-slate-950/90 border-2 border-emerald-400 p-3 shadow-2xl backdrop-blur-md max-w-md w-full">
+            <div className="text-xs font-black uppercase text-emerald-300 text-center">
               🏃 CREW SPRINT CHUTE — TAP PUSH IN THE GREEN SHOVE ZONE (-14..0 FT)!
             </div>
             <div className="relative h-4 w-full overflow-hidden rounded-full bg-slate-800 border border-white/20">
@@ -562,6 +622,13 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
                 }}
               />
             </div>
+            <button
+              type="button"
+              onClick={onActionTap}
+              className="rounded-xl bg-emerald-400 hover:bg-emerald-300 px-4 py-1.5 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
+            >
+              🏃 CREW PUSH / SHOVE! [Space / W / Up]
+            </button>
           </div>
         )}
       </div>

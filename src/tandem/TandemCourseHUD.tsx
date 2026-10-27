@@ -121,6 +121,9 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
   const heldLeanLeftRef = useRef<Set<string>>(new Set());
   const heldLeanRightRef = useRef<Set<string>>(new Set());
 
+  // Cadence tap rhythm buffer so tapping W / Up / Space maintains smooth pedal cadence
+  const lastCadenceTapTimeRef = useRef<number>(0);
+
   // Touch pointer tracking
   const pointerSteerRef = useRef<-1 | 0 | 1>(0);
   const pointerLeanRef = useRef<-1 | 0 | 1>(0);
@@ -128,10 +131,28 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
   const pointerSprintRef = useRef<boolean>(false);
   const pointerBrakeRef = useRef<boolean>(false);
 
-  // Sector announcement toast state
+  // Authoritative phase state synced from both simState prop and 60Hz simStateRef.current
+  const [livePhase, setLivePhase] = useState(simState.phase);
+  const livePhaseRef = useRef(simState.phase);
+
+  // Sector announcement toast state (starts null so center viewport is never blocked)
   const lastSectorIdRef = useRef<string>('dock');
   const toastTimeoutRef = useRef<number | null>(null);
-  const [activeToast, setActiveToast] = useState<SectorMeta | null>(SECTOR_METAS[0]);
+  const [activeToast, setActiveToast] = useState<SectorMeta | null>(null);
+
+  useEffect(() => {
+    livePhaseRef.current = simState.phase;
+    setLivePhase(simState.phase);
+    if (simState.phase === 'hype') {
+      lastSectorIdRef.current = 'dock';
+      lastCadenceTapTimeRef.current = 0;
+      setActiveToast(null);
+      if (toastTimeoutRef.current) {
+        window.clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+    }
+  }, [simState.phase]);
 
   // Telemetry DOM refs for zero-overhead rAF updates
   const distTextRef = useRef<HTMLSpanElement | null>(null);
@@ -151,6 +172,8 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
   const laneDotRef = useRef<HTMLDivElement | null>(null);
   const leanStatusTextRef = useRef<HTMLSpanElement | null>(null);
   const dockHypeFillRef = useRef<HTMLDivElement | null>(null);
+  const dockHypePctRef = useRef<HTMLSpanElement | null>(null);
+  const dockCountdownTextRef = useRef<HTMLSpanElement | null>(null);
 
   // Synchronize controls with authoritative clamping
   const syncAuthoritativeControls = () => {
@@ -178,10 +201,16 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
     }
     leanVal = Math.max(-1.0, Math.min(1.0, leanVal));
 
-    // 3. Cadence, Sprint & Brake
-    const pedalCadence = pointerCadenceRef.current || heldCadenceRef.current.size > 0;
-    const sprint = pointerSprintRef.current || heldSprintRef.current.size > 0;
+    // 3. Cadence, Sprint & Brake (with 320ms cadence tap rhythm grace window)
     const brake = pointerBrakeRef.current || heldBrakeRef.current.size > 0;
+    const sprint = pointerSprintRef.current || heldSprintRef.current.size > 0;
+    const tapWindowActive = !brake && performance.now() - lastCadenceTapTimeRef.current < 320;
+    const pedalCadence =
+      !brake &&
+      (pointerCadenceRef.current ||
+        heldCadenceRef.current.size > 0 ||
+        sprint ||
+        tapWindowActive);
 
     controlsRef.current.steer = steerVal;
     controlsRef.current.leanRoll = leanVal;
@@ -203,6 +232,24 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
     const updateHudFrame = () => {
       const s = simStateRef.current;
       if (s) {
+        // Guarantee HUD phase state stays strictly synchronized with simStateRef.current.phase
+        if (s.phase !== livePhaseRef.current) {
+          livePhaseRef.current = s.phase;
+          setLivePhase(s.phase);
+        }
+
+        // Expire cadence tap rhythm buffer if key was released > 320ms ago
+        if (
+          controlsRef.current.pedalCadence &&
+          !pointerCadenceRef.current &&
+          heldCadenceRef.current.size === 0 &&
+          !pointerSprintRef.current &&
+          heldSprintRef.current.size === 0 &&
+          performance.now() - lastCadenceTapTimeRef.current >= 320
+        ) {
+          controlsRef.current.pedalCadence = false;
+        }
+
         // A. Course Distance & Progress Bar
         const distFt = Math.max(0, Math.min(COURSE_LENGTH_FT, s.distanceFt || 0));
         if (distTextRef.current) {
@@ -284,7 +331,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
             rollWarningBadgeRef.current.style.display = 'flex';
             rollWarningBadgeRef.current.className =
               'inline-flex items-center gap-1 rounded-md bg-rose-600/90 border border-rose-400 px-1.5 py-0.5 text-[9px] font-black text-white animate-pulse';
-            rollWarningBadgeRef.current.textContent = `⚠️ TIPPING ${rollDeg > 0 ? 'RIGHT' : 'LEFT'}!`;
+            rollWarningBadgeRef.current.textContent = `⚠️ TIPPING ${rollDeg > 0 ? 'RIGHT' : 'LEFT'}! (LEAN ${rollDeg > 0 ? 'Q' : 'E'})`;
           } else if (isWarningTip) {
             rollWarningBadgeRef.current.style.display = 'flex';
             rollWarningBadgeRef.current.className =
@@ -312,10 +359,20 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           }`;
         }
 
-        // J. Pre-Launch Dock Hype Progress
-        if (dockHypeFillRef.current && s.phase === 'hype') {
-          const hypePct = Math.max(0, Math.min(100, s.hypeEnergy || 0));
-          dockHypeFillRef.current.style.transform = `scaleX(${(hypePct / 100).toFixed(2)})`;
+        // J. Pre-Launch Dock Hype Progress & Countdown
+        if (s.phase === 'hype') {
+          const hypePct = Math.max(0, Math.min(100, Math.round(s.hypeEnergy || 0)));
+          if (dockHypeFillRef.current) {
+            dockHypeFillRef.current.style.transform = `scaleX(${(hypePct / 100).toFixed(2)})`;
+          }
+          if (dockHypePctRef.current) {
+            dockHypePctRef.current.textContent = `${hypePct}% HYPE`;
+          }
+          if (dockCountdownTextRef.current) {
+            const remSec = Math.max(0, (s as any).hypeCountdownSec ?? 0);
+            const countNum = Math.max(1, Math.ceil(remSec));
+            dockCountdownTextRef.current.textContent = `AUTO-LAUNCH IN ${countNum}s`;
+          }
         }
 
         // K. Sector Announcement Toast Trigger
@@ -326,7 +383,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
           toastTimeoutRef.current = window.setTimeout(() => {
             setActiveToast(null);
-          }, 2400);
+          }, 2200);
         }
       }
 
@@ -363,6 +420,13 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
         return;
       }
 
+      // Immediate Launch on Enter during Dock Hype phase
+      if (e.code === 'Enter' && simStateRef.current.phase === 'hype' && onTriggerDockLaunch) {
+        e.preventDefault();
+        onTriggerDockLaunch(0.92);
+        return;
+      }
+
       // Steer Left / Right
       if (e.code === 'KeyA' || e.code === 'ArrowLeft') {
         e.preventDefault();
@@ -377,13 +441,27 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       // Pedal Cadence
       else if (e.code === 'KeyW' || e.code === 'ArrowUp') {
         e.preventDefault();
+        lastCadenceTapTimeRef.current = performance.now();
+        if (simStateRef.current.phase === 'hype') {
+          simStateRef.current.hypeEnergy = Math.min(100, (simStateRef.current.hypeEnergy || 0) + 22);
+          if (simStateRef.current.hypeEnergy >= 100 && onTriggerDockLaunch) {
+            onTriggerDockLaunch(1.0);
+          }
+        }
         heldCadenceRef.current.add(e.code);
         syncAuthoritativeControls();
       }
 
-      // Sprint Boost
+      // Sprint Boost + Cadence
       else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'Space') {
         e.preventDefault();
+        lastCadenceTapTimeRef.current = performance.now();
+        if (simStateRef.current.phase === 'hype') {
+          simStateRef.current.hypeEnergy = Math.min(100, (simStateRef.current.hypeEnergy || 0) + 25);
+          if (simStateRef.current.hypeEnergy >= 100 && onTriggerDockLaunch) {
+            onTriggerDockLaunch(1.0);
+          }
+        }
         heldSprintRef.current.add(e.code);
         syncAuthoritativeControls();
       }
@@ -391,6 +469,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       // Coaster Brake
       else if (e.code === 'KeyS' || e.code === 'ArrowDown') {
         e.preventDefault();
+        lastCadenceTapTimeRef.current = 0;
         heldBrakeRef.current.add(e.code);
         syncAuthoritativeControls();
       }
@@ -467,6 +546,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       heldBrakeRef.current.clear();
       heldLeanLeftRef.current.clear();
       heldLeanRightRef.current.clear();
+      lastCadenceTapTimeRef.current = 0;
 
       pointerSteerRef.current = 0;
       pointerLeanRef.current = 0;
@@ -498,12 +578,12 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       window.removeEventListener('pointercancel', handleGlobalPointerRelease);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [onRestartRun, onReturnToWorkshop, onToggleMute, onControlsChange, controlsRef]);
+  }, [onRestartRun, onReturnToWorkshop, onToggleMute, onControlsChange, onTriggerDockLaunch, controlsRef, simStateRef]);
 
-  // Phase & UI conditions
-  const isHypePhase = simState.phase === 'hype';
-  const isSplashdownPhase = simState.phase === 'splashdown';
-  const isFinishedPhase = simState.phase === 'finished';
+  // Phase & UI conditions derived from livePhase (guaranteed synced with simStateRef.current.phase)
+  const isHypePhase = livePhase === 'hype';
+  const isSplashdownPhase = livePhase === 'splashdown';
+  const isFinishedPhase = livePhase === 'finished';
 
   return (
     <div className="fixed inset-0 pointer-events-none z-10 flex flex-col justify-between p-2 sm:p-4 select-none touch-none">
@@ -539,9 +619,9 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           </div>
         </div>
 
-        {/* Center: Radial Speedometer Arc & Sprint Boost Pill */}
-        <div className="pointer-events-auto flex flex-col items-center">
-          <div className="relative flex items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-slate-950/85 border-2 border-sky-400/40 shadow-2xl backdrop-blur-md">
+        {/* Center: Radial Speedometer Arc, Sprint Boost Pill & Compact Sector Callout */}
+        <div className="pointer-events-none flex flex-col items-center">
+          <div className="pointer-events-auto relative flex items-center justify-center w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-slate-950/85 border-2 border-sky-400/40 shadow-2xl backdrop-blur-md">
             {/* SVG Arc Gauge */}
             <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 64 64">
               <circle
@@ -585,6 +665,21 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
             <Flame className="h-3 w-3 animate-bounce" />
             <span>SPRINT BOOST</span>
           </div>
+
+          {/* Non-Obstructive Top-Center Sector Callout Toast */}
+          {activeToast && !isHypePhase && !isSplashdownPhase && !isFinishedPhase && (
+            <div className="pointer-events-none mt-1.5 flex items-center gap-2 rounded-2xl bg-slate-950/85 border border-amber-400/70 px-3 py-1.5 shadow-xl backdrop-blur-md">
+              <span className="text-lg">{activeToast.emoji}</span>
+              <div>
+                <div className="font-display text-[11px] sm:text-xs font-black text-amber-300 leading-tight">
+                  {activeToast.name}
+                </div>
+                <div className="text-[10px] text-slate-300 font-medium leading-tight">
+                  {activeToast.advice}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Action Hub & Navigation */}
@@ -628,55 +723,59 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       </div>
 
       {/* =====================================================================
-          CENTER REGION: SECTOR TOASTS & PHASE OVERLAYS
+          CENTER REGION: PHASE OVERLAYS (CLEAR DURING RIDING!)
           ===================================================================== */}
       <div className="flex flex-col items-center justify-center gap-2">
-        {/* Sector Announcement Toast */}
-        {activeToast && !isHypePhase && !isSplashdownPhase && !isFinishedPhase && (
-          <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-slate-950/90 border-2 border-amber-400/80 px-4 py-2 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in duration-200">
-            <span className="text-2xl">{activeToast.emoji}</span>
-            <div>
-              <div className="font-display text-xs sm:text-sm font-black text-amber-300 leading-tight">
-                {activeToast.name}
-              </div>
-              <div className="text-[10px] text-slate-300 font-medium">
-                {activeToast.advice}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Pre-Run Hype Countdown Overlay */}
         {isHypePhase && (
-          <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-3xl bg-slate-950/95 border-4 border-amber-400 p-4 sm:p-6 shadow-2xl backdrop-blur-lg max-w-sm text-center">
-            <div className="text-3xl">🏁</div>
-            <div className="font-display text-xl sm:text-2xl font-black text-amber-300">
-              DOCK SYNC START!
-            </div>
-            <p className="text-xs text-slate-300">
-              Rhythmically tap pedal or Spacebar to build hype energy before launching onto the 200 FT pier!
-            </p>
-
-            {/* Hype Energy Bar */}
-            <div className="w-full h-3 rounded-full bg-slate-800 border border-white/15 overflow-hidden">
-              <div
-                ref={dockHypeFillRef}
-                className="h-full w-full origin-left bg-gradient-to-r from-amber-400 to-red-500 transition-transform duration-75"
-                style={{ transform: 'scaleX(0)' }}
-              />
-            </div>
-
-            {/* Launch Button */}
-            <button
-              onClick={() => {
-                soundEngine.playAirhorn?.();
-                if (onTriggerDockLaunch) onTriggerDockLaunch(0.9);
-              }}
-              className="mt-1 w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-400 hover:bg-amber-300 active:scale-95 py-2.5 px-4 font-display text-sm font-black text-slate-950 shadow-lg transition-transform"
+          <div data-testid="hype-overlay" className="flex flex-col items-center justify-center">
+            <div
+              data-testid="dock-sync-start-dialog"
+              className="pointer-events-auto flex flex-col items-center gap-2 rounded-3xl bg-slate-950/95 border-4 border-amber-400 p-4 sm:p-5 shadow-2xl backdrop-blur-lg max-w-sm text-center"
             >
-              <Zap className="h-4 w-4" />
-              <span>LAUNCH ONTO COURSE!</span>
-            </button>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🏁</span>
+                <span className="font-display text-lg sm:text-xl font-black text-amber-300">
+                  DOCK SYNC START!
+                </span>
+                <span
+                  ref={dockCountdownTextRef}
+                  className="rounded-full bg-amber-400/20 border border-amber-400/60 px-2 py-0.5 text-[10px] font-mono font-black text-amber-300"
+                >
+                  AUTO-LAUNCH IN 3s
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-snug">
+                Tap <span className="font-bold text-amber-300">W / ↑ / Space</span> to build launch hype, or click below to ride immediately!
+              </p>
+
+              {/* Hype Energy Bar */}
+              <div className="w-full flex flex-col gap-1">
+                <div className="flex items-center justify-between text-[10px] font-black text-amber-300 px-1">
+                  <span>CREW LAUNCH HYPE</span>
+                  <span ref={dockHypePctRef}>0% HYPE</span>
+                </div>
+                <div className="w-full h-3 rounded-full bg-slate-800 border border-white/15 overflow-hidden">
+                  <div
+                    ref={dockHypeFillRef}
+                    className="h-full w-full origin-left bg-gradient-to-r from-amber-400 to-red-500 transition-transform duration-75"
+                    style={{ transform: 'scaleX(0)' }}
+                  />
+                </div>
+              </div>
+
+              {/* Launch Button */}
+              <button
+                onClick={() => {
+                  soundEngine.playAirhorn?.();
+                  if (onTriggerDockLaunch) onTriggerDockLaunch(0.92);
+                }}
+                className="mt-1 w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-400 hover:bg-amber-300 active:scale-95 py-2.5 px-4 font-display text-sm font-black text-slate-950 shadow-lg transition-transform cursor-pointer"
+              >
+                <Zap className="h-4 w-4" />
+                <span>LAUNCH NOW! (Enter)</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -735,10 +834,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
                 pointerLeanRef.current = 0;
                 syncAuthoritativeControls();
               }}
-              className="flex items-center justify-center h-10 w-14 sm:h-11 sm:w-16 rounded-xl bg-slate-900/90 border border-amber-400/50 text-[10px] font-black text-amber-300 active:bg-amber-400 active:text-slate-950 shadow-md transition-colors"
+              className="flex flex-col items-center justify-center h-10 w-14 sm:h-11 sm:w-16 rounded-xl bg-slate-900/90 border border-amber-400/50 text-[10px] font-black text-amber-300 active:bg-amber-400 active:text-slate-950 shadow-md transition-colors leading-tight"
               title="Lean Roll Left (Q)"
             >
-              ⯇ LEAN
+              <span>⯇ LEAN</span>
+              <span className="text-[8px] font-mono opacity-75">[Q]</span>
             </button>
 
             <button
@@ -761,10 +861,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
                 pointerLeanRef.current = 0;
                 syncAuthoritativeControls();
               }}
-              className="flex items-center justify-center h-10 w-14 sm:h-11 sm:w-16 rounded-xl bg-slate-900/90 border border-amber-400/50 text-[10px] font-black text-amber-300 active:bg-amber-400 active:text-slate-950 shadow-md transition-colors"
+              className="flex flex-col items-center justify-center h-10 w-14 sm:h-11 sm:w-16 rounded-xl bg-slate-900/90 border border-amber-400/50 text-[10px] font-black text-amber-300 active:bg-amber-400 active:text-slate-950 shadow-md transition-colors leading-tight"
               title="Lean Roll Right (E)"
             >
-              LEAN ⯈
+              <span>LEAN ⯈</span>
+              <span className="text-[8px] font-mono opacity-75">[E]</span>
             </button>
           </div>
 
@@ -793,8 +894,9 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
               className="flex flex-col items-center justify-center h-14 w-16 sm:h-16 sm:w-20 rounded-2xl bg-slate-950/90 border-2 border-sky-400 text-sky-300 active:bg-sky-400 active:text-slate-950 shadow-xl transition-colors"
               title="Steer Left (A / Left Arrow)"
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
               <span className="text-[10px] font-black">STEER L</span>
+              <span className="text-[8px] font-mono opacity-75">[A / ←]</span>
             </button>
 
             <button
@@ -820,8 +922,9 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
               className="flex flex-col items-center justify-center h-14 w-16 sm:h-16 sm:w-20 rounded-2xl bg-slate-950/90 border-2 border-sky-400 text-sky-300 active:bg-sky-400 active:text-slate-950 shadow-xl transition-colors"
               title="Steer Right (D / Right Arrow)"
             >
-              <ArrowRight className="h-5 w-5" />
+              <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
               <span className="text-[10px] font-black">STEER R</span>
+              <span className="text-[8px] font-mono opacity-75">[D / →]</span>
             </button>
           </div>
         </div>
@@ -897,6 +1000,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
             <button
               onPointerDown={(e) => {
                 e.preventDefault();
+                lastCadenceTapTimeRef.current = 0;
                 pointerBrakeRef.current = true;
                 syncAuthoritativeControls();
               }}
@@ -914,15 +1018,17 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
                 pointerBrakeRef.current = false;
                 syncAuthoritativeControls();
               }}
-              className="flex items-center justify-center h-10 w-14 sm:h-11 sm:w-16 rounded-xl bg-slate-900/90 border border-rose-500/50 text-[10px] font-black text-rose-300 active:bg-rose-500 active:text-white shadow-md transition-colors"
+              className="flex flex-col items-center justify-center h-10 w-14 sm:h-11 sm:w-16 rounded-xl bg-slate-900/90 border border-rose-500/50 text-[10px] font-black text-rose-300 active:bg-rose-500 active:text-white shadow-md transition-colors leading-tight"
               title="Coaster Brake (S / Down Arrow)"
             >
-              🛑 BRAKE
+              <span>🛑 BRAKE</span>
+              <span className="text-[8px] font-mono opacity-75">[S / ↓]</span>
             </button>
 
             <button
               onPointerDown={(e) => {
                 e.preventDefault();
+                lastCadenceTapTimeRef.current = performance.now();
                 pointerSprintRef.current = true;
                 syncAuthoritativeControls();
               }}
@@ -940,10 +1046,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
                 pointerSprintRef.current = false;
                 syncAuthoritativeControls();
               }}
-              className="flex items-center justify-center h-10 w-16 sm:h-11 sm:w-20 rounded-xl bg-gradient-to-r from-red-600/80 to-amber-500/80 border border-amber-400/50 text-[10px] font-black text-white active:scale-95 shadow-md transition-transform"
+              className="flex flex-col items-center justify-center h-10 w-16 sm:h-11 sm:w-20 rounded-xl bg-gradient-to-r from-red-600/80 to-amber-500/80 border border-amber-400/50 text-[10px] font-black text-white active:scale-95 shadow-md transition-transform leading-tight"
               title="Sprint Boost (Shift / Spacebar)"
             >
-              ⚡ SPRINT
+              <span>⚡ SPRINT</span>
+              <span className="text-[8px] font-mono opacity-80">[Space]</span>
             </button>
           </div>
 
@@ -951,11 +1058,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           <button
             onPointerDown={(e) => {
               e.preventDefault();
+              lastCadenceTapTimeRef.current = performance.now();
               pointerCadenceRef.current = true;
               syncAuthoritativeControls();
               if (isHypePhase && onTriggerDockLaunch) {
-                // Contributing to hype pulse
-                onTriggerDockLaunch(0.85);
+                onTriggerDockLaunch(0.88);
               }
             }}
             onPointerUp={() => {
@@ -972,11 +1079,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
               pointerCadenceRef.current = false;
               syncAuthoritativeControls();
             }}
-            className="flex flex-col items-center justify-center h-14 w-28 sm:h-16 sm:w-36 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-300 border-2 border-amber-200 text-slate-950 font-display font-black text-xs sm:text-sm active:scale-95 shadow-xl transition-transform"
+            className="flex flex-col items-center justify-center h-14 w-28 sm:h-16 sm:w-36 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-300 border-2 border-amber-200 text-slate-950 font-display font-black text-xs sm:text-sm active:scale-95 shadow-xl transition-transform leading-tight"
             title="Pedal Cadence (W / Up Arrow)"
           >
-            <span className="text-base sm:text-lg">🚴</span>
-            <span>PEDAL CADENCE</span>
+            <span className="text-sm sm:text-base">🚴 PEDAL</span>
+            <span className="text-[9px] font-mono font-bold text-slate-800">[W / ↑ / Hold]</span>
           </button>
         </div>
       </div>

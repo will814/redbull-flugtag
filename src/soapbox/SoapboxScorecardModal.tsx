@@ -42,6 +42,15 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
     [selectedCourseId]
   );
   const courseLength = simState.courseLengthFeet || activeCourse.lengthFeet || SOAPBOX_COURSE_LENGTH_FEET;
+  const obstacleList = simState.obstacles?.length ? simState.obstacles : activeCourse.obstacles;
+  const totalJumps = useMemo(
+    () => Math.max(1, obstacleList.filter((o) => o.type === 'kicker_jump').length),
+    [obstacleList]
+  );
+  const totalGates = useMemo(
+    () => Math.max(1, obstacleList.filter((o) => o.type === 'speed_gate').length),
+    [obstacleList]
+  );
 
   const nextLockedPart = useMemo(() => {
     const locked = SOAPBOX_PART_CATALOG.filter(
@@ -148,7 +157,7 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
             <div>
               <span className="font-display font-black text-white">{activeCourse.name}</span>
               <span className="text-slate-400 text-[10px] ml-1.5">
-                📉 -{activeCourse.dropFeet} ft drop • 📏 {activeCourse.lengthFeet.toLocaleString()} ft
+                📉 -{activeCourse.dropFeet} ft drop • 📏 {activeCourse.lengthFeet.toLocaleString()} ft • ⏱️ Par {activeCourse.parTimeSec.toFixed(1)}s
               </span>
             </div>
           </div>
@@ -192,8 +201,8 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
           </span>
 
           <div className="flex items-center gap-2 text-slate-300">
-            <span>🦘 Jumps: {simState.jumpsCompleted}/2</span>
-            <span>⚡ Gates: {simState.speedGatesCleared}/4</span>
+            <span>🦘 Jumps: {simState.jumpsCompleted}/{totalJumps}</span>
+            <span>⚡ Gates: {simState.speedGatesCleared}/{totalGates}</span>
             <span className="text-purple-300">
               🌀 Style: {Math.round(simState.driftStylePoints)} pts
             </span>

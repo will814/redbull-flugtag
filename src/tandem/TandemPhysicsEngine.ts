@@ -117,6 +117,7 @@ export function createInitialTandemState(): TandemSimState {
     isAirborne: false,
     verticalHeightFt: 8.0,
     verticalVelFps: 0,
+    lateralVelocityFps: 0,
   } as TandemSimState & { [key: string]: any };
 }
 
@@ -147,6 +148,7 @@ export function resetTandemState(state: TandemSimState): void {
   (state as any).isAirborne = false;
   (state as any).verticalHeightFt = 8.0;
   (state as any).verticalVelFps = 0;
+  (state as any).lateralVelocityFps = 0;
 }
 
 export function triggerDockSyncLaunch(state: TandemSimState, intensity = 0.8): void {
@@ -452,15 +454,15 @@ export function stepTandemPhysics(
   if (state.distanceFt >= GAP_JUMP_START_S && state.distanceFt < GAP_JUMP_END_S) {
     if (!(state as any).isAirborne) {
       (state as any).isAirborne = true;
-      (state as any).verticalHeightFt = 8.0; // Pier deck takeoff height
-      (state as any).verticalVelFps = vFps * Math.sin((12 * Math.PI) / 180);
+      (state as any).verticalHeightFt = 9.6; // Top lip of 12° launch ramp above pier
+      (state as any).verticalVelFps = vFps * Math.sin((22 * Math.PI) / 180) + 4.5;
     }
 
     (state as any).verticalVelFps -= 32.174 * dtClamped;
     (state as any).verticalHeightFt += (state as any).verticalVelFps * dtClamped;
 
-    // Minimum ballistic clearance check: falling below water or below min clearance speed (12 mph)
-    if ((state as any).verticalHeightFt <= 0.5 || state.speedMph < 12.0) {
+    // Minimum ballistic clearance check: falling below water or below min clearance speed (13.5 mph)
+    if ((state as any).verticalHeightFt <= 0.5 || state.speedMph < 13.5) {
       return triggerSplashdown();
     }
   } else if (state.distanceFt >= GAP_JUMP_END_S && (state as any).isAirborne) {
@@ -499,6 +501,7 @@ export function stepTandemPhysics(
 
   // Lateral velocity across beam
   const vLatFps = vFps * Math.sin(steerAngle);
+  (state as any).lateralVelocityFps = vLatFps;
   state.lateralOffsetFt += vLatFps * dtClamped;
   (state as any).lateralOffsetFeet = state.lateralOffsetFt;
 

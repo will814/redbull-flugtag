@@ -458,7 +458,15 @@ export function buildCourseEnvironment(): CourseEnvScene {
   fulcrumAFrame.position.set(fulcrumX, 1.22, 0);
   group.add(fulcrumAFrame);
 
-  // 6. Sector 5: Water Cannon Hazard Zone (X around 42.672m)
+  // 6. Sector 5: Water Cannon Hazard Zone (X around 42.672m to 46.35m)
+  const cannonAlleyDeck = new THREE.Mesh(
+    new THREE.BoxGeometry(3.64, 0.18, 0.9144),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color('#92400e'), roughness: 0.55 })
+  );
+  cannonAlleyDeck.position.set(44.50, 2.4384 - 0.09, 0);
+  cannonAlleyDeck.receiveShadow = true;
+  group.add(cannonAlleyDeck);
+
   const waterCannonJets: THREE.Mesh[] = [];
   const jetMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#7dd3fc'), transparent: true, opacity: 0.7 });
   for (const sign of [-1, 1]) {
@@ -1091,33 +1099,47 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
         const bikeX = distFt * FT_TO_M;
         const isAirborne = Boolean((s as any)?.isAirborne);
         const verticalFt = (s as any)?.verticalHeightFt ?? getTrackElevationAtDistance(distFt);
-        const bikeY = (isAirborne ? verticalFt : getTrackElevationAtDistance(distFt)) * FT_TO_M;
+        const currentSeesawAngle =
+          s?.seesawAngles?.seesaw_1 ??
+          s?.seesawAngles?.seesaw_bridge_1 ??
+          updateSeesawBridgeDynamics(distFt);
+
+        let bikeY = (isAirborne ? verticalFt : getTrackElevationAtDistance(distFt)) * FT_TO_M;
+        if (!isAirborne && distFt >= 100 && distFt <= 140) {
+          bikeY += (distFt - 120) * FT_TO_M * Math.sin(currentSeesawAngle);
+        }
         const bikeZ = latFt * FT_TO_M;
 
         // Position bike
         craft.root.position.set(bikeX, bikeY, bikeZ);
 
-        // Calculate pitch angle on incline / rollers / seesaw
+        // Calculate pitch angle on incline / rollers / seesaw / airborne
         let pitchRad = 0;
-        if (distFt >= 70 && distFt <= 100) {
+        if (isAirborne) {
+          const vyFps = (s as any)?.verticalVelFps || 0;
+          const vxFps = Math.max(12, speedMph * 1.46667);
+          pitchRad = Math.atan2(vyFps, vxFps) * 0.65;
+        } else if (distFt >= 70 && distFt <= 100) {
           // Rhythm Rollers slope derivative
           const k = (2 * Math.PI) / 12;
           const slope = 1.0 * k * Math.cos(((distFt - 70) / 12) * 2 * Math.PI);
           pitchRad = Math.atan(slope);
         } else if (distFt >= 100 && distFt <= 140) {
-          const seesawAngle = s?.seesawAngles?.seesaw_1 ?? s?.seesawAngles?.seesaw_bridge_1 ?? updateSeesawBridgeDynamics(distFt);
-          pitchRad = -seesawAngle;
+          pitchRad = currentSeesawAngle;
         } else if (distFt >= 152 && distFt <= 160) {
           pitchRad = (12 * Math.PI) / 180;
         }
 
+        const latVelFps = (s as any)?.lateralVelocityFps || 0;
         craft.root.rotation.x = rollRad;
-        craft.root.rotation.y = -((s as any)?.steer || 0) * 0.22;
+        craft.root.rotation.y = -THREE.MathUtils.clamp(latVelFps * 0.04, -0.18, 0.18);
         craft.root.rotation.z = pitchRad;
+        if (craft.frontSteerNode) {
+          craft.frontSteerNode.rotation.y = -THREE.MathUtils.clamp(latVelFps * 0.08, -0.28, 0.28);
+        }
 
         // Dynamic Seesaw Bridge Reaction
-        const currentSeesawAngle = s?.seesawAngles?.seesaw_1 ?? s?.seesawAngles?.seesaw_bridge_1 ?? updateSeesawBridgeDynamics(distFt);
-        course.seesawPivotGroup.rotation.z = -currentSeesawAngle;
+        course.seesawPivotGroup.rotation.z = currentSeesawAngle;
 
         // Water Cannon Hazard Particle Streams
         const isNearCannon = Math.abs(distFt - 140) <= 4.0;
@@ -1153,6 +1175,10 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
             cp.mesh.rotation.y += cp.rotY * dt;
             cp.mesh.rotation.z += cp.rotZ * dt;
           });
+        } else if (hasTriggeredConfettiRef.current || course.confettiGroup.visible) {
+          hasTriggeredConfettiRef.current = false;
+          course.confettiGroup.visible = false;
+          course.finishBellGroup.rotation.z = 0;
         }
 
         // Splashdown Particles
@@ -1194,6 +1220,9 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
             const mat = ring.material as THREE.MeshBasicMaterial;
             mat.opacity = Math.max(0, mat.opacity - 0.45 * dt);
           });
+        } else if (hasTriggeredSplashParticlesRef.current || course.splashGroup.visible) {
+          hasTriggeredSplashParticlesRef.current = false;
+          course.splashGroup.visible = false;
         }
 
         // Follow Lighting
@@ -1222,7 +1251,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
           targetCamPos.set(bikeX + 4.2, bikeY + 1.6, -1.8);
           targetLookAt.set(bikeX, bikeY + 0.8, 0);
         } else {
-          // Dynamic chase camera with camera shake
+          // Dynamic 3/4 chase camera with camera shake and unobstructed track sightline
           let shakeY = 0;
           let shakeZ = 0;
           if (distFt >= 70 && distFt <= 100) {
@@ -1233,13 +1262,13 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
           }
 
           targetCamPos.set(
-            bikeX - 4.8,
-            bikeY + 2.1 + shakeY,
-            bikeZ * 0.45 + shakeZ
+            bikeX - 4.6,
+            bikeY + 2.35 + shakeY,
+            bikeZ * 0.55 + 0.85 + shakeZ
           );
           targetLookAt.set(
-            bikeX + 3.2,
-            bikeY + 0.35,
+            bikeX + 3.8,
+            bikeY + 0.45,
             bikeZ * 0.65
           );
         }

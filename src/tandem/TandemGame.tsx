@@ -35,6 +35,7 @@ import {
   createInitialTandemState,
   resetTandemState,
   triggerDockSyncLaunch,
+  applyWaterCannonBlast,
   updateTandemSimulationWithAccumulator,
   COURSE_LENGTH_FT,
 } from './TandemPhysicsEngine.ts';
@@ -247,7 +248,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
   // Dyno Rig Test State
   const [dynoActive, setDynoActive] = useState<boolean>(false);
   const [dynoTiltAngleDeg, setDynoTiltAngleDeg] = useState<number>(0);
-  const [dynoSwayAuto, setDynoSwayAuto] = useState<boolean>(true);
+  const [dynoSwayAuto, setDynoSwayAuto] = useState<boolean>(false);
 
   // Authoritative Simulation State & Controls Refs
   const simStateRef = useRef<TandemSimState>(createInitialTandemState());
@@ -499,6 +500,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
     lastTimeRef.current = performance.now();
 
     const initialState = createInitialTandemState();
+    (initialState as any).hypeCountdownSec = HYPE_COUNTDOWN_DURATION_SEC;
     simStateRef.current = initialState;
     setHudSimState({ ...initialState });
 
@@ -532,6 +534,8 @@ export const TandemGame: React.FC<TandemGameProps> = ({
 
   const handleTriggerDockLaunch = useCallback((intensity = 0.85) => {
     if (simStateRef.current.phase === 'hype') {
+      hypeCountdownRef.current = 0;
+      (simStateRef.current as any).hypeCountdownSec = 0;
       triggerDockSyncLaunch(simStateRef.current, intensity);
       playSafeAudio('playAirhorn');
       setHudSimState({ ...simStateRef.current });
@@ -558,11 +562,12 @@ export const TandemGame: React.FC<TandemGameProps> = ({
 
       // 1. DOCK HYPE START PHASE
       if (s.phase === 'hype') {
-        hypeCountdownRef.current -= dtClamped;
+        hypeCountdownRef.current = Math.max(0, hypeCountdownRef.current - dtClamped);
+        (s as any).hypeCountdownSec = hypeCountdownRef.current;
 
         // Spacebar or Cadence taps contribute to hype energy
         if (controls.pedalCadence || controls.sprint) {
-          s.hypeEnergy = Math.min(100, (s.hypeEnergy || 0) + dtClamped * 45);
+          s.hypeEnergy = Math.min(100, (s.hypeEnergy || 0) + dtClamped * 60);
         }
 
         // Clamp distance to 0 during hype phase
@@ -571,21 +576,34 @@ export const TandemGame: React.FC<TandemGameProps> = ({
         (s as any).distanceFeet = 0;
         (s as any).mph = 0;
 
-        if (hypeCountdownRef.current <= 0) {
-          const syncIntensity = Math.min(1.0, 0.6 + ((s.hypeEnergy || 0) / 100) * 0.4);
+        if (hypeCountdownRef.current <= 0 || (s.hypeEnergy || 0) >= 100) {
+          const syncIntensity = Math.min(1.0, 0.65 + ((s.hypeEnergy || 0) / 100) * 0.35);
+          hypeCountdownRef.current = 0;
+          (s as any).hypeCountdownSec = 0;
           triggerDockSyncLaunch(s, syncIntensity);
           playSafeAudio('playAirhorn');
+          setHudSimState({ ...s });
         }
       }
 
       // 2. ACTIVE RIDING PHASE (120Hz Physics Stepping)
       else if (s.phase === 'riding') {
+        const prevDistFt = s.distanceFt;
         updateTandemSimulationWithAccumulator(s, stats, controls, dtClamped);
 
         // Sound Engine Cadence Click
         if (controls.pedalCadence && s.speedMph > 0 && now - lastCadenceAudioTimeRef.current > 150) {
           lastCadenceAudioTimeRef.current = now;
           playSafeAudio('playPedalCrank');
+        }
+
+        // Obstacle Audio & Impulse Cues (Seesaw fulcrum pivot & Water Cannon spray)
+        if (prevDistFt < 120 && s.distanceFt >= 120) {
+          playSafeAudio('playSeesawThud');
+        }
+        if (prevDistFt < 140 && s.distanceFt >= 140) {
+          playSafeAudio('playSplash', 0.35);
+          applyWaterCannonBlast(s, 0.32, stats);
         }
 
         // Detect Splashdown Trigger
@@ -599,6 +617,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
           controls.brake = false;
 
           playSafeAudio('playSplash', 0.85);
+          setHudSimState({ ...s });
 
           if (!transitionTimerRef.current) {
             transitionTimerRef.current = window.setTimeout(() => {
@@ -615,6 +634,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
 
           playSafeAudio('playCanalBell', true);
           playSafeAudio('playCrowdCheer');
+          setHudSimState({ ...s });
 
           if (typeof confetti === 'function') {
             try {
