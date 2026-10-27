@@ -68,10 +68,10 @@ describe('UI Course Selection, Telemetry Scaling & Scorecard Penalties', () => {
 
   describe('Dynamic Course Length & Progress Scaling', () => {
     const courseLengths: Record<SoapboxCourseId, number> = {
-      alpine_panorama: 1000,
-      canyon_plunge: 1150,
-      urban_downhill: 1050,
-      extreme_peak: 1250,
+      alpine_panorama: 2400,
+      canyon_plunge: 2800,
+      urban_downhill: 2600,
+      extreme_peak: 3200,
     };
 
     for (const [id, expectedLength] of Object.entries(courseLengths) as [SoapboxCourseId, number][]) {
@@ -99,7 +99,7 @@ describe('UI Course Selection, Telemetry Scaling & Scorecard Penalties', () => {
     it('applies zero damage penalty for 100% intact run', () => {
       const state = createInitialSoapboxState('alpine_panorama');
       state.completedCourse = true;
-      state.distanceFeet = 1000;
+      state.distanceFeet = 2400;
       state.elapsedRaceTimeSec = 22.0;
       state.maxSpeedMph = 38;
 
@@ -112,7 +112,7 @@ describe('UI Course Selection, Telemetry Scaling & Scorecard Penalties', () => {
       // 1. Intact baseline
       const stateIntact = createInitialSoapboxState('alpine_panorama');
       stateIntact.completedCourse = true;
-      stateIntact.distanceFeet = 1000;
+      stateIntact.distanceFeet = 2400;
       stateIntact.elapsedRaceTimeSec = 24.0;
       stateIntact.maxSpeedMph = 35;
       const scoreIntact = finalizeSoapboxJudgeScorecard(stateIntact, metrics, 900, 25.0);

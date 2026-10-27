@@ -175,7 +175,7 @@ export interface SoapboxLoadout {
   paintTheme: SoapboxPaintThemeId;
 }
 
-export const SOAPBOX_COURSE_LENGTH_FEET = 1000;
+export const SOAPBOX_COURSE_LENGTH_FEET = 2400;
 export const SOAPBOX_START_RAMP_FEET = 40;
 export const SOAPBOX_DRIVER_WEIGHT_LBS = 145;
 

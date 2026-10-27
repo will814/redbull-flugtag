@@ -129,21 +129,21 @@ describe('Milestone 4 Empirical Challenger 1 Adversarial Suite', () => {
       expect(clampControl(NaN)).toBe(0);
     });
 
-    it('verifies SECTOR_METAS 7 distinct sectors and getSectorForDistance across [0, 200] FT', () => {
+    it('verifies SECTOR_METAS 7 distinct sectors and getSectorForDistance across [0, 600] FT', () => {
       expect(SECTOR_METAS).toHaveLength(7);
       expect(getSectorForDistance(0).id).toBe('dock');
       expect(getSectorForDistance(14).id).toBe('dock');
-      expect(getSectorForDistance(15).id).toBe('dock');
-      expect(getSectorForDistance(30).id).toBe('beam_1');
-      expect(getSectorForDistance(85).id).toBe('rollers');
-      expect(getSectorForDistance(120).id).toBe('seesaw');
-      expect(getSectorForDistance(150).id).toBe('water_cannon');
-      expect(getSectorForDistance(175).id).toBe('gap_jump');
-      expect(getSectorForDistance(195).id).toBe('finish_bell');
-      expect(getSectorForDistance(200).id).toBe('finish_bell');
+      expect(getSectorForDistance(29).id).toBe('dock');
+      expect(getSectorForDistance(80).id).toBe('beam_1');
+      expect(getSectorForDistance(215).id).toBe('rollers');
+      expect(getSectorForDistance(330).id).toBe('seesaw');
+      expect(getSectorForDistance(450).id).toBe('water_cannon');
+      expect(getSectorForDistance(530).id).toBe('gap_jump');
+      expect(getSectorForDistance(580).id).toBe('finish_bell');
+      expect(getSectorForDistance(600).id).toBe('finish_bell');
       // Negative distance clamp to dock
       expect(getSectorForDistance(-100).id).toBe('dock');
-      // Beyond 200 ft clamp to finish bell
+      // Beyond 600 ft clamp to finish bell
       expect(getSectorForDistance(999).id).toBe('finish_bell');
     });
   });
@@ -203,10 +203,10 @@ describe('Milestone 4 Empirical Challenger 1 Adversarial Suite', () => {
       }
     });
 
-    it('simulates state from "riding" -> "finished" at s >= 200 ft and locks finished state', () => {
+    it('simulates state from "riding" -> "finished" at s >= 600 ft and locks finished state', () => {
       const s = createInitialTandemState();
       s.phase = 'riding';
-      s.distanceFt = 200; // Directly at finish bell
+      s.distanceFt = COURSE_LENGTH_FT; // Directly at finish bell (600 ft)
       s.speedMph = 14.5;
 
       const events = stepTandemPhysics(s, testStats, { steer: 0, pedalCadence: true, sprint: false, brake: false, leanRoll: 0 }, 1 / 60);
@@ -250,7 +250,7 @@ describe('Milestone 4 Empirical Challenger 1 Adversarial Suite', () => {
 
         // Simulate flight/progress
         const completed = i % 2 === 1;
-        s.distanceFt = completed ? 200 : 50 + (i * 7) % 140;
+        s.distanceFt = completed ? COURSE_LENGTH_FT : 50 + (i * 7) % 140;
         s.timeElapsedSec = 17.5 + (i % 6);
         s.phase = completed ? 'finished' : 'splashdown';
         if (!completed) s.speedMph = 0;
@@ -278,7 +278,7 @@ describe('Milestone 4 Empirical Challenger 1 Adversarial Suite', () => {
 
       expect(currentMode).toBe('workshop');
       expect(totalStarsAwarded).toBeGreaterThan(50);
-      expect(recordedDist).toBe(200);
+      expect(recordedDist).toBe(COURSE_LENGTH_FT);
       expect(recordedTime).toBeGreaterThan(0);
     });
   });

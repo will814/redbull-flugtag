@@ -143,10 +143,10 @@ test('Suite 1: Extreme Physics States & Boundary Conditions', async (t) => {
   });
 
   await t.test('1.4 Zero forward speed on steep seesaw incline causes backward rollback and splashdown off entry', () => {
-    // Case A: Near entry lip (s = 101 ft) rolls back into water within 100 ticks (takes ~78 ticks)
+    // Case A: Near entry lip (s = 311 ft) rolls back into water within 100 ticks (takes ~78 ticks)
     const stateA = createInitialTandemState();
     stateA.phase = 'riding';
-    stateA.distanceFt = 101.0;
+    stateA.distanceFt = 311.0;
     stateA.speedMph = 0.0;
 
     for (let i = 0; i < 100; i++) {
@@ -154,20 +154,20 @@ test('Suite 1: Extreme Physics States & Boundary Conditions', async (t) => {
       stepTandemPhysics(stateA, BASELINE_STATS, NEUTRAL_CONTROLS, FIXED_DT);
     }
     assert.strictEqual(stateA.phase, 'splashdown', 'Unpowered stalled bike near seesaw lip must roll back into water');
-    assert.ok(stateA.distanceFt <= 100.0, `Terminal distance must be <= 100 ft (got ${stateA.distanceFt} ft)`);
+    assert.ok(stateA.distanceFt <= 310.0, `Terminal distance must be <= 310 ft (got ${stateA.distanceFt} ft)`);
 
-    // Case B: Stalled at s = 105 ft rolls back across 5 ft within 250 ticks (takes ~177 ticks)
+    // Case B: Stalled at s = 315 ft rolls back across 5 ft within 250 ticks (takes ~177 ticks)
     const stateB = createInitialTandemState();
     stateB.phase = 'riding';
-    stateB.distanceFt = 105.0;
+    stateB.distanceFt = 315.0;
     stateB.speedMph = 0.0;
 
     for (let i = 0; i < 250; i++) {
       if (stateB.phase === 'splashdown') break;
       stepTandemPhysics(stateB, BASELINE_STATS, NEUTRAL_CONTROLS, FIXED_DT);
     }
-    assert.strictEqual(stateB.phase, 'splashdown', 'Unpowered stalled bike at 105 ft must roll back across 5 ft into water');
-    assert.ok(stateB.distanceFt <= 100.0, `Terminal distance must be <= 100 ft (got ${stateB.distanceFt} ft)`);
+    assert.strictEqual(stateB.phase, 'splashdown', 'Unpowered stalled bike at 315 ft must roll back across 5 ft into water');
+    assert.ok(stateB.distanceFt <= 310.0, `Terminal distance must be <= 310 ft (got ${stateB.distanceFt} ft)`);
     assert.strictEqual(stateB.speedMph, 0, 'Splashdown state must lock speed to 0');
   });
 

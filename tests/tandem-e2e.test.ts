@@ -18,7 +18,7 @@ test('Tier 4: Real-World Application Scenarios', async (t) => {
   const cat = await getCatalog();
 
   // T4-APP-01: Flawless Championship Gold Medal Run
-  await t.test('T4-APP-01: Full flawless run across all 5 sectors ringing Finish Bell in under 25s, earning 30/30 pts and 3 stars', () => {
+  await t.test('T4-APP-01: Full flawless run across all 5 sectors ringing Finish Bell in under 32s, earning 30/30 pts and 3 stars', () => {
     if (!phy) {
       t.skip('Pending M2: Physics simulation module');
       return;
@@ -30,7 +30,7 @@ test('Tier 4: Real-World Application Scenarios', async (t) => {
     const controls = { steer: 0, pedalCadence: true, sprint: true, brake: false, leanRoll: 0 };
 
     let elapsedSubSteps = 0;
-    while (s.phase === 'riding' && elapsedSubSteps < 2400) { // Max 20s
+    while (s.phase === 'riding' && elapsedSubSteps < 3840) { // Max 32s
       stepFn(s, championshipStats, controls, SPEC.PHYSICS.FIXED_DT);
       elapsedSubSteps++;
     }
@@ -38,7 +38,7 @@ test('Tier 4: Real-World Application Scenarios', async (t) => {
     assert.equal(s.phase, 'finished', 'Flawless run must reach "finished" phase');
     assert.ok(s.distanceFt >= SPEC.PHYSICS.COURSE_LENGTH_FT, 'Must achieve full course distance');
     const elapsedSec = elapsedSubSteps * SPEC.PHYSICS.FIXED_DT;
-    assert.ok(elapsedSec < 25, `Elapsed time must be under 25 seconds, took: ${elapsedSec.toFixed(1)}s`);
+    assert.ok(elapsedSec < 32, `Elapsed time must be under 32 seconds, took: ${elapsedSec.toFixed(1)}s`);
   });
 
   // T4-APP-02: Seesaw Stalling & Backward Wipeout

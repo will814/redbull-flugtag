@@ -214,6 +214,8 @@ export interface TandemSimState {
   isOffBeam: boolean;
   hasFinished: boolean;
   accumulatorSec?: number;
+  courseId?: string;
+  courseLengthFt?: number;
 }
 
 export interface TandemScorecard {
@@ -227,4 +229,7 @@ export interface TandemScorecard {
   finishTimeSec: number | null;
   completedCourse: boolean;
   distanceFt: number;
+  courseId?: string;
+  courseName?: string;
+  courseLengthFt?: number;
 }

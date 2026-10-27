@@ -21,6 +21,12 @@ import type {
   TandemDynoMetrics,
   TandemPaintThemeId,
 } from './types.ts';
+import {
+  TANDEM_COURSES,
+  DEFAULT_TANDEM_COURSE_ID,
+  getTandemCourseById,
+  type TandemCourseId,
+} from './TandemCourses.ts';
 import { soundEngine } from '../audio/SoundEngine.ts';
 import {
   Volume2,
@@ -37,6 +43,7 @@ import {
   AlertTriangle,
   RotateCcw,
   Sliders,
+  MapPin,
 } from 'lucide-react';
 
 export interface SavedTandemSlot {
@@ -55,6 +62,8 @@ export interface TandemWorkshopHUDProps {
   onSelectPaint: (paintThemeId: TandemPaintThemeId | string) => void;
   onApplyPreset: (preset: TandemLoadout) => void;
   onRandomizeLoadout: () => void;
+  selectedCourseId?: TandemCourseId;
+  onSelectCourse?: (courseId: TandemCourseId) => void;
   canUndo?: boolean;
   canRedo?: boolean;
   onUndo?: () => void;
@@ -85,6 +94,8 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
   onSelectPaint,
   onApplyPreset,
   onRandomizeLoadout,
+  selectedCourseId = DEFAULT_TANDEM_COURSE_ID,
+  onSelectCourse,
   canUndo = false,
   canRedo = false,
   onUndo,
@@ -106,10 +117,13 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
   bestTimeSec = null,
 }) => {
   const [showPresetsModal, setShowPresetsModal] = useState(false);
+  const [showCoursesModal, setShowCoursesModal] = useState(false);
   const [hoveredPartId, setHoveredPartId] = useState<string | null>(null);
   const [customBuildName, setCustomBuildName] = useState('');
   const [autoRocking, setAutoRocking] = useState(false);
   const autoRockRef = useRef<number | null>(null);
+
+  const activeCourse = useMemo(() => getTandemCourseById(selectedCourseId), [selectedCourseId]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -118,9 +132,12 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
 
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopImmediatePropagation();
         soundEngine.playSnapPop();
         if (showPresetsModal) {
           setShowPresetsModal(false);
+        } else if (showCoursesModal) {
+          setShowCoursesModal(false);
         } else {
           onReturnToHub();
         }
@@ -131,7 +148,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
           soundEngine.playSnapPop();
           onSelectCategory(cat);
         }
-      } else if (e.code === 'Space' && !showPresetsModal) {
+      } else if (e.code === 'Space' && !showPresetsModal && !showCoursesModal) {
         e.preventDefault();
         soundEngine.playAirhorn();
         onStartCourseRun();
@@ -150,7 +167,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showPresetsModal, onReturnToHub, onSelectCategory, onStartCourseRun, canUndo, canRedo, onUndo, onRedo]);
+  }, [showPresetsModal, showCoursesModal, onReturnToHub, onSelectCategory, onStartCourseRun, canUndo, canRedo, onUndo, onRedo]);
 
   // Auto-rock simulation for Dyno Balance Rig
   useEffect(() => {
@@ -285,13 +302,31 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
               </h1>
             </div>
             <p className="text-[10px] sm:text-xs text-amber-300 font-semibold">
-              200-Ft Pier, Tilting Seesaws, Rhythm Whoops &amp; Finish Bell
+              {activeCourse.lengthFt}-Ft Pier • {activeCourse.name} • Seesaws, Rhythm Whoops &amp; Finish Bell
             </p>
           </div>
         </div>
 
-        {/* Right: Scores, Stars, Dyno, Presets, Undo/Redo & Audio */}
+        {/* Right: Course Selector, Scores, Stars, Dyno, Presets, Undo/Redo & Audio */}
         <div className="pointer-events-auto flex flex-wrap items-center gap-2 bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3 py-2 shadow-xl">
+          {/* Course Selector Pill Button */}
+          <button
+            type="button"
+            data-testid="course-selector-btn"
+            onClick={() => {
+              soundEngine.playSnapPop();
+              setShowCoursesModal(true);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-black border border-amber-400/50 transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+            title="Select Canal Pier Course (600 FT – 1,200 FT)"
+          >
+            <MapPin className="w-3.5 h-3.5 text-amber-400" />
+            <span>{activeCourse.emoji} {activeCourse.name}</span>
+            <span className="px-1.5 py-0.2 rounded-md bg-amber-400/20 border border-amber-400/40 text-[10px] font-mono text-amber-200">
+              {activeCourse.lengthFt} FT
+            </span>
+          </button>
+
           <div className="flex items-center gap-3 px-2.5 py-1 bg-slate-900/90 rounded-xl border border-slate-800 text-xs font-mono">
             <div>
               <span className="text-slate-400 font-sans font-semibold">BEST: </span>
@@ -907,6 +942,104 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* 5. COURSE SELECTION MODAL (600 FT – 1,200 FT)                        */}
+      {/* ===================================================================== */}
+      {showCoursesModal && (
+        <div
+          data-testid="course-selector-modal"
+          className="pointer-events-auto fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+        >
+          <div className="bg-slate-900 border-2 border-amber-400/60 rounded-2xl max-w-3xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h2 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>🗺️</span>
+                  <span>Select Over-Water Canal Pier Course</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Choose from 4 extended international Stalen Ros canal courses (600 FT to 1,200 FT)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCoursesModal(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {TANDEM_COURSES.map((course) => {
+                const isSelected = course.id === activeCourse.id;
+                return (
+                  <button
+                    key={course.id}
+                    type="button"
+                    data-testid={`course-option-${course.id}`}
+                    onClick={() => {
+                      soundEngine.playSnapPop();
+                      if (onSelectCourse) onSelectCourse(course.id);
+                      setShowCoursesModal(false);
+                    }}
+                    className={`flex flex-col justify-between gap-2.5 p-3.5 rounded-2xl border-2 text-left transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-amber-400/15 border-amber-400 ring-2 ring-amber-400/30 shadow-lg'
+                        : 'bg-slate-950/80 hover:bg-slate-800/90 border-slate-700/80'
+                    }`}
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{course.emoji}</span>
+                          <div>
+                            <div className="font-black text-white text-sm leading-tight">
+                              {course.name}
+                            </div>
+                            <div className="text-[11px] font-bold text-amber-300 mt-0.5">
+                              {course.subtitle}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-400 text-slate-950 font-mono font-black text-xs shrink-0">
+                          {course.lengthFt} FT
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-300 leading-snug">
+                        {course.description}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-800/80">
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span className="text-slate-400">
+                          Difficulty: <span className="text-amber-300">{'⭐'.repeat(course.difficultyStars)} ({course.difficultyLabel})</span>
+                        </span>
+                        <span className="font-mono text-sky-300">
+                          Par Time: {course.parTimeSec.toFixed(1)}s
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {course.sectors.slice(2, 6).map((sec) => (
+                          <span
+                            key={sec.id}
+                            className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700/80 text-[10px] font-semibold text-slate-300"
+                          >
+                            {sec.emoji} {sec.startFt}–{sec.endFt}ft
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

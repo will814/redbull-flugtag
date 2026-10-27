@@ -110,9 +110,6 @@ function createHarmonicElevation(params: {
   const rampSlope = -(rampTopElevationFeet - startElevationFeet) / startRampFeet;
 
   return function getElevation(s: number): { yFeet: number; dyDs: number } {
-    if (s <= -startRampFeet) {
-      return { yFeet: rampTopElevationFeet, dyDs: rampSlope };
-    }
     if (s < 0) {
       const u = (s + startRampFeet) / startRampFeet;
       const yFeet = rampTopElevationFeet - u * (rampTopElevationFeet - startElevationFeet);
@@ -148,8 +145,8 @@ function createCenterlineEvaluator(lengthFeet: number, waveFn: (s: number) => nu
   const getRawZ = (dist: number): number => {
     if (dist <= 0) return 0;
     if (dist >= lengthFeet) return 0;
-    const entry = smoothstep(0, 55, dist);
-    const exit = 1 - smoothstep(lengthFeet - 65, lengthFeet, dist);
+    const entry = smoothstep(0, 80, dist);
+    const exit = 1 - smoothstep(lengthFeet - 90, lengthFeet, dist);
     return waveFn(dist) * entry * exit;
   };
 
@@ -179,32 +176,33 @@ function createSampleRoad(
 }
 
 // ==============================================================================
-// 1. ALPINE PANORAMA (1,000 FT, DROP: 111.5 FT, 1/4 BEGINNER)
+// 1. ALPINE PANORAMA (2,400 FT, DROP: 268.8 FT, 1/4 BEGINNER)
 // ==============================================================================
 const alpineElevation = createHarmonicElevation({
-  lengthFeet: 1000,
+  lengthFeet: 2400,
   startRampFeet: 40,
-  startElevationFeet: 112.0,
-  rampTopElevationFeet: 123.5,
+  startElevationFeet: 268.8,
+  rampTopElevationFeet: 280.8,
   finishElevationFeet: 0.0,
   harmonics: [
-    { amplitude: 0.024, phase: 0.0, harmonicNumber: 1 },
-    { amplitude: 0.015, phase: Math.PI / 3, harmonicNumber: 2 },
+    { amplitude: 0.022, phase: 0.0, harmonicNumber: 1 },
+    { amplitude: 0.012, phase: Math.PI / 3, harmonicNumber: 2 },
+    { amplitude: 0.005, phase: -0.4, harmonicNumber: 3 },
   ],
 });
 
-const alpineCenterline = createCenterlineEvaluator(1000, (s) => {
+const alpineCenterline = createCenterlineEvaluator(2400, (s) => {
   return (
-    38 * Math.sin(0.0125 * s) +
-    16 * Math.sin(0.026 * s - 0.6) +
-    44 * Math.exp(-Math.pow((s - 620) / 68, 2)) * Math.sin(0.036 * (s - 540))
+    42 * Math.sin(0.0052 * s) +
+    18 * Math.sin(0.0115 * s - 0.6) +
+    32 * Math.exp(-Math.pow((s - 1480) / 160, 2)) * Math.sin(0.016 * (s - 1320))
   );
 });
 
 const alpineTheme: SoapboxCourseVisualTheme = {
   skyColor: '#38bdf8',
   fogColor: '#bae6fd',
-  fogDensity: 0.0022,
+  fogDensity: 0.0014,
   hemiSkyColor: '#bae6fd',
   hemiGroundColor: '#166534',
   sunColor: '#fffbeb',
@@ -219,34 +217,38 @@ const alpineTheme: SoapboxCourseVisualTheme = {
 };
 
 const alpineSectors: SoapboxCourseSector[] = [
-  { sStartFeet: 0, sEndFeet: 220, name: 'Pine Crest S-Bends' },
-  { sStartFeet: 220, sEndFeet: 480, name: 'Cobblestone Village Descent' },
-  { sStartFeet: 480, sEndFeet: 720, name: "Deadman's Hairpin Chute" },
-  { sStartFeet: 720, sEndFeet: 1000, name: 'High-Speed Finish Boulevard' },
+  { sStartFeet: 0, sEndFeet: 400, name: 'Pine Crest S-Bends' },
+  { sStartFeet: 400, sEndFeet: 820, name: 'Cobblestone Village Descent' },
+  { sStartFeet: 820, sEndFeet: 1260, name: 'Edelweiss Meadow Sweepers' },
+  { sStartFeet: 1260, sEndFeet: 1680, name: "Deadman's Hairpin Chute" },
+  { sStartFeet: 1680, sEndFeet: 2040, name: 'Old Town Clocktower Chicane' },
+  { sStartFeet: 2040, sEndFeet: 2400, name: 'High-Speed Finish Boulevard' },
 ];
 
 const alpineObstaclesDef: SoapboxObstacleDef[] = [
-  { id: 'alp_bale_1', type: 'hay_bale', sFeet: 95, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
-  { id: 'alp_slick_1', type: 'water_slick', sFeet: 148, lengthFeet: 18, lateralCenterFeet: -2.0, halfWidthFeet: 4.8 },
-  { id: 'alp_bale_2', type: 'hay_bale', sFeet: 186, lengthFeet: 8, lateralCenterFeet: -6.4, halfWidthFeet: 2.2 },
-  { id: 'alp_gate_1', type: 'speed_gate', sFeet: 222, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'alp_cobble_1', type: 'cobble_strip', sFeet: 275, lengthFeet: 45, lateralCenterFeet: 0.0, halfWidthFeet: 9.0 },
-  { id: 'alp_jump_1', type: 'kicker_jump', sFeet: 310, lengthFeet: 16, lateralCenterFeet: 0.0, halfWidthFeet: 6.5 },
-  { id: 'alp_bale_3', type: 'hay_bale', sFeet: 385, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'alp_slick_2', type: 'water_slick', sFeet: 412, lengthFeet: 20, lateralCenterFeet: 3.2, halfWidthFeet: 5.0 },
-  { id: 'alp_cobble_2', type: 'cobble_strip', sFeet: 445, lengthFeet: 55, lateralCenterFeet: 0.0, halfWidthFeet: 9.0 },
-  { id: 'alp_bale_4', type: 'hay_bale', sFeet: 462, lengthFeet: 8, lateralCenterFeet: -6.5, halfWidthFeet: 2.2 },
-  { id: 'alp_bale_5', type: 'hay_bale', sFeet: 538, lengthFeet: 8, lateralCenterFeet: 5.8, halfWidthFeet: 2.2 },
-  { id: 'alp_gate_2', type: 'speed_gate', sFeet: 542, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'alp_bale_6', type: 'hay_bale', sFeet: 620, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'alp_slick_3', type: 'water_slick', sFeet: 668, lengthFeet: 22, lateralCenterFeet: -2.8, halfWidthFeet: 5.2 },
-  { id: 'alp_jump_2', type: 'kicker_jump', sFeet: 720, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
-  { id: 'alp_bale_7', type: 'hay_bale', sFeet: 755, lengthFeet: 8, lateralCenterFeet: 6.6, halfWidthFeet: 2.2 },
-  { id: 'alp_gate_3', type: 'speed_gate', sFeet: 768, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'alp_cobble_3', type: 'cobble_strip', sFeet: 835, lengthFeet: 50, lateralCenterFeet: 0.0, halfWidthFeet: 9.0 },
-  { id: 'alp_bale_8', type: 'hay_bale', sFeet: 842, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'alp_slick_4', type: 'water_slick', sFeet: 895, lengthFeet: 22, lateralCenterFeet: 1.5, halfWidthFeet: 5.0 },
-  { id: 'alp_gate_4', type: 'speed_gate', sFeet: 958, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'alp_bale_1', type: 'hay_bale', sFeet: 120, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
+  { id: 'alp_slick_1', type: 'water_slick', sFeet: 210, lengthFeet: 18, lateralCenterFeet: -2.0, halfWidthFeet: 4.8 },
+  { id: 'alp_bale_2', type: 'hay_bale', sFeet: 295, lengthFeet: 8, lateralCenterFeet: -6.4, halfWidthFeet: 2.2 },
+  { id: 'alp_gate_1', type: 'speed_gate', sFeet: 375, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'alp_cobble_1', type: 'cobble_strip', sFeet: 490, lengthFeet: 55, lateralCenterFeet: 0.0, halfWidthFeet: 9.0 },
+  { id: 'alp_jump_1', type: 'kicker_jump', sFeet: 610, lengthFeet: 16, lateralCenterFeet: 0.0, halfWidthFeet: 6.5 },
+  { id: 'alp_bale_3', type: 'hay_bale', sFeet: 730, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'alp_slick_2', type: 'water_slick', sFeet: 845, lengthFeet: 20, lateralCenterFeet: 3.2, halfWidthFeet: 5.0 },
+  { id: 'alp_gate_2', type: 'speed_gate', sFeet: 960, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'alp_cobble_2', type: 'cobble_strip', sFeet: 1085, lengthFeet: 60, lateralCenterFeet: 0.0, halfWidthFeet: 9.0 },
+  { id: 'alp_bale_4', type: 'hay_bale', sFeet: 1180, lengthFeet: 8, lateralCenterFeet: -6.5, halfWidthFeet: 2.2 },
+  { id: 'alp_jump_2', type: 'kicker_jump', sFeet: 1290, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
+  { id: 'alp_bale_5', type: 'hay_bale', sFeet: 1395, lengthFeet: 8, lateralCenterFeet: 5.8, halfWidthFeet: 2.2 },
+  { id: 'alp_gate_3', type: 'speed_gate', sFeet: 1490, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'alp_bale_6', type: 'hay_bale', sFeet: 1590, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'alp_slick_3', type: 'water_slick', sFeet: 1695, lengthFeet: 22, lateralCenterFeet: -2.8, halfWidthFeet: 5.2 },
+  { id: 'alp_cobble_3', type: 'cobble_strip', sFeet: 1810, lengthFeet: 55, lateralCenterFeet: 0.0, halfWidthFeet: 9.0 },
+  { id: 'alp_jump_3', type: 'kicker_jump', sFeet: 1930, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
+  { id: 'alp_bale_7', type: 'hay_bale', sFeet: 2035, lengthFeet: 8, lateralCenterFeet: 6.6, halfWidthFeet: 2.2 },
+  { id: 'alp_gate_4', type: 'speed_gate', sFeet: 2120, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'alp_bale_8', type: 'hay_bale', sFeet: 2210, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'alp_slick_4', type: 'water_slick', sFeet: 2285, lengthFeet: 22, lateralCenterFeet: 1.5, halfWidthFeet: 5.0 },
+  { id: 'alp_gate_5', type: 'speed_gate', sFeet: 2350, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
 ];
 
 export const alpinePanoramaCourse: SoapboxCourseDef = {
@@ -254,18 +256,18 @@ export const alpinePanoramaCourse: SoapboxCourseDef = {
   name: 'Alpine Panorama',
   subtitle: 'Austrian Alpine Pass & Old Town Cobbles',
   tagline: 'Austrian Alpine Pass & Old Town Cobbles',
-  description: 'Descend through pristine Austrian pine slopes into high-speed cobblestone hairpins.',
+  description: 'Descend 2,400 ft through pristine Austrian pine slopes into high-speed cobblestone hairpins.',
   difficulty: 1,
   difficultyStars: 1,
   difficultyLabel: 'Beginner',
   emoji: '🏔️',
-  lengthFeet: 1000,
+  lengthFeet: 2400,
   startRampFeet: 40,
-  startElevationFeet: 112.0,
+  startElevationFeet: 268.8,
   finishElevationFeet: 0.0,
-  totalElevationDropFeet: 112.0,
-  totalDropFeet: 112.0,
-  dropFeet: 112.0,
+  totalElevationDropFeet: 268.8,
+  totalDropFeet: 268.8,
+  dropFeet: 268.8,
   averageGradePercent: -11.2,
   averageGradePct: -11.2,
   avgGradePercent: -11.2,
@@ -273,7 +275,7 @@ export const alpinePanoramaCourse: SoapboxCourseDef = {
   peakGradePercent: -15.1,
   surfaceType: 'asphalt / cobble',
   hazardsDescription: 'Cobble strips, hay bales, kicker jumps',
-  parTimeSec: 21.5,
+  parTimeSec: 46.5,
   visualTheme: alpineTheme,
   theme: alpineTheme,
   sectors: alpineSectors,
@@ -281,7 +283,7 @@ export const alpinePanoramaCourse: SoapboxCourseDef = {
   sampleRoad: createSampleRoad(alpineElevation, alpineCenterline),
   getCenterline: alpineCenterline,
   getSurface: (s) =>
-    (s >= 250 && s <= 300) || (s >= 415 && s <= 475) || (s >= 810 && s <= 865)
+    (s >= 455 && s <= 535) || (s >= 1045 && s <= 1130) || (s >= 1775 && s <= 1855)
       ? 'cobblestone'
       : 'asphalt',
   getSectionName: (s) => {
@@ -299,32 +301,33 @@ export const alpinePanoramaCourse: SoapboxCourseDef = {
 };
 
 // ==============================================================================
-// 2. CANYON PLUNGE (1,150 FT, DROP: 157.0 FT, 2/4 CHALLENGING)
+// 2. CANYON PLUNGE (2,800 FT, DROP: 352.8 FT, 2/4 CHALLENGING)
 // ==============================================================================
 const canyonElevation = createHarmonicElevation({
-  lengthFeet: 1150,
+  lengthFeet: 2800,
   startRampFeet: 40,
-  startElevationFeet: 145.0,
-  rampTopElevationFeet: 157.0,
+  startElevationFeet: 352.8,
+  rampTopElevationFeet: 365.6,
   finishElevationFeet: 0.0,
   harmonics: [
-    { amplitude: 0.040, phase: -0.5, harmonicNumber: 1 },
-    { amplitude: 0.022, phase: 1.0, harmonicNumber: 2 },
+    { amplitude: 0.035, phase: -0.5, harmonicNumber: 1 },
+    { amplitude: 0.018, phase: 1.0, harmonicNumber: 2 },
+    { amplitude: 0.009, phase: 0.3, harmonicNumber: 3 },
   ],
 });
 
-const canyonCenterline = createCenterlineEvaluator(1150, (s) => {
+const canyonCenterline = createCenterlineEvaluator(2800, (s) => {
   return (
-    44 * Math.sin(0.011 * s) +
-    20 * Math.sin(0.022 * s + 0.4) +
-    48 * Math.exp(-Math.pow((s - 740) / 75, 2)) * Math.sin(0.032 * (s - 660))
+    48 * Math.sin(0.0046 * s) +
+    22 * Math.sin(0.0095 * s + 0.4) +
+    36 * Math.exp(-Math.pow((s - 1820) / 180, 2)) * Math.sin(0.014 * (s - 1650))
   );
 });
 
 const canyonTheme: SoapboxCourseVisualTheme = {
   skyColor: '#fdba74',
   fogColor: '#fed7aa',
-  fogDensity: 0.0025,
+  fogDensity: 0.0015,
   hemiSkyColor: '#ffedd5',
   hemiGroundColor: '#9a3412',
   sunColor: '#fff7ed',
@@ -339,36 +342,38 @@ const canyonTheme: SoapboxCourseVisualTheme = {
 };
 
 const canyonSectors: SoapboxCourseSector[] = [
-  { sStartFeet: 0, sEndFeet: 280, name: 'Sandstone Rim Ridge' },
-  { sStartFeet: 280, sEndFeet: 580, name: 'Coyote Gulch Plunge' },
-  { sStartFeet: 580, sEndFeet: 880, name: "Devil's Cavern Sweeper" },
-  { sStartFeet: 880, sEndFeet: 1150, name: 'Dust Canyon Straightaway' },
+  { sStartFeet: 0, sEndFeet: 480, name: 'Sandstone Rim Ridge' },
+  { sStartFeet: 480, sEndFeet: 960, name: 'Coyote Gulch Plunge' },
+  { sStartFeet: 960, sEndFeet: 1440, name: 'Red Rock Mesa Switchbacks' },
+  { sStartFeet: 1440, sEndFeet: 1920, name: "Devil's Cavern Sweeper" },
+  { sStartFeet: 1920, sEndFeet: 2380, name: 'Sidewinder Arroyo Drop' },
+  { sStartFeet: 2380, sEndFeet: 2800, name: 'Dust Canyon Straightaway' },
 ];
 
 const canyonObstaclesDef: SoapboxObstacleDef[] = [
-  { id: 'can_bale_1', type: 'hay_bale', sFeet: 110, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'can_gate_1', type: 'speed_gate', sFeet: 140, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'can_slick_1', type: 'water_slick', sFeet: 175, lengthFeet: 20, lateralCenterFeet: -2.5, halfWidthFeet: 5.0 },
-  { id: 'can_bale_2', type: 'hay_bale', sFeet: 215, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'can_gate_2', type: 'speed_gate', sFeet: 290, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'can_bale_3', type: 'hay_bale', sFeet: 330, lengthFeet: 8, lateralCenterFeet: 6.5, halfWidthFeet: 2.2 },
-  { id: 'can_slick_2', type: 'water_slick', sFeet: 360, lengthFeet: 22, lateralCenterFeet: 3.0, halfWidthFeet: 5.0 },
-  { id: 'can_jump_1', type: 'kicker_jump', sFeet: 380, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 6.8 },
-  { id: 'can_bale_4', type: 'hay_bale', sFeet: 480, lengthFeet: 8, lateralCenterFeet: -5.8, halfWidthFeet: 2.2 },
-  { id: 'can_slick_3', type: 'water_slick', sFeet: 520, lengthFeet: 24, lateralCenterFeet: -1.8, halfWidthFeet: 5.2 },
-  { id: 'can_bale_5', type: 'hay_bale', sFeet: 570, lengthFeet: 8, lateralCenterFeet: 6.4, halfWidthFeet: 2.2 },
-  { id: 'can_gate_3', type: 'speed_gate', sFeet: 610, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'can_bale_6', type: 'hay_bale', sFeet: 680, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'can_slick_4', type: 'water_slick', sFeet: 710, lengthFeet: 22, lateralCenterFeet: 2.5, halfWidthFeet: 5.0 },
-  { id: 'can_bale_7', type: 'hay_bale', sFeet: 740, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'can_jump_2', type: 'kicker_jump', sFeet: 750, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
-  { id: 'can_bale_8', type: 'hay_bale', sFeet: 820, lengthFeet: 8, lateralCenterFeet: -6.5, halfWidthFeet: 2.2 },
-  { id: 'can_gate_4', type: 'speed_gate', sFeet: 860, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'can_bale_9', type: 'hay_bale', sFeet: 930, lengthFeet: 8, lateralCenterFeet: 5.8, halfWidthFeet: 2.2 },
-  { id: 'can_slick_5', type: 'water_slick', sFeet: 970, lengthFeet: 24, lateralCenterFeet: -2.0, halfWidthFeet: 5.2 },
-  { id: 'can_jump_3', type: 'kicker_jump', sFeet: 990, lengthFeet: 20, lateralCenterFeet: 0.0, halfWidthFeet: 7.2 },
-  { id: 'can_bale_10', type: 'hay_bale', sFeet: 1040, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'can_gate_5', type: 'speed_gate', sFeet: 1080, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'can_bale_1', type: 'hay_bale', sFeet: 140, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'can_gate_1', type: 'speed_gate', sFeet: 250, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'can_slick_1', type: 'water_slick', sFeet: 365, lengthFeet: 20, lateralCenterFeet: -2.5, halfWidthFeet: 5.0 },
+  { id: 'can_bale_2', type: 'hay_bale', sFeet: 480, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'can_gate_2', type: 'speed_gate', sFeet: 610, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'can_bale_3', type: 'hay_bale', sFeet: 730, lengthFeet: 8, lateralCenterFeet: 6.5, halfWidthFeet: 2.2 },
+  { id: 'can_slick_2', type: 'water_slick', sFeet: 850, lengthFeet: 22, lateralCenterFeet: 3.0, halfWidthFeet: 5.0 },
+  { id: 'can_jump_1', type: 'kicker_jump', sFeet: 965, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 6.8 },
+  { id: 'can_bale_4', type: 'hay_bale', sFeet: 1090, lengthFeet: 8, lateralCenterFeet: -5.8, halfWidthFeet: 2.2 },
+  { id: 'can_slick_3', type: 'water_slick', sFeet: 1215, lengthFeet: 24, lateralCenterFeet: -1.8, halfWidthFeet: 5.2 },
+  { id: 'can_bale_5', type: 'hay_bale', sFeet: 1340, lengthFeet: 8, lateralCenterFeet: 6.4, halfWidthFeet: 2.2 },
+  { id: 'can_gate_3', type: 'speed_gate', sFeet: 1465, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'can_bale_6', type: 'hay_bale', sFeet: 1590, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'can_slick_4', type: 'water_slick', sFeet: 1710, lengthFeet: 22, lateralCenterFeet: 2.5, halfWidthFeet: 5.0 },
+  { id: 'can_bale_7', type: 'hay_bale', sFeet: 1825, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'can_jump_2', type: 'kicker_jump', sFeet: 1940, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
+  { id: 'can_bale_8', type: 'hay_bale', sFeet: 2070, lengthFeet: 8, lateralCenterFeet: -6.5, halfWidthFeet: 2.2 },
+  { id: 'can_gate_4', type: 'speed_gate', sFeet: 2195, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'can_bale_9', type: 'hay_bale', sFeet: 2310, lengthFeet: 8, lateralCenterFeet: 5.8, halfWidthFeet: 2.2 },
+  { id: 'can_slick_5', type: 'water_slick', sFeet: 2430, lengthFeet: 24, lateralCenterFeet: -2.0, halfWidthFeet: 5.2 },
+  { id: 'can_jump_3', type: 'kicker_jump', sFeet: 2545, lengthFeet: 20, lateralCenterFeet: 0.0, halfWidthFeet: 7.2 },
+  { id: 'can_bale_10', type: 'hay_bale', sFeet: 2650, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'can_gate_5', type: 'speed_gate', sFeet: 2735, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
 ];
 
 export const canyonPlungeCourse: SoapboxCourseDef = {
@@ -376,18 +381,18 @@ export const canyonPlungeCourse: SoapboxCourseDef = {
   name: 'Canyon Plunge',
   subtitle: 'Utah Sandstone Cliffs & Plunging Drop',
   tagline: 'Utah Sandstone Cliffs & Plunging Drop',
-  description: 'Carve through towering desert gorges with heavy banked sweepers and treacherous dust washes.',
+  description: 'Carve 2,800 ft through towering desert gorges with heavy banked sweepers and treacherous dust washes.',
   difficulty: 2,
   difficultyStars: 2,
   difficultyLabel: 'Challenging',
   emoji: '🏜️',
-  lengthFeet: 1150,
+  lengthFeet: 2800,
   startRampFeet: 40,
-  startElevationFeet: 145.0,
+  startElevationFeet: 352.8,
   finishElevationFeet: 0.0,
-  totalElevationDropFeet: 145.0,
-  totalDropFeet: 145.0,
-  dropFeet: 145.0,
+  totalElevationDropFeet: 352.8,
+  totalDropFeet: 352.8,
+  dropFeet: 352.8,
   averageGradePercent: -12.6,
   averageGradePct: -12.6,
   avgGradePercent: -12.6,
@@ -395,7 +400,7 @@ export const canyonPlungeCourse: SoapboxCourseDef = {
   peakGradePercent: -18.8,
   surfaceType: 'asphalt & washboard',
   hazardsDescription: 'Rough washboard, oil slicks, cliff drops',
-  parTimeSec: 23.8,
+  parTimeSec: 52.0,
   visualTheme: canyonTheme,
   theme: canyonTheme,
   sectors: canyonSectors,
@@ -418,33 +423,34 @@ export const canyonPlungeCourse: SoapboxCourseDef = {
 };
 
 // ==============================================================================
-// 3. URBAN DOWNHILL BLITZ (1,050 FT, DROP: 146.5 FT, 3/4 EXPERT)
+// 3. URBAN DOWNHILL BLITZ (2,600 FT, DROP: 335.4 FT, 3/4 EXPERT)
 // ==============================================================================
 const urbanElevation = createHarmonicElevation({
-  lengthFeet: 1050,
+  lengthFeet: 2600,
   startRampFeet: 40,
-  startElevationFeet: 135.0,
-  rampTopElevationFeet: 146.5,
+  startElevationFeet: 335.4,
+  rampTopElevationFeet: 348.2,
   finishElevationFeet: 0.0,
   harmonics: [
-    { amplitude: 0.045, phase: 0.2, harmonicNumber: 1 },
-    { amplitude: 0.025, phase: -0.8, harmonicNumber: 2 },
+    { amplitude: 0.038, phase: 0.2, harmonicNumber: 1 },
+    { amplitude: 0.021, phase: -0.8, harmonicNumber: 2 },
+    { amplitude: 0.011, phase: 0.5, harmonicNumber: 3 },
   ],
 });
 
-const urbanCenterline = createCenterlineEvaluator(1050, (s) => {
+const urbanCenterline = createCenterlineEvaluator(2600, (s) => {
   return (
-    28 * Math.sin(0.016 * s) +
-    18 * Math.sin(0.032 * s - 0.3) +
-    36 * Math.exp(-Math.pow((s - 420) / 50, 2)) * Math.sin(0.045 * (s - 380)) +
-    38 * Math.exp(-Math.pow((s - 780) / 55, 2)) * Math.cos(0.042 * (s - 740))
+    34 * Math.sin(0.0064 * s) +
+    20 * Math.sin(0.013 * s - 0.3) +
+    28 * Math.exp(-Math.pow((s - 1040) / 140, 2)) * Math.sin(0.018 * (s - 940)) +
+    30 * Math.exp(-Math.pow((s - 1920) / 150, 2)) * Math.cos(0.017 * (s - 1820))
   );
 });
 
 const urbanTheme: SoapboxCourseVisualTheme = {
   skyColor: '#818cf8',
   fogColor: '#c7d2fe',
-  fogDensity: 0.002,
+  fogDensity: 0.0013,
   hemiSkyColor: '#e0e7ff',
   hemiGroundColor: '#334155',
   sunColor: '#fef08a',
@@ -459,36 +465,38 @@ const urbanTheme: SoapboxCourseVisualTheme = {
 };
 
 const urbanSectors: SoapboxCourseSector[] = [
-  { sStartFeet: 0, sEndFeet: 260, name: 'Cathedral Stair Chute' },
-  { sStartFeet: 260, sEndFeet: 540, name: 'Old Town Alley Chicanes' },
-  { sStartFeet: 540, sEndFeet: 780, name: 'Plaza Roundabout Jump' },
-  { sStartFeet: 780, sEndFeet: 1050, name: 'Harbor Promenade Sprint' },
+  { sStartFeet: 0, sEndFeet: 440, name: 'Cathedral Stair Chute' },
+  { sStartFeet: 440, sEndFeet: 900, name: 'Old Town Alley Chicanes' },
+  { sStartFeet: 900, sEndFeet: 1360, name: 'Market Square Cobbles' },
+  { sStartFeet: 1360, sEndFeet: 1780, name: 'Plaza Roundabout Jump' },
+  { sStartFeet: 1780, sEndFeet: 2200, name: 'Tramway Viaduct Hairpins' },
+  { sStartFeet: 2200, sEndFeet: 2600, name: 'Harbor Promenade Sprint' },
 ];
 
 const urbanObstaclesDef: SoapboxObstacleDef[] = [
-  { id: 'urb_bale_1', type: 'hay_bale', sFeet: 85, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
-  { id: 'urb_slick_1', type: 'water_slick', sFeet: 130, lengthFeet: 18, lateralCenterFeet: -2.0, halfWidthFeet: 4.8 },
-  { id: 'urb_bale_2', type: 'hay_bale', sFeet: 160, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'urb_gate_1', type: 'speed_gate', sFeet: 190, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'urb_bale_3', type: 'hay_bale', sFeet: 240, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'urb_jump_1', type: 'kicker_jump', sFeet: 280, lengthFeet: 16, lateralCenterFeet: 0.0, halfWidthFeet: 6.5 },
-  { id: 'urb_bale_4', type: 'hay_bale', sFeet: 310, lengthFeet: 8, lateralCenterFeet: -6.4, halfWidthFeet: 2.2 },
-  { id: 'urb_slick_2', type: 'water_slick', sFeet: 370, lengthFeet: 20, lateralCenterFeet: 3.0, halfWidthFeet: 5.0 },
-  { id: 'urb_gate_2', type: 'speed_gate', sFeet: 390, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'urb_bale_5', type: 'hay_bale', sFeet: 410, lengthFeet: 8, lateralCenterFeet: 5.8, halfWidthFeet: 2.2 },
-  { id: 'urb_bale_6', type: 'hay_bale', sFeet: 470, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'urb_bale_7', type: 'hay_bale', sFeet: 560, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
-  { id: 'urb_jump_2', type: 'kicker_jump', sFeet: 590, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
-  { id: 'urb_bale_8', type: 'hay_bale', sFeet: 630, lengthFeet: 8, lateralCenterFeet: -6.5, halfWidthFeet: 2.2 },
-  { id: 'urb_slick_3', type: 'water_slick', sFeet: 670, lengthFeet: 22, lateralCenterFeet: -1.5, halfWidthFeet: 5.0 },
-  { id: 'urb_gate_3', type: 'speed_gate', sFeet: 690, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'urb_bale_9', type: 'hay_bale', sFeet: 720, lengthFeet: 8, lateralCenterFeet: 5.9, halfWidthFeet: 2.2 },
-  { id: 'urb_jump_3', type: 'kicker_jump', sFeet: 790, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
-  { id: 'urb_bale_10', type: 'hay_bale', sFeet: 810, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'urb_slick_4', type: 'water_slick', sFeet: 840, lengthFeet: 20, lateralCenterFeet: 2.8, halfWidthFeet: 5.0 },
-  { id: 'urb_bale_11', type: 'hay_bale', sFeet: 890, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
-  { id: 'urb_bale_12', type: 'hay_bale', sFeet: 970, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'urb_gate_4', type: 'speed_gate', sFeet: 990, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'urb_bale_1', type: 'hay_bale', sFeet: 120, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
+  { id: 'urb_slick_1', type: 'water_slick', sFeet: 225, lengthFeet: 18, lateralCenterFeet: -2.0, halfWidthFeet: 4.8 },
+  { id: 'urb_bale_2', type: 'hay_bale', sFeet: 330, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'urb_gate_1', type: 'speed_gate', sFeet: 435, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'urb_bale_3', type: 'hay_bale', sFeet: 545, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'urb_jump_1', type: 'kicker_jump', sFeet: 660, lengthFeet: 16, lateralCenterFeet: 0.0, halfWidthFeet: 6.5 },
+  { id: 'urb_bale_4', type: 'hay_bale', sFeet: 775, lengthFeet: 8, lateralCenterFeet: -6.4, halfWidthFeet: 2.2 },
+  { id: 'urb_slick_2', type: 'water_slick', sFeet: 890, lengthFeet: 20, lateralCenterFeet: 3.0, halfWidthFeet: 5.0 },
+  { id: 'urb_gate_2', type: 'speed_gate', sFeet: 1005, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'urb_bale_5', type: 'hay_bale', sFeet: 1115, lengthFeet: 8, lateralCenterFeet: 5.8, halfWidthFeet: 2.2 },
+  { id: 'urb_bale_6', type: 'hay_bale', sFeet: 1230, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'urb_bale_7', type: 'hay_bale', sFeet: 1350, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
+  { id: 'urb_jump_2', type: 'kicker_jump', sFeet: 1465, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
+  { id: 'urb_bale_8', type: 'hay_bale', sFeet: 1580, lengthFeet: 8, lateralCenterFeet: -6.5, halfWidthFeet: 2.2 },
+  { id: 'urb_slick_3', type: 'water_slick', sFeet: 1695, lengthFeet: 22, lateralCenterFeet: -1.5, halfWidthFeet: 5.0 },
+  { id: 'urb_gate_3', type: 'speed_gate', sFeet: 1805, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'urb_bale_9', type: 'hay_bale', sFeet: 1920, lengthFeet: 8, lateralCenterFeet: 5.9, halfWidthFeet: 2.2 },
+  { id: 'urb_jump_3', type: 'kicker_jump', sFeet: 2035, lengthFeet: 18, lateralCenterFeet: 0.0, halfWidthFeet: 7.0 },
+  { id: 'urb_bale_10', type: 'hay_bale', sFeet: 2145, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'urb_slick_4', type: 'water_slick', sFeet: 2255, lengthFeet: 20, lateralCenterFeet: 2.8, halfWidthFeet: 5.0 },
+  { id: 'urb_bale_11', type: 'hay_bale', sFeet: 2365, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
+  { id: 'urb_bale_12', type: 'hay_bale', sFeet: 2465, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'urb_gate_4', type: 'speed_gate', sFeet: 2535, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
 ];
 
 export const urbanDownhillCourse: SoapboxCourseDef = {
@@ -496,18 +504,18 @@ export const urbanDownhillCourse: SoapboxCourseDef = {
   name: 'Urban Downhill Blitz',
   subtitle: 'Old Town Alleys & Cathedral Stairs',
   tagline: 'Old Town Alleys & Cathedral Stairs',
-  description: 'Navigate razor-tight cobblestone chicanes, stair drop kickers, and harbor promenade sprints.',
+  description: 'Navigate 2,600 ft of razor-tight cobblestone chicanes, stair drop kickers, and harbor promenade sprints.',
   difficulty: 3,
   difficultyStars: 3,
   difficultyLabel: 'Expert',
   emoji: '🏙️',
-  lengthFeet: 1050,
+  lengthFeet: 2600,
   startRampFeet: 40,
-  startElevationFeet: 135.0,
+  startElevationFeet: 335.4,
   finishElevationFeet: 0.0,
-  totalElevationDropFeet: 135.0,
-  totalDropFeet: 135.0,
-  dropFeet: 135.0,
+  totalElevationDropFeet: 335.4,
+  totalDropFeet: 335.4,
+  dropFeet: 335.4,
   averageGradePercent: -12.9,
   averageGradePct: -12.9,
   avgGradePercent: -12.9,
@@ -515,14 +523,14 @@ export const urbanDownhillCourse: SoapboxCourseDef = {
   peakGradePercent: -19.9,
   surfaceType: 'cobblestone & curbs',
   hazardsDescription: 'Tight chicanes, curbs, kicker jumps',
-  parTimeSec: 22.0,
+  parTimeSec: 48.5,
   visualTheme: urbanTheme,
   theme: urbanTheme,
   sectors: urbanSectors,
   getElevation: urbanElevation,
   sampleRoad: createSampleRoad(urbanElevation, urbanCenterline),
   getCenterline: urbanCenterline,
-  getSurface: (s) => (s <= 650 ? 'cobblestone' : 'asphalt'),
+  getSurface: (s) => (s <= 1600 ? 'cobblestone' : 'asphalt'),
   getSectionName: (s) => {
     for (const sec of urbanSectors) {
       if (s >= sec.sStartFeet && s <= sec.sEndFeet) return sec.name;
@@ -538,33 +546,34 @@ export const urbanDownhillCourse: SoapboxCourseDef = {
 };
 
 // ==============================================================================
-// 4. EXTREME PEAK: THE STREIF DROP (1,250 FT, DROP: 208.0 FT, 4/4 EXTREME)
+// 4. EXTREME PEAK: THE STREIF DROP (3,200 FT, DROP: 499.2 FT, 4/4 EXTREME)
 // ==============================================================================
 const extremeElevation = createHarmonicElevation({
-  lengthFeet: 1250,
+  lengthFeet: 3200,
   startRampFeet: 40,
-  startElevationFeet: 195.0,
-  rampTopElevationFeet: 208.0,
+  startElevationFeet: 499.2,
+  rampTopElevationFeet: 513.2,
   finishElevationFeet: 0.0,
   harmonics: [
-    { amplitude: 0.065, phase: -0.9, harmonicNumber: 1 },
-    { amplitude: 0.035, phase: 0.4, harmonicNumber: 2 },
+    { amplitude: 0.054, phase: -0.9, harmonicNumber: 1 },
+    { amplitude: 0.029, phase: 0.4, harmonicNumber: 2 },
+    { amplitude: 0.017, phase: -0.3, harmonicNumber: 3 },
   ],
 });
 
-const extremeCenterline = createCenterlineEvaluator(1250, (s) => {
+const extremeCenterline = createCenterlineEvaluator(3200, (s) => {
   return (
-    48 * Math.sin(0.01 * s) +
-    24 * Math.sin(0.021 * s - 0.8) +
-    52 * Math.exp(-Math.pow((s - 480) / 70, 2)) * Math.sin(0.034 * (s - 420)) +
-    46 * Math.exp(-Math.pow((s - 920) / 65, 2)) * Math.sin(0.028 * (s - 850))
+    52 * Math.sin(0.0042 * s) +
+    24 * Math.sin(0.0088 * s - 0.8) +
+    38 * Math.exp(-Math.pow((s - 1240) / 180, 2)) * Math.sin(0.015 * (s - 1100)) +
+    36 * Math.exp(-Math.pow((s - 2360) / 170, 2)) * Math.sin(0.013 * (s - 2200))
   );
 });
 
 const extremeTheme: SoapboxCourseVisualTheme = {
   skyColor: '#0284c7',
   fogColor: '#e0f2fe',
-  fogDensity: 0.0028,
+  fogDensity: 0.0014,
   hemiSkyColor: '#f0f9ff',
   hemiGroundColor: '#0f172a',
   sunColor: '#ffffff',
@@ -579,42 +588,44 @@ const extremeTheme: SoapboxCourseVisualTheme = {
 };
 
 const extremeSectors: SoapboxCourseSector[] = [
-  { sStartFeet: 0, sEndFeet: 240, name: 'The Mausefalle 25% Plunge' },
-  { sStartFeet: 240, sEndFeet: 560, name: 'Steep Hang Drift Glissade' },
-  { sStartFeet: 560, sEndFeet: 890, name: 'Hausbergkante Mega Air' },
-  { sStartFeet: 890, sEndFeet: 1250, name: 'Zielschuss Final Chute' },
+  { sStartFeet: 0, sEndFeet: 520, name: 'The Mausefalle 25% Plunge' },
+  { sStartFeet: 520, sEndFeet: 1060, name: 'Steep Hang Drift Glissade' },
+  { sStartFeet: 1060, sEndFeet: 1620, name: 'Alte Schneise Ice Chute' },
+  { sStartFeet: 1620, sEndFeet: 2160, name: 'Seidlalm High-Speed S-Curves' },
+  { sStartFeet: 2160, sEndFeet: 2680, name: 'Hausbergkante Mega Air' },
+  { sStartFeet: 2680, sEndFeet: 3200, name: 'Zielschuss Final Chute' },
 ];
 
 const extremeObstaclesDef: SoapboxObstacleDef[] = [
-  { id: 'ext_bale_1', type: 'hay_bale', sFeet: 90, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'ext_slick_1', type: 'water_slick', sFeet: 130, lengthFeet: 22, lateralCenterFeet: -2.5, halfWidthFeet: 5.0 },
-  { id: 'ext_gate_1', type: 'speed_gate', sFeet: 150, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'ext_bale_2', type: 'hay_bale', sFeet: 180, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'ext_bale_3', type: 'hay_bale', sFeet: 270, lengthFeet: 8, lateralCenterFeet: 6.5, halfWidthFeet: 2.2 },
-  { id: 'ext_jump_1', type: 'kicker_jump', sFeet: 290, lengthFeet: 20, lateralCenterFeet: 0.0, halfWidthFeet: 7.2 },
-  { id: 'ext_slick_2', type: 'water_slick', sFeet: 310, lengthFeet: 24, lateralCenterFeet: 2.2, halfWidthFeet: 5.2 },
-  { id: 'ext_bale_4', type: 'hay_bale', sFeet: 360, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'ext_gate_2', type: 'speed_gate', sFeet: 390, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'ext_bale_5', type: 'hay_bale', sFeet: 450, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
-  { id: 'ext_slick_3', type: 'water_slick', sFeet: 490, lengthFeet: 24, lateralCenterFeet: -2.0, halfWidthFeet: 5.2 },
-  { id: 'ext_bale_6', type: 'hay_bale', sFeet: 520, lengthFeet: 8, lateralCenterFeet: -6.4, halfWidthFeet: 2.2 },
-  { id: 'ext_gate_3', type: 'speed_gate', sFeet: 580, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'ext_bale_7', type: 'hay_bale', sFeet: 610, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'ext_slick_4', type: 'water_slick', sFeet: 660, lengthFeet: 24, lateralCenterFeet: 2.8, halfWidthFeet: 5.2 },
-  { id: 'ext_jump_2', type: 'kicker_jump', sFeet: 680, lengthFeet: 22, lateralCenterFeet: 0.0, halfWidthFeet: 7.5 },
-  { id: 'ext_bale_8', type: 'hay_bale', sFeet: 700, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'ext_gate_4', type: 'speed_gate', sFeet: 750, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'ext_bale_9', type: 'hay_bale', sFeet: 790, lengthFeet: 8, lateralCenterFeet: 6.4, halfWidthFeet: 2.2 },
-  { id: 'ext_slick_5', type: 'water_slick', sFeet: 830, lengthFeet: 24, lateralCenterFeet: -2.2, halfWidthFeet: 5.2 },
-  { id: 'ext_bale_10', type: 'hay_bale', sFeet: 870, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
-  { id: 'ext_jump_3', type: 'kicker_jump', sFeet: 940, lengthFeet: 22, lateralCenterFeet: 0.0, halfWidthFeet: 7.5 },
-  { id: 'ext_bale_11', type: 'hay_bale', sFeet: 960, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
-  { id: 'ext_gate_5', type: 'speed_gate', sFeet: 990, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'ext_slick_6', type: 'water_slick', sFeet: 1010, lengthFeet: 24, lateralCenterFeet: 2.0, halfWidthFeet: 5.2 },
-  { id: 'ext_bale_12', type: 'hay_bale', sFeet: 1040, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
-  { id: 'ext_bale_13', type: 'hay_bale', sFeet: 1120, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
-  { id: 'ext_gate_6', type: 'speed_gate', sFeet: 1170, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
-  { id: 'ext_bale_14', type: 'hay_bale', sFeet: 1190, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'ext_bale_1', type: 'hay_bale', sFeet: 130, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'ext_slick_1', type: 'water_slick', sFeet: 240, lengthFeet: 22, lateralCenterFeet: -2.5, halfWidthFeet: 5.0 },
+  { id: 'ext_gate_1', type: 'speed_gate', sFeet: 350, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'ext_bale_2', type: 'hay_bale', sFeet: 460, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'ext_bale_3', type: 'hay_bale', sFeet: 575, lengthFeet: 8, lateralCenterFeet: 6.5, halfWidthFeet: 2.2 },
+  { id: 'ext_jump_1', type: 'kicker_jump', sFeet: 690, lengthFeet: 20, lateralCenterFeet: 0.0, halfWidthFeet: 7.2 },
+  { id: 'ext_slick_2', type: 'water_slick', sFeet: 805, lengthFeet: 24, lateralCenterFeet: 2.2, halfWidthFeet: 5.2 },
+  { id: 'ext_bale_4', type: 'hay_bale', sFeet: 920, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'ext_gate_2', type: 'speed_gate', sFeet: 1030, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'ext_bale_5', type: 'hay_bale', sFeet: 1145, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
+  { id: 'ext_slick_3', type: 'water_slick', sFeet: 1260, lengthFeet: 24, lateralCenterFeet: -2.0, halfWidthFeet: 5.2 },
+  { id: 'ext_bale_6', type: 'hay_bale', sFeet: 1375, lengthFeet: 8, lateralCenterFeet: -6.4, halfWidthFeet: 2.2 },
+  { id: 'ext_gate_3', type: 'speed_gate', sFeet: 1490, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'ext_bale_7', type: 'hay_bale', sFeet: 1605, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'ext_slick_4', type: 'water_slick', sFeet: 1720, lengthFeet: 24, lateralCenterFeet: 2.8, halfWidthFeet: 5.2 },
+  { id: 'ext_jump_2', type: 'kicker_jump', sFeet: 1835, lengthFeet: 22, lateralCenterFeet: 0.0, halfWidthFeet: 7.5 },
+  { id: 'ext_bale_8', type: 'hay_bale', sFeet: 1950, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'ext_gate_4', type: 'speed_gate', sFeet: 2065, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'ext_bale_9', type: 'hay_bale', sFeet: 2180, lengthFeet: 8, lateralCenterFeet: 6.4, halfWidthFeet: 2.2 },
+  { id: 'ext_slick_5', type: 'water_slick', sFeet: 2295, lengthFeet: 24, lateralCenterFeet: -2.2, halfWidthFeet: 5.2 },
+  { id: 'ext_bale_10', type: 'hay_bale', sFeet: 2410, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
+  { id: 'ext_jump_3', type: 'kicker_jump', sFeet: 2525, lengthFeet: 22, lateralCenterFeet: 0.0, halfWidthFeet: 7.5 },
+  { id: 'ext_bale_11', type: 'hay_bale', sFeet: 2635, lengthFeet: 8, lateralCenterFeet: 6.2, halfWidthFeet: 2.2 },
+  { id: 'ext_gate_5', type: 'speed_gate', sFeet: 2740, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'ext_slick_6', type: 'water_slick', sFeet: 2845, lengthFeet: 24, lateralCenterFeet: 2.0, halfWidthFeet: 5.2 },
+  { id: 'ext_bale_12', type: 'hay_bale', sFeet: 2945, lengthFeet: 8, lateralCenterFeet: -6.2, halfWidthFeet: 2.2 },
+  { id: 'ext_bale_13', type: 'hay_bale', sFeet: 3035, lengthFeet: 8, lateralCenterFeet: 6.0, halfWidthFeet: 2.2 },
+  { id: 'ext_gate_6', type: 'speed_gate', sFeet: 3110, lengthFeet: 12, lateralCenterFeet: 0.0, halfWidthFeet: 3.5 },
+  { id: 'ext_bale_14', type: 'hay_bale', sFeet: 3155, lengthFeet: 8, lateralCenterFeet: -6.0, halfWidthFeet: 2.2 },
 ];
 
 export const extremePeakCourse: SoapboxCourseDef = {
@@ -622,18 +633,18 @@ export const extremePeakCourse: SoapboxCourseDef = {
   name: 'Extreme Peak: The Streif Drop',
   subtitle: 'Alpine Mausefalle 25.6% Vertical Drop',
   tagline: 'Alpine Mausefalle 25.6% Vertical Drop',
-  description: 'The ultimate soap box crucible: dizzying speeds down the 25.6% Mausefalle chute and mega-air jumps.',
+  description: 'The ultimate 3,200-ft soap box crucible: dizzying speeds down the 25.6% Mausefalle chute and mega-air jumps.',
   difficulty: 4,
   difficultyStars: 4,
   difficultyLabel: 'Extreme',
   emoji: '❄️',
-  lengthFeet: 1250,
+  lengthFeet: 3200,
   startRampFeet: 40,
-  startElevationFeet: 195.0,
+  startElevationFeet: 499.2,
   finishElevationFeet: 0.0,
-  totalElevationDropFeet: 195.0,
-  totalDropFeet: 195.0,
-  dropFeet: 195.0,
+  totalElevationDropFeet: 499.2,
+  totalDropFeet: 499.2,
+  dropFeet: 499.2,
   averageGradePercent: -15.6,
   averageGradePct: -15.6,
   avgGradePercent: -15.6,
@@ -641,7 +652,7 @@ export const extremePeakCourse: SoapboxCourseDef = {
   peakGradePercent: -25.6,
   surfaceType: 'frozen asphalt',
   hazardsDescription: 'Extreme hairpin plunges, speed traps',
-  parTimeSec: 24.2,
+  parTimeSec: 56.0,
   visualTheme: extremeTheme,
   theme: extremeTheme,
   sectors: extremeSectors,

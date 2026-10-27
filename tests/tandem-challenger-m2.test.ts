@@ -340,11 +340,11 @@ test('Milestone 2 Challenger — Adversarial Stress Suite', async (t) => {
   // ==========================================================================
   // VECTOR 5: Finish Bell Platform Clamping & State Machine
   // ==========================================================================
-  await t.test('Vector 5: Finish bell platform (distance >= 200 ft, phase: finished)', async (t5) => {
-    await t5.test('Crossing finish line (s >= 200 ft) cleanly triggers finished phase and bell event', () => {
+  await t.test('Vector 5: Finish bell platform (distance >= 600 ft, phase: finished)', async (t5) => {
+    await t5.test('Crossing finish line (s >= 600 ft) cleanly triggers finished phase and bell event', () => {
       const s = createInitialTandemState();
       s.phase = 'riding';
-      s.distanceFt = 199.9;
+      s.distanceFt = FINISH_BELL_S - 0.1;
       s.speedMph = 25;
 
       const events = stepTandemPhysics(
@@ -357,13 +357,13 @@ test('Milestone 2 Challenger — Adversarial Stress Suite', async (t) => {
       assert.strictEqual(s.phase, 'finished', 'Phase must transition to finished');
       assert.strictEqual(s.hasFinished, true, 'hasFinished flag must be true');
       assert.strictEqual(events.bellRung, true, 'bellRung event must fire');
-      assert.ok(s.distanceFt >= FINISH_BELL_S, `Distance (${s.distanceFt}) must be >= 200 ft`);
+      assert.ok(s.distanceFt >= FINISH_BELL_S, `Distance (${s.distanceFt}) must be >= 600 ft`);
     });
 
     await t5.test('Starting at or beyond finish line immediately locks into finished phase', () => {
       const s = createInitialTandemState();
       s.phase = 'riding';
-      s.distanceFt = 200.0;
+      s.distanceFt = FINISH_BELL_S;
       s.speedMph = 18;
 
       const events = stepTandemPhysics(
@@ -375,14 +375,14 @@ test('Milestone 2 Challenger — Adversarial Stress Suite', async (t) => {
 
       assert.strictEqual(s.phase, 'finished');
       assert.strictEqual(events.bellRung, true);
-      assert.strictEqual(s.distanceFt, 200.0);
+      assert.strictEqual(s.distanceFt, FINISH_BELL_S);
     });
 
     await t5.test('Post-finish immutability: subsequent physics steps cannot alter finished state', () => {
       const s = createInitialTandemState();
       s.phase = 'finished';
       s.hasFinished = true;
-      s.distanceFt = 200.15;
+      s.distanceFt = FINISH_BELL_S + 0.15;
       s.speedMph = 22;
 
       for (let i = 0; i < 120; i++) {
@@ -395,7 +395,7 @@ test('Milestone 2 Challenger — Adversarial Stress Suite', async (t) => {
 
         assert.strictEqual(s.phase, 'finished');
         assert.strictEqual(s.hasFinished, true);
-        assert.strictEqual(s.distanceFt, 200.15, 'Distance must remain strictly locked after finish');
+        assert.strictEqual(s.distanceFt, FINISH_BELL_S + 0.15, 'Distance must remain strictly locked after finish');
         assert.strictEqual(events.splashOccurred, false, 'Cannot splashdown once finished');
       }
     });
@@ -403,7 +403,7 @@ test('Milestone 2 Challenger — Adversarial Stress Suite', async (t) => {
     await t5.test('Splashdown takes precedence if tipped over before finish line', () => {
       const s = createInitialTandemState();
       s.phase = 'riding';
-      s.distanceFt = 195.0; // 5 ft before bell
+      s.distanceFt = FINISH_BELL_S - 5.0; // 5 ft before bell
       s.rollAngleRad = 1.0; // Heavily tipped (> crit roll)
 
       const events = stepTandemPhysics(s, BASELINE_STATS, NEUTRAL_CONTROLS, FIXED_DT);

@@ -60,6 +60,8 @@ export const TANDEM_GEOMETRY = {
   shankLengthM: 0.38,
   shadowPerchX: -0.30,
   shadowPerchY: 0.74,
+  shadowBasketX: 0.85,
+  shadowBasketY: 0.88,
   boomerPerchX: -0.92,
   boomerPerchY: 0.68,
 };
@@ -617,6 +619,9 @@ function buildSteeringMesh(steeringId: string, theme: TandemPaintTheme) {
   );
   frontSteerNode.add(stem);
 
+  let captainHandPos = new THREE.Vector3(0.65, 0.95, 0);
+  let captainHandSpread = 0.22;
+
   if (steeringId === 'steering_bullhorn_pursuit') {
     // Bullhorns: forward and curved up
     const barGeo = getCachedGeo('bullhorn_bar', () => new THREE.CylinderGeometry(0.012, 0.012, 0.44, 8).rotateX(Math.PI / 2));
@@ -625,11 +630,17 @@ function buildSteeringMesh(steeringId: string, theme: TandemPaintTheme) {
     const hornL = createStrutBetween(new THREE.Vector3(-0.05, 0.10, -0.22), new THREE.Vector3(0.12, 0.14, -0.22), 0.012, gripMat);
     const hornR = createStrutBetween(new THREE.Vector3(-0.05, 0.10, 0.22), new THREE.Vector3(0.12, 0.14, 0.22), 0.012, gripMat);
     frontSteerNode.add(bar, hornL, hornR);
+    captainHandPos = new THREE.Vector3(0.78, 0.98, 0);
+    captainHandSpread = 0.22;
   } else if (steeringId === 'steering_ape_hangers') {
     // High-rise ape hangers
-    const riseL = createStrutBetween(new THREE.Vector3(-0.05, 0.10, -0.08), new THREE.Vector3(-0.10, 0.35, -0.28), 0.014, chromeMat);
-    const riseR = createStrutBetween(new THREE.Vector3(-0.05, 0.10, 0.08), new THREE.Vector3(-0.10, 0.35, 0.28), 0.014, chromeMat);
-    frontSteerNode.add(riseL, riseR);
+    const riseL = createStrutBetween(new THREE.Vector3(-0.05, 0.10, -0.08), new THREE.Vector3(-0.10, 0.35, -0.26), 0.014, chromeMat);
+    const riseR = createStrutBetween(new THREE.Vector3(-0.05, 0.10, 0.08), new THREE.Vector3(-0.10, 0.35, 0.26), 0.014, chromeMat);
+    const gripL = createStrutBetween(new THREE.Vector3(-0.10, 0.35, -0.26), new THREE.Vector3(-0.16, 0.34, -0.26), 0.016, gripMat);
+    const gripR = createStrutBetween(new THREE.Vector3(-0.10, 0.35, 0.26), new THREE.Vector3(-0.16, 0.34, 0.26), 0.016, gripMat);
+    frontSteerNode.add(riseL, riseR, gripL, gripR);
+    captainHandPos = new THREE.Vector3(0.57, 1.19, 0);
+    captainHandSpread = 0.26;
   } else if (steeringId === 'steering_clipon_aero') {
     // Time trial clip-ons
     const bar = new THREE.Mesh(
@@ -637,30 +648,57 @@ function buildSteeringMesh(steeringId: string, theme: TandemPaintTheme) {
       chromeMat
     );
     bar.position.set(-0.05, 0.10, 0);
-    const extL = createStrutBetween(new THREE.Vector3(-0.05, 0.10, -0.06), new THREE.Vector3(0.18, 0.10, -0.06), 0.011, chromeMat);
-    const extR = createStrutBetween(new THREE.Vector3(-0.05, 0.10, 0.06), new THREE.Vector3(0.18, 0.10, 0.06), 0.011, chromeMat);
+    const extL = createStrutBetween(new THREE.Vector3(-0.05, 0.10, -0.07), new THREE.Vector3(0.18, 0.12, -0.07), 0.011, chromeMat);
+    const extR = createStrutBetween(new THREE.Vector3(-0.05, 0.10, 0.07), new THREE.Vector3(0.18, 0.12, 0.07), 0.011, chromeMat);
     frontSteerNode.add(bar, extL, extR);
+    captainHandPos = new THREE.Vector3(0.82, 0.96, 0);
+    captainHandSpread = 0.07;
   } else {
     // Cruiser / Wide Trail Handlebars
-    const barGeo = getCachedGeo('wide_trail_bar', () => new THREE.CylinderGeometry(0.013, 0.013, 0.60, 8).rotateX(Math.PI / 2));
+    const barGeo = getCachedGeo('wide_trail_bar', () => new THREE.CylinderGeometry(0.013, 0.013, 0.56, 8).rotateX(Math.PI / 2));
     const bar = new THREE.Mesh(barGeo, chromeMat);
     bar.position.set(-0.05, 0.10, 0);
-    frontSteerNode.add(bar);
+    const gripGeo = getCachedGeo('bar_grip', () => new THREE.CylinderGeometry(0.016, 0.016, 0.11, 8).rotateX(Math.PI / 2));
+    const gripL = new THREE.Mesh(gripGeo, gripMat);
+    gripL.position.set(-0.05, 0.10, -0.24);
+    const gripR = new THREE.Mesh(gripGeo, gripMat);
+    gripR.position.set(-0.05, 0.10, 0.24);
+    frontSteerNode.add(bar, gripL, gripR);
+    captainHandPos = new THREE.Vector3(0.65, 0.95, 0);
+    captainHandSpread = 0.22;
   }
 
   steeringGroup.add(frontSteerNode);
 
-  // Stoker Handlebars (mounted to Captain seatpost at X = -0.15, Y = 0.86, Z = 0)
+  // Stoker Handlebars (mounted to Captain seat tube below saddle, rising to X = -0.15, Y = 0.86, Z = 0)
   const stokerBarGroup = new THREE.Group();
   stokerBarGroup.position.set(-0.15, 0.86, 0);
-  const stokerBarMesh = new THREE.Mesh(
-    getCachedGeo('stoker_bar_mesh', () => new THREE.CylinderGeometry(0.013, 0.013, 0.52, 8).rotateX(Math.PI / 2)),
+  // Two-piece L-stem routed from Captain's lower seat tube (0.14, 0.62, 0) -> (-0.15, 0.70, 0) -> (-0.15, 0.86, 0)
+  const stokerBoom = createStrutBetween(
+    new THREE.Vector3(0.29, -0.24, 0),
+    new THREE.Vector3(0, -0.16, 0),
+    0.015,
     chromeMat
   );
-  stokerBarGroup.add(stokerBarMesh);
+  const stokerRiser = createStrutBetween(
+    new THREE.Vector3(0, -0.16, 0),
+    new THREE.Vector3(0, 0, 0),
+    0.015,
+    chromeMat
+  );
+  const stokerBarMesh = new THREE.Mesh(
+    getCachedGeo('stoker_bar_mesh', () => new THREE.CylinderGeometry(0.013, 0.013, 0.48, 8).rotateX(Math.PI / 2)),
+    chromeMat
+  );
+  const stokerGripGeo = getCachedGeo('stoker_grip_mesh', () => new THREE.CylinderGeometry(0.016, 0.016, 0.10, 8).rotateX(Math.PI / 2));
+  const stokerGripL = new THREE.Mesh(stokerGripGeo, gripMat);
+  stokerGripL.position.set(0, 0, -0.20);
+  const stokerGripR = new THREE.Mesh(stokerGripGeo, gripMat);
+  stokerGripR.position.set(0, 0, 0.20);
+  stokerBarGroup.add(stokerBoom, stokerRiser, stokerBarMesh, stokerGripL, stokerGripR);
   steeringGroup.add(stokerBarGroup);
 
-  return { steeringGroup, frontSteerNode };
+  return { steeringGroup, frontSteerNode, captainHandPos, captainHandSpread };
 }
 
 // ----------------------------------------------------------------------------
@@ -781,55 +819,67 @@ function buildStabilizerMesh(stabilizerId: string, theme: TandemPaintTheme) {
 function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
   const group = new THREE.Group();
   const animNodes: TandemBike3DGroups['topperAnimNodes'] = {};
+  const rackMetalMat = makePBR('#94a3b8', 0.25, 0.85);
+  const rackWoodMat = makePBR('#92400e', 0.70, 0.05);
 
   if (topperId === 'topper_shadow') {
     // SHADOW the Golden Retriever 🦮
-    // Seated on mid-frame perch: X = -0.30, Y = 0.74, Z = 0
+    // Seated in front wicker basket at (shadowBasketX = 0.85, shadowBasketY = 0.88)
     const dogRoot = new THREE.Group();
-    dogRoot.position.set(-0.30, 0.74, 0);
-    dogRoot.scale.set(0.85, 0.85, 0.85);
+    dogRoot.position.set(TANDEM_GEOMETRY.shadowBasketX, TANDEM_GEOMETRY.shadowBasketY, 0);
+    dogRoot.scale.set(0.76, 0.76, 0.76);
 
     const coatMat = makePBR('#d4a373', 0.75, 0.05); // Golden coat
     const creamMat = makePBR('#fef3c7', 0.80, 0.05); // Cream chest ruff
     const bandanaMat = makePBR('#ef4444', 0.60, 0.05); // Red bandana
     const snoutMat = makePBR('#0f172a', 0.20, 0.10); // Glossy black nose
     const tongueMat = makePBR('#f43f5e', 0.35, 0.05); // Pink tongue
+    const basketMat = makePBR('#b45309', 0.85, 0.05); // Wicker basket
 
-    // Torso
-    const torsoGeo = getCachedGeo('shadow_torso', () =>
-      new THREE.CylinderGeometry(0.16, 0.20, 0.48, 12).rotateZ(-0.25)
+    // Front wicker basket & headtube mount struts
+    const basketMesh = new THREE.Mesh(
+      getCachedGeo('shadow_wicker_basket', () => new THREE.CylinderGeometry(0.22, 0.18, 0.22, 14)),
+      basketMat
+    );
+    basketMesh.position.set(0.06, 0.04, 0);
+    const mountL = createStrutBetween(new THREE.Vector3(-0.20, -0.04, -0.05), new THREE.Vector3(0.04, 0.02, -0.08), 0.015, rackMetalMat);
+    const mountR = createStrutBetween(new THREE.Vector3(-0.20, -0.04, 0.05), new THREE.Vector3(0.04, 0.02, 0.08), 0.015, rackMetalMat);
+
+    // Rounded capsule torso (no flat cylinder top rim behind neck!)
+    const torsoGeo = getCachedGeo('shadow_torso_cap', () =>
+      new THREE.CapsuleGeometry(0.145, 0.24, 10, 14).rotateZ(-0.22)
     );
     const torso = new THREE.Mesh(torsoGeo, coatMat);
-    torso.position.set(0, 0.24, 0);
+    torso.position.set(0.08, 0.22, 0);
 
     // Cream chest ruff
     const ruffGeo = getCachedGeo('shadow_ruff', () => new THREE.DodecahedronGeometry(0.14, 1));
     const ruff = new THREE.Mesh(ruffGeo, creamMat);
-    ruff.position.set(0.12, 0.28, 0);
+    ruff.position.set(0.18, 0.28, 0);
 
-    // Seated rear haunches
-    const haunchGeo = getCachedGeo('shadow_haunch', () => new THREE.SphereGeometry(0.11, 10, 10));
+    // Seated rear haunches tucked cleanly inside wicker basket
+    const haunchGeo = getCachedGeo('shadow_haunch_tucked', () => new THREE.SphereGeometry(0.085, 10, 10));
     const haunchL = new THREE.Mesh(haunchGeo, coatMat);
-    haunchL.position.set(-0.14, 0.12, -0.12);
+    haunchL.position.set(0.02, 0.11, -0.06);
     const haunchR = new THREE.Mesh(haunchGeo, coatMat);
-    haunchR.position.set(-0.14, 0.12, 0.12);
+    haunchR.position.set(0.02, 0.11, 0.06);
 
-    // Front legs & paws
+    // Front legs & paws resting on basket rim
     const legGeo = getCachedGeo('shadow_front_leg', () => new THREE.CylinderGeometry(0.04, 0.035, 0.26, 8));
     const legL = new THREE.Mesh(legGeo, coatMat);
-    legL.position.set(0.12, 0.12, -0.08);
+    legL.position.set(0.18, 0.14, -0.08);
     const legR = new THREE.Mesh(legGeo, coatMat);
-    legR.position.set(0.12, 0.12, 0.08);
+    legR.position.set(0.18, 0.14, 0.08);
 
     // Red Bandana Collar
     const collarGeo = getCachedGeo('shadow_collar', () => new THREE.TorusGeometry(0.13, 0.028, 8, 16));
     const collar = new THREE.Mesh(collarGeo, bandanaMat);
-    collar.position.set(0.12, 0.38, 0);
+    collar.position.set(0.18, 0.38, 0);
     collar.rotation.x = Math.PI / 2;
 
     // Head
     const headGroup = new THREE.Group();
-    headGroup.position.set(0.16, 0.48, 0);
+    headGroup.position.set(0.22, 0.48, 0);
 
     const cranium = new THREE.Mesh(
       getCachedGeo('shadow_cranium', () => new THREE.SphereGeometry(0.14, 12, 12)),
@@ -867,7 +917,7 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
 
     // Wagging tail pivot
     const tailPivot = new THREE.Group();
-    tailPivot.position.set(-0.22, 0.30, 0);
+    tailPivot.position.set(-0.16, 0.30, 0);
     const tailMesh = new THREE.Mesh(
       getCachedGeo('shadow_tail', () => {
         const g = new THREE.ConeGeometry(0.05, 0.30, 8);
@@ -880,45 +930,53 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
     tailPivot.add(tailMesh);
     animNodes.shadowTail = tailPivot;
 
-    dogRoot.add(torso, ruff, haunchL, haunchR, legL, legR, collar, headGroup, tailPivot);
+    dogRoot.add(basketMesh, mountL, mountR, torso, ruff, haunchL, haunchR, legL, legR, collar, headGroup, tailPivot);
     group.add(dogRoot);
   } else if (topperId === 'topper_boomer') {
     // BOOMER the Great Dane 🐶
-    // Standing on rear deck: X = -0.92, Y = 0.68, Z = 0
+    // Standing on rear cargo rack platform: X = -0.92, Y = 0.68, Z = 0
     const boomerRoot = new THREE.Group();
-    boomerRoot.position.set(-0.92, 0.68, 0);
-    boomerRoot.scale.set(0.88, 0.88, 0.88);
+    boomerRoot.position.set(TANDEM_GEOMETRY.boomerPerchX, TANDEM_GEOMETRY.boomerPerchY, 0);
+    boomerRoot.scale.set(0.84, 0.84, 0.84);
 
     const coatMat = makePBR('#334155', 0.65, 0.05); // Slate / Blue coat
     const whiteMat = makePBR('#f8fafc', 0.70, 0.05); // Harlequin white blaze
     const collarMat = makePBR('#2563eb', 0.40, 0.10); // Royal blue collar
-    const goldStudMat = makePBR('#facc15', 0.20, 0.85); // Gold brass studs
     const noseMat = makePBR('#0f172a', 0.20, 0.10);
 
-    // Athletic long legs (standing stance)
+    // Rear cargo rack deck & stays under Boomer's paws
+    const rackDeck = new THREE.Mesh(
+      getCachedGeo('boomer_rack_deck', () => new THREE.BoxGeometry(0.46, 0.024, 0.28)),
+      rackWoodMat
+    );
+    rackDeck.position.set(-0.08, 0.01, 0);
+    const stayL = createStrutBetween(new THREE.Vector3(0.02, -0.38, -0.09), new THREE.Vector3(-0.08, 0.0, -0.11), 0.014, rackMetalMat);
+    const stayR = createStrutBetween(new THREE.Vector3(0.02, -0.38, 0.09), new THREE.Vector3(-0.08, 0.0, 0.11), 0.014, rackMetalMat);
+
+    // Athletic long legs (standing stance: y = 0.22 preserves forensic test 0.15 < y < 0.30)
     const legGeo = getCachedGeo('boomer_leg', () => new THREE.CylinderGeometry(0.042, 0.035, 0.44, 8));
     const frontL = new THREE.Mesh(legGeo, coatMat);
-    frontL.position.set(0.12, 0.22, -0.10);
+    frontL.position.set(0.04, 0.22, -0.10);
     const frontR = new THREE.Mesh(legGeo, coatMat);
-    frontR.position.set(0.12, 0.22, 0.10);
+    frontR.position.set(0.04, 0.22, 0.10);
     const rearL = new THREE.Mesh(legGeo, coatMat);
-    rearL.position.set(-0.16, 0.22, -0.10);
+    rearL.position.set(-0.22, 0.22, -0.10);
     const rearR = new THREE.Mesh(legGeo, coatMat);
-    rearR.position.set(-0.16, 0.22, 0.10);
+    rearR.position.set(-0.22, 0.22, 0.10);
 
     // Barrel chest & tucked waist
     const chestGeo = getCachedGeo('boomer_chest', () => new THREE.SphereGeometry(0.18, 12, 10).scale(1.3, 1.1, 0.85));
     const chest = new THREE.Mesh(chestGeo, whiteMat);
-    chest.position.set(0.04, 0.46, 0);
+    chest.position.set(-0.03, 0.46, 0);
 
     const waistGeo = getCachedGeo('boomer_waist', () => new THREE.CylinderGeometry(0.11, 0.15, 0.32, 10).rotateZ(Math.PI / 2));
     const waist = new THREE.Mesh(waistGeo, coatMat);
-    waist.position.set(-0.10, 0.44, 0);
+    waist.position.set(-0.17, 0.44, 0);
 
     // Arched neck
     const neck = createStrutBetween(
-      new THREE.Vector3(0.08, 0.50, 0),
-      new THREE.Vector3(0.18, 0.74, 0),
+      new THREE.Vector3(0.01, 0.50, 0),
+      new THREE.Vector3(0.10, 0.74, 0),
       0.09,
       coatMat
     );
@@ -928,12 +986,12 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
       getCachedGeo('boomer_collar', () => new THREE.TorusGeometry(0.10, 0.022, 8, 16)),
       collarMat
     );
-    collar.position.set(0.16, 0.68, 0);
+    collar.position.set(0.08, 0.68, 0);
     collar.rotation.x = Math.PI / 2;
 
     // Sculpted Great Dane Head
     const headGroup = new THREE.Group();
-    headGroup.position.set(0.20, 0.82, 0);
+    headGroup.position.set(0.12, 0.82, 0);
 
     const skull = new THREE.Mesh(
       getCachedGeo('boomer_skull', () => new THREE.BoxGeometry(0.18, 0.14, 0.14)),
@@ -965,7 +1023,7 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
 
     // Sleek whip tail pivot
     const tailPivot = new THREE.Group();
-    tailPivot.position.set(-0.22, 0.45, 0);
+    tailPivot.position.set(-0.29, 0.45, 0);
     const tailMesh = createStrutBetween(
       new THREE.Vector3(0, 0, 0),
       new THREE.Vector3(-0.25, 0.12, 0),
@@ -975,7 +1033,7 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
     tailPivot.add(tailMesh);
     animNodes.boomerTail = tailPivot;
 
-    boomerRoot.add(frontL, frontR, rearL, rearR, chest, waist, neck, collar, headGroup, tailPivot);
+    boomerRoot.add(rackDeck, stayL, stayR, frontL, frontR, rearL, rearR, chest, waist, neck, collar, headGroup, tailPivot);
     group.add(boomerRoot);
   } else if (topperId === 'topper_bull_horns') {
     // Red Bull Gold Bull Horns (mounted at Captain stem X = 0.70, Y = 0.95)
@@ -988,12 +1046,16 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
     hornRoot.add(hornL, hornR);
     group.add(hornRoot);
   } else if (topperId === 'topper_rb_wings') {
-    // Dual Red Bull Aerodynamic Wings (mounted mid-frame X = -0.28, Y = 0.82)
+    // Dual Red Bull Aerodynamic Wings (mounted on rear aero pylon clear of Stoker)
     const wingRoot = new THREE.Group();
-    wingRoot.position.set(-0.28, 0.82, 0);
+    wingRoot.position.set(-0.96, 0.92, 0);
 
     const wingMat = makePBR('#1e293b', 0.25, 0.7); // Navy carbon
     const redMat = makePBR('#ef4444', 0.3, 0.4);
+
+    // Support pylon to rear dropouts
+    const pylonL = createStrutBetween(new THREE.Vector3(0.06, -0.58, -0.07), new THREE.Vector3(0, 0, -0.10), 0.015, rackMetalMat);
+    const pylonR = createStrutBetween(new THREE.Vector3(0.06, -0.58, 0.07), new THREE.Vector3(0, 0, 0.10), 0.015, rackMetalMat);
 
     // Left & Right Wings (1.90m total span)
     const wingGeo = getCachedGeo('rb_wing_span', () => new THREE.BoxGeometry(0.36, 0.025, 1.90));
@@ -1006,12 +1068,15 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
     const wingletR = new THREE.Mesh(wingletGeo, redMat);
     wingletR.position.set(0, 0.08, 0.95);
 
-    wingRoot.add(mainWing, wingletL, wingletR);
+    wingRoot.add(pylonL, pylonR, mainWing, wingletL, wingletR);
     group.add(wingRoot);
   } else if (topperId === 'topper_aero_fin') {
-    // Carbon Dolphin Aero Fin (rear stays X = -0.85, Y = 0.80)
+    // Carbon Dolphin Aero Fin (rear rack pylon X = -0.94, Y = 0.76)
     const finRoot = new THREE.Group();
-    finRoot.position.set(-0.85, 0.80, 0);
+    finRoot.position.set(-0.94, 0.76, 0);
+
+    const stayL = createStrutBetween(new THREE.Vector3(0.04, -0.43, -0.07), new THREE.Vector3(0, 0, 0), 0.014, rackMetalMat);
+    const stayR = createStrutBetween(new THREE.Vector3(0.04, -0.43, 0.07), new THREE.Vector3(0, 0, 0), 0.014, rackMetalMat);
 
     const finGeo = getCachedGeo('dorsal_fin', () => {
       const shape = new THREE.Shape();
@@ -1023,13 +1088,17 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
       return new THREE.ExtrudeGeometry(shape, { depth: 0.02, bevelEnabled: false });
     });
     const finMesh = new THREE.Mesh(finGeo, makePBR('#0284c7', 0.2, 0.8));
-    finMesh.position.set(-0.15, 0, -0.01);
-    finRoot.add(finMesh);
+    finMesh.position.set(-0.20, 0, -0.01);
+    finRoot.add(stayL, stayR, finMesh);
     group.add(finRoot);
   } else if (topperId === 'topper_golden_bell') {
-    // Giant Pier Finish Bell (arched over rear wheel X = -0.88, Y = 0.96)
+    // Giant Pier Finish Bell (arched over rear wheel X = -0.94, Y = 1.02)
     const bellRoot = new THREE.Group();
-    bellRoot.position.set(-0.88, 0.96, 0);
+    bellRoot.position.set(-0.94, 1.02, 0);
+
+    const archL = createStrutBetween(new THREE.Vector3(0.04, -0.69, -0.09), new THREE.Vector3(0, 0.14, -0.12), 0.015, rackMetalMat);
+    const archR = createStrutBetween(new THREE.Vector3(0.04, -0.69, 0.09), new THREE.Vector3(0, 0.14, 0.12), 0.015, rackMetalMat);
+    const crossBar = createStrutBetween(new THREE.Vector3(0, 0.14, -0.14), new THREE.Vector3(0, 0.14, 0.14), 0.016, rackMetalMat);
 
     const bronzeMat = makePBR('#f59e0b', 0.20, 0.90);
     const bellGeo = getCachedGeo('golden_bell_mesh', () =>
@@ -1046,24 +1115,27 @@ function buildTopperMesh(topperId: string, theme: TandemPaintTheme) {
     clapperPivot.add(clapperMesh);
     animNodes.bellClapper = clapperPivot;
 
-    bellRoot.add(bell, clapperPivot);
+    bellRoot.add(archL, archR, crossBar, bell, clapperPivot);
     group.add(bellRoot);
   } else if (topperId === 'topper_stratos') {
-    // Red Bull Stratos Supersonic Capsule (rear chassis deck X = -0.86, Y = 0.76)
+    // Red Bull Stratos Supersonic Capsule (rear cargo rack X = -0.98, Y = 0.86)
     const capsuleRoot = new THREE.Group();
-    capsuleRoot.position.set(-0.86, 0.76, 0);
+    capsuleRoot.position.set(-0.98, 0.86, 0);
+
+    const stayL = createStrutBetween(new THREE.Vector3(0.08, -0.53, -0.08), new THREE.Vector3(0, -0.19, -0.10), 0.014, rackMetalMat);
+    const stayR = createStrutBetween(new THREE.Vector3(0.08, -0.53, 0.08), new THREE.Vector3(0, -0.19, 0.10), 0.014, rackMetalMat);
 
     const capsuleMat = makePBR('#f8fafc', 0.2, 0.6);
     const visorMat = makePBR('#0f172a', 0.05, 0.95);
 
-    const bodyGeo = getCachedGeo('stratos_body', () => new THREE.CylinderGeometry(0.18, 0.18, 0.38, 16));
+    const bodyGeo = getCachedGeo('stratos_body', () => new THREE.CylinderGeometry(0.16, 0.16, 0.34, 16));
     const body = new THREE.Mesh(bodyGeo, capsuleMat);
 
-    const domeGeo = getCachedGeo('stratos_dome', () => new THREE.SphereGeometry(0.18, 16, 12));
+    const domeGeo = getCachedGeo('stratos_dome', () => new THREE.SphereGeometry(0.16, 16, 12));
     const dome = new THREE.Mesh(domeGeo, visorMat);
-    dome.position.y = 0.19;
+    dome.position.y = 0.17;
 
-    capsuleRoot.add(body, dome);
+    capsuleRoot.add(stayL, stayR, body, dome);
     group.add(capsuleRoot);
   }
 
@@ -1079,7 +1151,8 @@ function buildCrewMember(
   handsPos: THREE.Vector3,
   bbPos: THREE.Vector3,
   isCaptain: boolean,
-  theme: TandemPaintTheme
+  theme: TandemPaintTheme,
+  handSpreadZ = 0.18
 ) {
   const crewGroup = new THREE.Group();
 
@@ -1089,12 +1162,18 @@ function buildCrewMember(
   const visorMat = makePBR('#0f172a', 0.10, 0.9);
   const shoeMat = makePBR('#0f172a', 0.40, 0.2);
 
-  // Torso
-  const torsoMesh = createStrutBetween(hipPos, shoulderPos, 0.14, jerseyMat);
-  crewGroup.add(torsoMesh);
+  // Torso with rounded shoulder and pelvis caps
+  const torsoMesh = createStrutBetween(hipPos, shoulderPos, 0.135, jerseyMat);
+  const torsoCapGeo = getCachedGeo('crew_torso_cap', () => new THREE.SphereGeometry(0.135, 14, 12));
+  const shoulderCap = new THREE.Mesh(torsoCapGeo, jerseyMat);
+  shoulderCap.position.copy(shoulderPos);
+  const hipCap = new THREE.Mesh(torsoCapGeo, shoeMat);
+  hipCap.position.copy(hipPos);
+  crewGroup.add(torsoMesh, shoulderCap, hipCap);
 
-  // Head & Helmet
+  // Head, Neck & Helmet
   const headPos = shoulderPos.clone().add(new THREE.Vector3(0.04, 0.18, 0));
+  const neckMesh = createStrutBetween(shoulderPos, headPos, 0.052, skinMat);
   const helmetGeo = getCachedGeo('crew_helmet', () => new THREE.SphereGeometry(0.13, 12, 10));
   const helmet = new THREE.Mesh(helmetGeo, helmetMat);
   helmet.position.copy(headPos);
@@ -1102,17 +1181,29 @@ function buildCrewMember(
   const visorGeo = getCachedGeo('crew_visor', () => new THREE.BoxGeometry(0.14, 0.06, 0.16));
   const visor = new THREE.Mesh(visorGeo, visorMat);
   visor.position.copy(headPos).add(new THREE.Vector3(0.06, 0, 0));
-  crewGroup.add(helmet, visor);
+  crewGroup.add(neckMesh, helmet, visor);
 
-  // Arms locked to handlebars
-  const shoulderL = shoulderPos.clone().add(new THREE.Vector3(0, 0, -0.16));
-  const shoulderR = shoulderPos.clone().add(new THREE.Vector3(0, 0, 0.16));
-  const handL = handsPos.clone().add(new THREE.Vector3(0, 0, -0.18));
-  const handR = handsPos.clone().add(new THREE.Vector3(0, 0, 0.18));
+  // Arms locked to handlebars with deltoid shoulder joints and gloves
+  const shoulderL = shoulderPos.clone().add(new THREE.Vector3(0, -0.01, -0.15));
+  const shoulderR = shoulderPos.clone().add(new THREE.Vector3(0, -0.01, 0.15));
+  const handL = handsPos.clone().add(new THREE.Vector3(0, 0, -handSpreadZ));
+  const handR = handsPos.clone().add(new THREE.Vector3(0, 0, handSpreadZ));
+
+  const deltoidGeo = getCachedGeo('crew_deltoid', () => new THREE.SphereGeometry(0.054, 10, 10));
+  const deltoidL = new THREE.Mesh(deltoidGeo, jerseyMat);
+  deltoidL.position.copy(shoulderL);
+  const deltoidR = new THREE.Mesh(deltoidGeo, jerseyMat);
+  deltoidR.position.copy(shoulderR);
+
+  const gloveGeo = getCachedGeo('crew_glove', () => new THREE.SphereGeometry(0.042, 8, 8));
+  const gloveL = new THREE.Mesh(gloveGeo, shoeMat);
+  gloveL.position.copy(handL);
+  const gloveR = new THREE.Mesh(gloveGeo, shoeMat);
+  gloveR.position.copy(handR);
 
   const armL = createStrutBetween(shoulderL, handL, 0.04, jerseyMat);
   const armR = createStrutBetween(shoulderR, handR, 0.04, jerseyMat);
-  crewGroup.add(armL, armR);
+  crewGroup.add(deltoidL, deltoidR, armL, armR, gloveL, gloveR);
 
   // Legs setup for dynamic 2-bone IK solver
   const makeLegNodes = (isLeft: boolean): LegIKChain => {
@@ -1233,8 +1324,8 @@ function buildSocketMarkers(): {
   const list: THREE.Mesh[] = [];
   const markers = {} as Record<TandemCategory, THREE.Mesh>;
 
-  const ringGeo = getCachedGeo('socket_marker_ring', () =>
-    new THREE.RingGeometry(0.10, 0.14, 24)
+  const ringGeo = getCachedGeo('socket_marker_torus', () =>
+    new THREE.TorusGeometry(0.085, 0.014, 12, 28)
   );
 
   (Object.keys(TANDEM_SOCKET_POSITIONS) as TandemCategory[]).forEach((cat) => {
@@ -1242,7 +1333,7 @@ function buildSocketMarkers(): {
     const mat = makeBasic('#38bdf8', true, 0.85);
     const mesh = new THREE.Mesh(ringGeo, mat);
     mesh.position.set(pos[0], pos[1], pos[2]);
-    mesh.rotation.y = Math.PI / 2; // Facing side profile
+    mesh.rotation.y = 0; // Facing side profile cleanly in XY plane
     mesh.userData = { category: cat, isSocketMarker: true };
     group.add(mesh);
     markers[cat] = mesh;
@@ -1281,7 +1372,7 @@ export function buildTandemBike3D(rawLoadout: TandemLoadout): TandemBike3DGroups
   root.add(wheelsGroup);
 
   // 4. Steering (holds front wheel)
-  const { steeringGroup, frontSteerNode } = buildSteeringMesh(loadout.steeringId, theme);
+  const { steeringGroup, frontSteerNode, captainHandPos, captainHandSpread } = buildSteeringMesh(loadout.steeringId, theme);
   frontSteerNode.add(frontWheelSpinner);
   root.add(steeringGroup);
 
@@ -1298,18 +1389,20 @@ export function buildTandemBike3D(rawLoadout: TandemLoadout): TandemBike3DGroups
   const captain = buildCrewMember(
     new THREE.Vector3(0.10, 0.78, 0), // hip
     new THREE.Vector3(0.24, 1.12, 0), // shoulder
-    new THREE.Vector3(0.65, 0.95, 0), // hands on bar
+    captainHandPos, // hands aligned to active handlebar grips
     new THREE.Vector3(0.25, 0.28, 0), // bb1
     true,
-    theme
+    theme,
+    captainHandSpread
   );
   const stoker = buildCrewMember(
     new THREE.Vector3(-0.70, 0.74, 0), // hip
     new THREE.Vector3(-0.56, 1.08, 0), // shoulder
-    new THREE.Vector3(-0.15, 0.86, 0), // hands on bar
+    new THREE.Vector3(-0.15, 0.86, 0), // hands on stoker bar
     new THREE.Vector3(-0.55, 0.28, 0), // bb2
     false,
-    theme
+    theme,
+    0.20
   );
   crewGroup.add(captain.crewGroup, stoker.crewGroup);
   root.add(crewGroup);

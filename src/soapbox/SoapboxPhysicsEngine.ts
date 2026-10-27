@@ -741,12 +741,15 @@ export function finalizeSoapboxJudgeScorecard(
   bestRecordFeet: number,
   bestTimeSec: number | null
 ): SoapboxJudgeScorecard {
-  const courseLength = state.courseLengthFeet || 1000;
+  const course = getSoapboxCourse(state.courseId);
+  const courseLength = state.courseLengthFeet || course.lengthFeet || 2400;
   const distRatio = clamp(state.distanceFeet / courseLength, 0, 1);
   let speedRaw = distRatio * 6.8;
 
   if (state.completedCourse) {
-    const timeBonus = clamp((28 - state.elapsedRaceTimeSec) / 8.5, 0, 1) * 3.2;
+    const parTargetSec = course.parTimeSec + 9.5;
+    const timeWindow = Math.max(8.5, course.parTimeSec * 0.35);
+    const timeBonus = clamp((parTargetSec - state.elapsedRaceTimeSec) / timeWindow, 0, 1) * 3.2;
     speedRaw = 7.0 + timeBonus;
   } else {
     speedRaw += clamp((state.maxSpeedMph - 25) / 35, 0, 1.5);

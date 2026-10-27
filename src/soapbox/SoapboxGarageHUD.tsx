@@ -267,9 +267,9 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
       {/* ==================================================================== */}
       {/* TOP BAR: ARCADE HUB BACK BUTTON, TITLE, RECORDS & DYNO CONTROLS      */}
       {/* ==================================================================== */}
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-1.5">
         {/* Left: Back to Hub + Title & Records */}
-        <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-2xl bg-slate-900/90 border-2 border-amber-400/60 px-2.5 py-1.5 shadow-xl backdrop-blur-md">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-slate-900/90 border-2 border-amber-400/60 px-2.5 py-1.5 shadow-xl backdrop-blur-md shrink-0">
           <button
             type="button"
             onClick={onReturnToHub}
@@ -282,10 +282,10 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
             <span className="text-xl sm:text-2xl">🏎️</span>
             <div>
               <div className="flex items-center gap-1.5">
-                <h1 className="font-display text-sm sm:text-base font-black tracking-wide text-white uppercase">
+                <h1 className="font-display text-sm sm:text-base font-black tracking-wide text-white uppercase whitespace-nowrap">
                   Red Bull Soap Box Garage
                 </h1>
-                <span className="rounded-full bg-amber-400/20 border border-amber-400/50 px-2 py-0.5 text-[10px] font-black text-amber-300">
+                <span className="rounded-full bg-amber-400/20 border border-amber-400/50 px-2 py-0.5 text-[10px] font-black text-amber-300 whitespace-nowrap">
                   ⭐ {totalStars}
                 </span>
               </div>
@@ -304,7 +304,7 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
         </div>
 
         {/* Center: Course Selector Pill */}
-        <div className="pointer-events-auto flex items-center">
+        <div className="pointer-events-auto flex items-center shrink-0">
           <button
             type="button"
             onClick={() => setShowCourseModal(true)}
@@ -316,11 +316,11 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
               <span className="text-[10px] font-black tracking-wider text-amber-300 uppercase">
                 Active Course
               </span>
-              <span className="font-display text-xs sm:text-sm font-black text-white">
+              <span className="font-display text-xs sm:text-sm font-black text-white whitespace-nowrap">
                 {activeCourse.name}
               </span>
             </div>
-            <div className="ml-1 hidden sm:flex flex-col text-[10px] font-bold text-slate-300">
+            <div className="ml-1 hidden xl:flex flex-col text-[10px] font-bold text-slate-300 whitespace-nowrap">
               <span>📉 -{activeCourse.dropFeet} ft drop</span>
               <span>📏 {activeCourse.lengthFeet.toLocaleString()} ft</span>
             </div>
@@ -329,37 +329,37 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
         </div>
 
         {/* Right: Shaker Dyno Rig, Garage Presets, Undo/Redo, Randomize, Mute & DROP GATE CTA */}
-        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5">
+        <div className="pointer-events-auto flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={onToggleShakerRig}
-            className={`flex items-center gap-1.5 rounded-xl border-2 px-2.5 py-1.5 text-xs font-black shadow-lg transition active:scale-95 cursor-pointer ${
+            className={`flex items-center justify-center gap-1.5 min-w-[122px] rounded-xl border-2 px-2.5 py-1.5 text-xs font-black shadow-lg transition active:scale-95 cursor-pointer whitespace-nowrap ${
               shakerRigActive
                 ? 'bg-cyan-500 border-cyan-200 text-slate-950 animate-pulse'
                 : 'bg-slate-900/90 border-cyan-400/50 text-cyan-200 hover:bg-slate-800'
             }`}
             title="Toggle Hydraulic Road Shaker & Rollover Tilt Dyno Rig"
           >
-            <Activity className="h-4 w-4" />
-            <span>{shakerRigActive ? 'Shaker Rig: ON' : 'Shaker Rig'}</span>
+            <Activity className="h-4 w-4 shrink-0" />
+            <span>{shakerRigActive ? 'Shaker: ON' : 'Shaker Rig'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setShowGarageModal(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border-2 border-amber-400/50 px-2.5 py-1.5 text-xs font-black text-amber-200 shadow-lg transition active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border-2 border-amber-400/50 px-2.5 py-1.5 text-xs font-black text-amber-200 shadow-lg transition active:scale-95 cursor-pointer whitespace-nowrap"
           >
-            <FolderOpen className="h-4 w-4 text-amber-400" />
+            <FolderOpen className="h-4 w-4 text-amber-400 shrink-0" />
             <span>Presets & Builds</span>
           </button>
 
           <button
             type="button"
             onClick={onRandomizeSoapbox}
-            className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-1.5 text-xs font-extrabold text-purple-300 shadow-lg transition active:scale-95 cursor-pointer"
+            className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-1.5 text-xs font-extrabold text-purple-300 shadow-lg transition active:scale-95 cursor-pointer whitespace-nowrap"
             title="Randomize Unlocked Soapbox Parts"
           >
-            <Shuffle className="h-3.5 w-3.5" />
+            <Shuffle className="h-3.5 w-3.5 shrink-0" />
             <span className="hidden sm:inline">Random</span>
           </button>
 
@@ -396,9 +396,9 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
           <button
             type="button"
             onClick={onStartRace}
-            className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 hover:from-red-500 hover:to-yellow-300 border-2 border-yellow-200 px-3.5 py-2 text-xs sm:text-sm font-black text-slate-950 shadow-xl transition hover:scale-105 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 hover:from-red-500 hover:to-yellow-300 border-2 border-yellow-200 px-3.5 py-2 text-xs sm:text-sm font-black text-slate-950 shadow-xl transition hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
           >
-            <Flag className="h-4 w-4 fill-slate-950" />
+            <Flag className="h-4 w-4 fill-slate-950 shrink-0" />
             <span>DROP THE GATE! 🏁</span>
           </button>
         </div>
@@ -408,9 +408,9 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
       {/* MIDDLE LEFT: AUTOMOTIVE TELEMETRY & ROLLOVER STABILITY CARD          */}
       {/* ==================================================================== */}
       <div className="my-auto flex items-center justify-between pointer-events-none">
-        <div className="pointer-events-auto w-68 sm:w-76 rounded-2xl bg-slate-950/88 border-2 border-white/15 p-2.5 sm:p-3 shadow-2xl backdrop-blur-md">
-          <div className="flex items-center justify-between gap-1 border-b border-white/10 pb-1.5 mb-2">
-            <span className="text-xs font-black tracking-wider text-amber-300 uppercase truncate">
+        <div className="pointer-events-auto w-[320px] sm:w-[376px] rounded-2xl bg-slate-950/88 border-2 border-white/15 p-2.5 sm:p-3 shadow-2xl backdrop-blur-md">
+          <div className="flex items-center justify-between gap-1.5 border-b border-white/10 pb-1.5 mb-2">
+            <span className="text-[11px] sm:text-xs font-black tracking-wide text-amber-300 uppercase truncate">
               {previewMetrics && hoveredPart
                 ? `${hoveredPart.emoji} ${hoveredPart.name}`
                 : loadout.name}
@@ -557,7 +557,7 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                     key={preset.name}
                     type="button"
                     onClick={() => onApplyPreset(preset)}
-                    className={`truncate rounded-lg border px-1.5 py-1 text-left text-[10px] font-extrabold transition cursor-pointer ${
+                    className={`truncate rounded-lg border px-1.5 py-1 text-left text-[9.5px] tracking-tight font-extrabold transition cursor-pointer ${
                       isActivePreset
                         ? 'border-amber-400 bg-amber-400/20 text-amber-200'
                         : 'border-white/10 bg-slate-900/80 text-slate-300 hover:border-amber-400/50 hover:text-white'

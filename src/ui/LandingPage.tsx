@@ -72,8 +72,8 @@ const GAME_CARDS: GameCardDefinition[] = [
     title: 'Red Bull Soap Box Derby',
     subtitle: 'Alpine Hilltop Gravity Road Race',
     tagline:
-      'Engineer an unpowered downhill racer in the Garage, test rollover stability & shocks on the Road Shaker Rig, and drop through the hilltop start gate down a 1,000-ft course!',
-    launchPlatform: 'Hilltop Start Pavilion & Hinged Steel Drop-Gate (+110 Ft)',
+      'Engineer an unpowered downhill racer in the Garage, test rollover stability & shocks on the Road Shaker Rig, and drop through the hilltop start gate down a 2,400-ft course!',
+    launchPlatform: 'Hilltop Start Pavilion & Hinged Steel Drop-Gate (+269 Ft)',
     testRig: 'Road Shaker & Tilt Dyno Rig',
     vehicleComponents: ['Chassis', 'Steering Axle', 'Wheels', 'Suspension', 'Brakes', 'Topper'],
     obstacles: [
@@ -227,7 +227,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       ) : (
         <div className="flex items-center gap-1 rounded-xl bg-white/10 border border-white/15 px-2.5 py-1 text-xs font-extrabold text-slate-200">
-          <span>🏁 Goal: 1,000 FT Finish Arch</span>
+          <span>🏁 Goal: 2,400 FT Finish Arch</span>
         </div>
       );
     }

@@ -15,6 +15,11 @@ import {
   STANDARD_BEAM_HALF_WIDTH_FT,
   computeCriticalRollThreshold,
 } from './TandemPhysicsEngine.ts';
+import {
+  DEFAULT_TANDEM_COURSE_ID,
+  getTandemCourseById,
+  type TandemCourseId,
+} from './TandemCourses.ts';
 import { soundEngine } from '../audio/SoundEngine.ts';
 import {
   RotateCcw,
@@ -44,6 +49,8 @@ export interface TandemCourseHUDProps {
   controlsRef: React.MutableRefObject<TandemControls>;
   /** Dynamic vehicle dyno metrics and calculated physical properties */
   metrics: TandemDynoMetrics;
+  /** Active course ID */
+  courseId?: TandemCourseId;
   /** Personal best distance record in feet */
   bestDistanceFeet?: number;
   /** Personal best finish time record in seconds */
@@ -77,21 +84,49 @@ export interface SectorMeta {
 }
 
 export const SECTOR_METAS: SectorMeta[] = [
-  { id: 'dock', name: 'DOCK LAUNCH', startFt: 0, endFt: 15, emoji: '🏁', badgeColor: 'border-amber-400 text-amber-300', advice: 'Hype the crowd and launch onto the canal track!' },
-  { id: 'beam_1', name: 'NARROW BEAM', startFt: 15, endFt: 70, emoji: '⚖️', badgeColor: 'border-sky-400 text-sky-300', advice: 'Center on 3-ft timber beam. Watch roll tilt!' },
-  { id: 'rollers', name: 'RHYTHM ROLLERS', startFt: 70, endFt: 100, emoji: '🌊', badgeColor: 'border-purple-400 text-purple-300', advice: 'Maintain cadence rhythm across the roller whoops!' },
-  { id: 'seesaw', name: 'DYNAMIC SEESAW', startFt: 100, endFt: 140, emoji: '🪵', badgeColor: 'border-orange-400 text-orange-300', advice: 'Pedal uphill past 120 ft fulcrum before descent!' },
-  { id: 'water_cannon', name: 'WATER CANNON ALLEY', startFt: 140, endFt: 160, emoji: '💦', badgeColor: 'border-rose-400 text-rose-300', advice: 'Lateral blasts at 140 FT! Lean hard to counter-spray!' },
-  { id: 'gap_jump', name: 'RAMP GAP JUMP', startFt: 160, endFt: 185, emoji: '🚀', badgeColor: 'border-red-500 text-red-400', advice: 'Sprint boost now! 14+ MPH required to clear 25-ft air gap!' },
-  { id: 'finish_bell', name: 'FINISH BELL', startFt: 185, endFt: 200, emoji: '🔔', badgeColor: 'border-emerald-400 text-emerald-300', advice: 'Final stretch! Ring the golden bell at 200 FT!' },
+  { id: 'dock', name: 'DOCK LAUNCH', startFt: 0, endFt: 30, emoji: '🏁', badgeColor: 'border-amber-400 text-amber-300', advice: 'Hype the crowd and launch onto the 600-ft canal track!' },
+  { id: 'beam_1', name: 'NARROW BEAM', startFt: 30, endFt: 160, emoji: '⚖️', badgeColor: 'border-sky-400 text-sky-300', advice: 'Center on 3-ft timber beam. Watch roll tilt!' },
+  { id: 'rollers', name: 'RHYTHM ROLLERS', startFt: 160, endFt: 270, emoji: '🌊', badgeColor: 'border-purple-400 text-purple-300', advice: 'Maintain cadence rhythm across 110 ft of roller whoops!' },
+  { id: 'seesaw', name: 'DYNAMIC SEESAW', startFt: 270, endFt: 390, emoji: '🪵', badgeColor: 'border-orange-400 text-orange-300', advice: 'Pedal uphill past 330 ft fulcrum before descent!' },
+  { id: 'water_cannon', name: 'WATER CANNON ALLEY', startFt: 390, endFt: 515, emoji: '💦', badgeColor: 'border-rose-400 text-rose-300', advice: 'Lateral blasts ahead! Lean hard to counter-spray!' },
+  { id: 'gap_jump', name: 'RAMP GAP JUMP', startFt: 515, endFt: 560, emoji: '🚀', badgeColor: 'border-red-500 text-red-400', advice: 'Sprint boost now! 14+ MPH required to clear 25-ft air gap!' },
+  { id: 'finish_bell', name: 'FINISH BELL', startFt: 560, endFt: 600, emoji: '🔔', badgeColor: 'border-emerald-400 text-emerald-300', advice: 'Final stretch! Ring the golden bell at 600 FT!' },
 ];
 
-export function getSectorForDistance(distanceFt: number): SectorMeta {
-  const d = Math.max(0, Math.min(COURSE_LENGTH_FT, distanceFt));
-  for (const s of SECTOR_METAS) {
-    if (d >= s.startFt && d <= s.endFt) return s;
+export function getSectorForDistance(distanceFt: number, courseId?: TandemCourseId): SectorMeta {
+  if (!courseId || courseId === DEFAULT_TANDEM_COURSE_ID) {
+    const d = Math.max(0, Math.min(COURSE_LENGTH_FT, distanceFt));
+    for (const s of SECTOR_METAS) {
+      if (d >= s.startFt && d <= s.endFt) return s;
+    }
+    return SECTOR_METAS[SECTOR_METAS.length - 1];
   }
-  return SECTOR_METAS[SECTOR_METAS.length - 1];
+  const course = getTandemCourseById(courseId);
+  const d = Math.max(0, Math.min(course.lengthFt, distanceFt));
+  for (let i = 0; i < course.sectors.length; i++) {
+    const sec = course.sectors[i];
+    if (d >= sec.startFt && d <= sec.endFt) {
+      return {
+        id: sec.id,
+        name: sec.name,
+        startFt: sec.startFt,
+        endFt: sec.endFt,
+        emoji: sec.emoji,
+        badgeColor: SECTOR_METAS[i]?.badgeColor || 'border-sky-400 text-sky-300',
+        advice: sec.advice,
+      };
+    }
+  }
+  const lastSec = course.sectors[course.sectors.length - 1];
+  return {
+    id: lastSec.id,
+    name: lastSec.name,
+    startFt: lastSec.startFt,
+    endFt: lastSec.endFt,
+    emoji: lastSec.emoji,
+    badgeColor: 'border-emerald-400 text-emerald-300',
+    advice: lastSec.advice,
+  };
 }
 
 // ============================================================================
@@ -103,6 +138,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
   simStateRef,
   controlsRef,
   metrics,
+  courseId = DEFAULT_TANDEM_COURSE_ID,
   bestDistanceFeet = 0,
   bestTimeSec = null,
   onControlsChange,
@@ -112,6 +148,8 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
   muted = false,
   onToggleMute,
 }) => {
+  const activeCourse = useMemo(() => getTandemCourseById(courseId), [courseId]);
+  const courseLengthFt = activeCourse.lengthFt;
   // Input tracking sets for keyboard
   const heldSteerLeftRef = useRef<Set<string>>(new Set());
   const heldSteerRightRef = useRef<Set<string>>(new Set());
@@ -251,11 +289,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
         }
 
         // A. Course Distance & Progress Bar
-        const distFt = Math.max(0, Math.min(COURSE_LENGTH_FT, s.distanceFt || 0));
+        const distFt = Math.max(0, Math.min(courseLengthFt, s.distanceFt || 0));
         if (distTextRef.current) {
-          distTextRef.current.textContent = `${Math.round(distFt)} / ${COURSE_LENGTH_FT} FT`;
+          distTextRef.current.textContent = `${Math.round(distFt)} / ${courseLengthFt} FT`;
         }
-        const distRatio = Math.max(0, Math.min(1.0, distFt / COURSE_LENGTH_FT));
+        const distRatio = Math.max(0, Math.min(1.0, distFt / courseLengthFt));
         if (progressFillRef.current) {
           progressFillRef.current.style.transform = `scaleX(${distRatio})`;
         }
@@ -376,7 +414,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
         }
 
         // K. Sector Announcement Toast Trigger
-        const currentSector = getSectorForDistance(s.distanceFt || 0);
+        const currentSector = getSectorForDistance(s.distanceFt || 0, courseId);
         if (currentSector.id !== lastSectorIdRef.current) {
           lastSectorIdRef.current = currentSector.id;
           setActiveToast(currentSector);
@@ -395,7 +433,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       window.cancelAnimationFrame(rafId);
       if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
     };
-  }, [metrics.stats, simStateRef, controlsRef]);
+  }, [metrics.stats, simStateRef, controlsRef, courseLengthFt, courseId]);
 
   // Keyboard navigation & global pointer release
   useEffect(() => {
@@ -410,6 +448,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
       }
       if ((e.code === 'Escape' || e.code === 'KeyB') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         soundEngine.playSnapPop();
         onReturnToWorkshop();
         return;
@@ -592,11 +631,18 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           ===================================================================== */}
       <div className="flex items-start justify-between gap-2">
         {/* Left: Progress Track & Distance */}
-        <div className="pointer-events-auto flex flex-col gap-1.5 rounded-2xl bg-slate-950/85 border border-white/15 p-2.5 sm:p-3 shadow-xl backdrop-blur-md min-w-[170px] sm:min-w-[220px]">
+        <div className="pointer-events-auto flex flex-col gap-1.5 rounded-2xl bg-slate-950/85 border border-white/15 p-2.5 sm:p-3 shadow-xl backdrop-blur-md min-w-[180px] sm:min-w-[235px]">
+          <div className="flex items-center justify-between text-[10px] font-extrabold text-slate-400 border-b border-white/10 pb-1">
+            <span className="flex items-center gap-1 truncate text-slate-200">
+              <span>{activeCourse.emoji}</span>
+              <span className="truncate">{activeCourse.name}</span>
+            </span>
+            <span className="text-amber-300/90 font-mono shrink-0 ml-1">PAR {activeCourse.parTimeSec}s</span>
+          </div>
           <div className="flex items-center justify-between text-xs font-black text-slate-300">
             <span className="flex items-center gap-1">
               <span>📍</span>
-              <span ref={distTextRef} className="text-amber-300 font-display">0 / 200 FT</span>
+              <span ref={distTextRef} className="text-amber-300 font-display">0 / {courseLengthFt} FT</span>
             </span>
             <span ref={clockTextRef} className="text-sky-300 font-mono">0.0s</span>
           </div>
@@ -613,9 +659,10 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           {/* Landmark Sector Badges */}
           <div className="flex items-center justify-between text-[9px] font-black text-slate-400 px-0.5">
             <span>🏁 Dock</span>
+            <span>🌊 Rollers</span>
             <span>🪵 Seesaw</span>
             <span>🚀 Gap</span>
-            <span>🔔 Bell</span>
+            <span>🔔 {courseLengthFt}ft</span>
           </div>
         </div>
 
@@ -800,7 +847,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
               FINISH BELL RUNG!
             </div>
             <div className="text-xs font-bold text-white">
-              Full 200 FT course completed! Preparing 3-Judge scorecard...
+              Full {courseLengthFt} FT course completed! Preparing 3-Judge scorecard...
             </div>
           </div>
         )}

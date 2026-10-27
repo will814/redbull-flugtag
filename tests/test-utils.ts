@@ -136,14 +136,14 @@ export const SPEC = {
   },
   PHYSICS: {
     FIXED_DT: 1 / 120, // 120Hz fixed timestep
-    COURSE_LENGTH_FT: 200,
+    COURSE_LENGTH_FT: 600,
     STANDARD_BEAM_HALF_WIDTH_FT: 1.5, // 3.0 ft total width
     MIN_BEAM_HALF_WIDTH_FT: 1.3, // 2.6 ft narrow sections
     DEFAULT_CRITICAL_ROLL_RAD: (28 * Math.PI) / 180, // ~28 degrees
-    SEESAW_FULCRUM_S: 120, // Seesaw fulcrum station in feet
-    GAP_JUMP_START_S: 160,
-    GAP_JUMP_END_S: 185,
-    FINISH_BELL_S: 200,
+    SEESAW_FULCRUM_S: 330, // Seesaw fulcrum station in feet
+    GAP_JUMP_START_S: 515,
+    GAP_JUMP_END_S: 540,
+    FINISH_BELL_S: 600,
   },
   SCORING: {
     MAX_TOTAL_POINTS: 30,

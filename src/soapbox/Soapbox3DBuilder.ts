@@ -523,21 +523,23 @@ function buildChassisMesh(
 
   // Windscreen Visor + Roll Hoop behind cockpit
   const windscreen = new THREE.Mesh(
-    new THREE.ConeGeometry(0.34, 0.48, 12, 1, false, 0, Math.PI),
+    new THREE.CylinderGeometry(0.22, 0.26, 0.2, 16, 1, true, -Math.PI * 0.5, Math.PI),
     getCachedMat(
       'sb_windscreen_glass',
       () =>
         new THREE.MeshStandardMaterial({
           color: '#38bdf8',
           transparent: true,
-          opacity: 0.68,
+          opacity: 0.65,
           roughness: 0.1,
           metalness: 0.45,
+          side: THREE.DoubleSide,
         })
     )
   );
-  windscreen.rotation.z = -Math.PI / 3;
-  windscreen.position.set(0.54, 0.36, 0);
+  windscreen.rotation.y = Math.PI / 2;
+  windscreen.rotation.z = -0.35;
+  windscreen.position.set(0.46, 0.42, 0);
   group.add(windscreen);
 
   const hoop = new THREE.Mesh(
@@ -545,7 +547,7 @@ function buildChassisMesh(
     makeSoapboxMat(accentHex, 0.22, 0.75)
   );
   hoop.rotation.y = Math.PI / 2;
-  hoop.position.set(-0.48, 0.36, 0);
+  hoop.position.set(-0.14, 0.36, 0);
   group.add(hoop);
 }
 
@@ -681,8 +683,9 @@ function buildSteeringAxleMesh(
     steeringGroup.add(leadKeel, goldStripe);
   }
 
-  // Cockpit Steering Wheel (rotates with steerAngle!)
+  // Cockpit Steering Wheel (rotates with steerAngle around local X axis!)
   const steerWheelPivot = new THREE.Group();
+  steerWheelPivot.userData.isSteeringWheel = true;
   steerWheelPivot.position.set(0.44, 0.48, 0);
   const wheelRing = new THREE.Mesh(
     new THREE.TorusGeometry(0.15, 0.028, 8, 16),
@@ -1000,11 +1003,11 @@ function buildBrakesMesh(
 
   // 2x4 Wood Tire Scrub Lever (or handbrake lever for disc brakes)
   const lever = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, 0.78, 0.1),
+    new THREE.BoxGeometry(0.1, 0.56, 0.08),
     makeSoapboxMat(id === 'sb_brake_disc' ? trimHex : '#b45309', 0.6)
   );
-  lever.position.set(-0.62, 0.22, 0.54);
-  lever.rotation.z = 0.28;
+  lever.position.set(-0.22, 0.36, 0.36);
+  lever.rotation.z = 0.24;
   brakesGroup.add(lever);
 
   // Front bumper protection bar
@@ -1070,10 +1073,10 @@ function buildTopperMesh(
   }
 
   if (id === 'sb_topper_shadow') {
-    // SHADOW — Sculpted 3D Golden Retriever Co-Pilot behind/above the driver!
+    // SHADOW — Sculpted 3D Golden Retriever Co-Pilot on rear deck behind the roll hoop!
     const dog = new THREE.Group();
-    dog.position.set(-0.52, 0.42, 0);
-    dog.scale.setScalar(0.88);
+    dog.position.set(-0.74, 0.42, 0);
+    dog.scale.setScalar(0.84);
 
     const goldMat = makeSoapboxMat('#f59e0b', 0.52);
     const lightGoldMat = makeSoapboxMat('#fde68a', 0.58);
@@ -1173,10 +1176,10 @@ function buildTopperMesh(
   }
 
   if (id === 'sb_topper_boomer') {
-    // BOOMER — Sculpted 3D Blue / Harlequin Great Dane Mascot!
+    // BOOMER — Sculpted 3D Blue / Harlequin Great Dane Mascot on rear deck!
     const dane = new THREE.Group();
-    dane.position.set(-0.52, 0.42, 0);
-    dane.scale.setScalar(0.88);
+    dane.position.set(-0.74, 0.42, 0);
+    dane.scale.setScalar(0.84);
 
     const blueCoatMat = makeSoapboxMat('#475569', 0.38);
     const whiteMat = makeSoapboxMat('#f8fafc', 0.4);
@@ -1269,7 +1272,7 @@ function buildTopperMesh(
 
   if (id === 'sb_topper_taco') {
     const taco = new THREE.Group();
-    taco.position.set(-0.55, 0.55, 0);
+    taco.position.set(-0.68, 0.55, 0);
     const shell = new THREE.Mesh(
       new THREE.CylinderGeometry(0.46, 0.46, 1.25, 16, 1, false, 0, Math.PI),
       makeSoapboxMat('#facc15', 0.55)
@@ -1298,7 +1301,7 @@ function buildTopperMesh(
 
   if (id === 'sb_topper_trex') {
     const dino = new THREE.Group();
-    dino.position.set(-0.52, 0.45, 0);
+    dino.position.set(-0.68, 0.45, 0);
     const greenMat = makeSoapboxMat('#16a34a', 0.42);
     const torso = new THREE.Mesh(
       new THREE.CylinderGeometry(0.22, 0.3, 0.72, 12),
@@ -1330,7 +1333,7 @@ function buildTopperMesh(
 
   if (id === 'sb_topper_couch') {
     const sofa = new THREE.Group();
-    sofa.position.set(-0.48, 0.46, 0);
+    sofa.position.set(-0.64, 0.46, 0);
     const base = new THREE.Mesh(
       new THREE.BoxGeometry(0.95, 0.24, 1.52),
       makeSoapboxMat('#ea580c', 0.65)
@@ -1347,7 +1350,7 @@ function buildTopperMesh(
 
   if (id === 'sb_topper_disco') {
     const disco = new THREE.Group();
-    disco.position.set(-0.52, 0.5, 0);
+    disco.position.set(-0.68, 0.5, 0);
     const boombox = new THREE.Mesh(
       new THREE.BoxGeometry(0.46, 0.32, 0.92),
       makeSoapboxMat('#ec4899', 0.3, 0.4)
@@ -1377,32 +1380,32 @@ function buildDriverMesh(
   helmetHex: string
 ): void {
   const torso = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.17, 0.19, 0.48, 12),
+    new THREE.CylinderGeometry(0.17, 0.19, 0.46, 12),
     makeSoapboxMat(suitHex, 0.42)
   );
-  torso.position.set(0.08, 0.4, 0);
+  torso.position.set(0.16, 0.38, 0);
 
   [-0.2, 0.2].forEach((z) => {
     const arm = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.05, 0.045, 0.36, 8),
+      new THREE.CylinderGeometry(0.05, 0.045, 0.34, 8),
       makeSoapboxMat('#f8fafc', 0.45)
     );
-    arm.position.set(0.24, 0.44, z);
+    arm.position.set(0.3, 0.43, z);
     arm.rotation.z = -1.15;
     driverGroup.add(arm);
   });
 
   const helmet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.21, 16, 16),
+    new THREE.SphereGeometry(0.2, 16, 16),
     makeSoapboxMat(helmetHex, 0.18, 0.35)
   );
-  helmet.position.set(0.1, 0.76, 0);
+  helmet.position.set(0.18, 0.72, 0);
 
   const visor = new THREE.Mesh(
-    new THREE.BoxGeometry(0.16, 0.11, 0.28),
+    new THREE.BoxGeometry(0.15, 0.1, 0.26),
     makeSoapboxMat('#0f172a', 0.1, 0.85)
   );
-  visor.position.set(0.24, 0.76, 0);
+  visor.position.set(0.31, 0.72, 0);
 
   driverGroup.add(torso, helmet, visor);
 }
@@ -1413,40 +1416,67 @@ function buildPushCrewMesh(
   accentHex: string
 ): void {
   const offsets: Array<[number, number, number]> = [
-    [-1.85, -0.28, 0.72],
-    [-1.85, -0.28, -0.72],
-    [-2.5, -0.28, 0.44],
-    [-2.5, -0.28, -0.44],
+    [-1.85, -0.18, 0.72],
+    [-1.85, -0.18, -0.72],
+    [-2.5, -0.18, 0.44],
+    [-2.5, -0.18, -0.44],
   ];
 
   const bodyGeo = getCachedGeo('sb_crew_body', () =>
-    new THREE.CylinderGeometry(0.14, 0.15, 0.56, 10)
+    new THREE.CylinderGeometry(0.14, 0.13, 0.46, 10)
   );
   const headGeo = getCachedGeo('sb_crew_head', () =>
-    new THREE.SphereGeometry(0.15, 10, 10)
+    new THREE.SphereGeometry(0.14, 10, 10)
+  );
+  const capGeo = getCachedGeo('sb_crew_cap', () =>
+    new THREE.SphereGeometry(0.148, 10, 10, 0, Math.PI * 2, 0, Math.PI * 0.58)
   );
   const armGeo = getCachedGeo('sb_crew_arm', () =>
     new THREE.CylinderGeometry(0.042, 0.038, 0.32, 8)
   );
+  const legGeo = getCachedGeo('sb_crew_leg', () =>
+    new THREE.CylinderGeometry(0.052, 0.044, 0.32, 8)
+  );
+  const shoeGeo = getCachedGeo('sb_crew_shoe', () =>
+    new THREE.BoxGeometry(0.14, 0.06, 0.09)
+  );
   const skinMat = makeSoapboxMat('#fde68a', 0.4);
+  const pantsMat = makeSoapboxMat('#1e293b', 0.6);
+  const shoeMat = makeSoapboxMat('#f8fafc', 0.4);
 
   offsets.forEach(([x, y, z], idx) => {
     const runner = new THREE.Group();
-    const body = new THREE.Mesh(
-      bodyGeo,
-      makeSoapboxMat(idx % 2 === 0 ? jerseyHex : accentHex, 0.45)
-    );
+    const primaryMat = makeSoapboxMat(idx % 2 === 0 ? jerseyHex : accentHex, 0.45);
+    const secondaryMat = makeSoapboxMat(idx % 2 === 0 ? accentHex : jerseyHex, 0.35);
+
+    const body = new THREE.Mesh(bodyGeo, primaryMat);
+    body.position.y = 0.08;
+    body.rotation.z = -0.18; // Leaning forward into the push!
+
     const head = new THREE.Mesh(headGeo, skinMat);
-    head.position.y = 0.4;
+    head.position.set(0.06, 0.44, 0);
+
+    const cap = new THREE.Mesh(capGeo, secondaryMat);
+    cap.position.set(0.06, 0.45, 0);
 
     [-0.16, 0.16].forEach((az) => {
       const arm = new THREE.Mesh(armGeo, skinMat);
-      arm.position.set(0.18, 0.12, az);
-      arm.rotation.z = -1.2;
+      arm.position.set(0.22, 0.18, az);
+      arm.rotation.z = -1.22;
       runner.add(arm);
     });
 
-    runner.add(body, head);
+    [-0.08, 0.08].forEach((lz, legIdx) => {
+      const leg = new THREE.Mesh(legGeo, pantsMat);
+      const stride = (legIdx === 0 ? 1 : -1) * (idx % 2 === 0 ? 0.05 : -0.05);
+      leg.position.set(stride, -0.22, lz);
+      leg.rotation.z = stride * 2.2;
+      const shoe = new THREE.Mesh(shoeGeo, shoeMat);
+      shoe.position.set(stride + 0.03, -0.39, lz);
+      runner.add(leg, shoe);
+    });
+
+    runner.add(body, head, cap);
     runner.position.set(x, y, z);
     crewGroup.add(runner);
   });
@@ -1457,14 +1487,14 @@ function createSocketMarkers(
   unsprungGroup: THREE.Group,
   halfTrackZ: number
 ): Record<SoapboxPartCategory, THREE.Mesh> {
-  const ringGeo = getCachedGeo('sb_socket_ring_geo', () => {
-    const g = new THREE.RingGeometry(0.22, 0.36, 24);
+  const ringGeo = getCachedGeo('sb_socket_ring_geo_v2', () => {
+    const g = new THREE.RingGeometry(0.15, 0.23, 24);
     g.rotateX(-Math.PI / 2);
     return g;
   });
 
-  const hitDiscGeo = getCachedGeo('sb_socket_hit_geo', () => {
-    const g = new THREE.CircleGeometry(0.38, 20);
+  const hitDiscGeo = getCachedGeo('sb_socket_hit_geo_v2', () => {
+    const g = new THREE.CircleGeometry(0.26, 20);
     g.rotateX(-Math.PI / 2);
     return g;
   });
@@ -1509,13 +1539,14 @@ function createSocketMarkers(
     return mesh;
   };
 
+  const outerPadZ = halfTrackZ + 0.42;
   return {
-    chassis: makeRing('chassis', 0x38bdf8, [0.1, 0.15, 0], sprungGroup),
-    steering: makeRing('steering', 0xfacc15, [0.85, -0.25, 0], unsprungGroup),
-    wheels: makeRing('wheels', 0x22c55e, [0.82, -0.34, halfTrackZ + 0.15], unsprungGroup),
-    suspension: makeRing('suspension', 0xa855f7, [-0.75, -0.1, halfTrackZ * 0.75], unsprungGroup),
-    brakes: makeRing('brakes', 0xef4444, [1.38, -0.05, 0], sprungGroup),
-    topper: makeRing('topper', 0xf472b6, [-0.52, 0.82, 0], sprungGroup),
+    chassis: makeRing('chassis', 0x38bdf8, [0.0, -0.56, outerPadZ], sprungGroup),
+    steering: makeRing('steering', 0xfacc15, [0.82, -0.56, -outerPadZ], unsprungGroup),
+    wheels: makeRing('wheels', 0x22c55e, [0.82, -0.56, outerPadZ], unsprungGroup),
+    suspension: makeRing('suspension', 0xa855f7, [-0.82, -0.56, outerPadZ], unsprungGroup),
+    brakes: makeRing('brakes', 0xef4444, [1.66, -0.56, 0], sprungGroup),
+    topper: makeRing('topper', 0xf472b6, [-1.58, -0.56, 0], sprungGroup),
   };
 }
 

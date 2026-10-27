@@ -37,8 +37,14 @@ import {
   triggerDockSyncLaunch,
   applyWaterCannonBlast,
   updateTandemSimulationWithAccumulator,
+  getCourseGeometry,
   COURSE_LENGTH_FT,
 } from './TandemPhysicsEngine.ts';
+import {
+  DEFAULT_TANDEM_COURSE_ID,
+  getTandemCourseById,
+  type TandemCourseId,
+} from './TandemCourses.ts';
 
 import { TandemCanvas3D } from './TandemCanvas3D.tsx';
 import { TandemWorkshopHUD, type SavedTandemSlot } from './TandemWorkshopHUD.tsx';
@@ -54,6 +60,7 @@ export const STORAGE_KEY_TANDEM_LOADOUT = 'tandem_loadout_v1';
 export const STORAGE_KEY_TANDEM_SAVED_BUILDS = 'tandem_saved_builds_v1';
 export const STORAGE_KEY_TANDEM_BEST_DIST = 'tandem_best_dist_v1';
 export const STORAGE_KEY_TANDEM_BEST_TIME = 'tandem_best_time_v1';
+export const STORAGE_KEY_TANDEM_COURSE_ID = 'tandem_course_id_v1';
 export const STORAGE_KEY_SHARED_STARS = 'flugtag_stars_v1';
 
 const MAX_HISTORY_LENGTH = 25;
@@ -103,6 +110,16 @@ function readNumberFromStorage(key: string, fallback: number = 0): number {
   } catch {
     return fallback;
   }
+}
+
+function loadInitialCourseId(): TandemCourseId {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TANDEM_COURSE_ID);
+    if (raw) {
+      return getTandemCourseById(raw).id;
+    }
+  } catch {}
+  return DEFAULT_TANDEM_COURSE_ID;
 }
 
 function loadInitialLoadout(): TandemLoadout {
@@ -157,8 +174,13 @@ export function computeTandemScorecard(
   loadout: TandemLoadout,
   metrics: TandemDynoMetrics,
   bestDist: number,
-  bestTime: number | null
+  bestTime: number | null,
+  courseId?: string
 ): TandemScorecard {
+  const course = getTandemCourseById(courseId || simState.courseId);
+  const targetLengthFt = simState.courseLengthFt || course.lengthFt || COURSE_LENGTH_FT;
+  const parSec = course.parTimeSec || 32.0;
+
   // Judge 1: Creativity & Theme (0..10)
   const creativityScore = Math.max(1, Math.min(10, Math.round((metrics.creativityScore / 100) * 10)));
 
@@ -169,15 +191,15 @@ export function computeTandemScorecard(
 
   // Judge 3: Course Distance & Finish Time (0..10)
   let distanceTimeScore = 1;
-  const completed = simState.distanceFt >= COURSE_LENGTH_FT || simState.phase === 'finished';
+  const completed = simState.distanceFt >= targetLengthFt || simState.phase === 'finished';
   if (completed) {
     const timeSec = simState.timeElapsedSec || 20;
-    if (timeSec < 22) distanceTimeScore = 10;
-    else if (timeSec < 26) distanceTimeScore = 9;
-    else if (timeSec < 32) distanceTimeScore = 8;
+    if (timeSec <= parSec || timeSec < 22) distanceTimeScore = 10;
+    else if (timeSec <= parSec * 1.18) distanceTimeScore = 9;
+    else if (timeSec <= parSec * 1.40) distanceTimeScore = 8;
     else distanceTimeScore = 7;
   } else {
-    const fraction = Math.max(0, Math.min(1.0, simState.distanceFt / COURSE_LENGTH_FT));
+    const fraction = Math.max(0, Math.min(1.0, simState.distanceFt / targetLengthFt));
     distanceTimeScore = Math.max(1, Math.min(9, Math.round(fraction * 9)));
   }
 
@@ -201,6 +223,9 @@ export function computeTandemScorecard(
     finishTimeSec,
     completedCourse: completed,
     distanceFt: Math.round(simState.distanceFt),
+    courseId: course.id,
+    courseName: course.name,
+    courseLengthFt: targetLengthFt,
   };
 }
 
@@ -235,8 +260,9 @@ export const TandemGame: React.FC<TandemGameProps> = ({
     return val && val > 0 ? val : null;
   }, [propBestTimeSec, propBestTime]);
 
-  // Mode and Loadout State
+  // Mode, Course, and Loadout State
   const [mode, setMode] = useState<TandemGameMode>('workshop');
+  const [selectedCourseId, setSelectedCourseId] = useState<TandemCourseId>(loadInitialCourseId);
   const [loadout, setLoadout] = useState<TandemLoadout>(loadInitialLoadout);
   const [history, setHistory] = useState<{ past: TandemLoadout[]; future: TandemLoadout[] }>({
     past: [],
@@ -251,8 +277,8 @@ export const TandemGame: React.FC<TandemGameProps> = ({
   const [dynoSwayAuto, setDynoSwayAuto] = useState<boolean>(false);
 
   // Authoritative Simulation State & Controls Refs
-  const simStateRef = useRef<TandemSimState>(createInitialTandemState());
-  const [hudSimState, setHudSimState] = useState<TandemSimState>(() => createInitialTandemState());
+  const simStateRef = useRef<TandemSimState>(createInitialTandemState(selectedCourseId));
+  const [hudSimState, setHudSimState] = useState<TandemSimState>(() => createInitialTandemState(selectedCourseId));
   const [scorecard, setScorecard] = useState<TandemScorecard | null>(null);
   const [newlyUnlockedParts, setNewlyUnlockedParts] = useState<TandemPart[]>([]);
 
@@ -273,6 +299,8 @@ export const TandemGame: React.FC<TandemGameProps> = ({
   const lastCadenceAudioTimeRef = useRef<number>(0);
 
   // Synchronized Reference Mirrors
+  const courseIdRef = useRef<TandemCourseId>(selectedCourseId);
+  courseIdRef.current = selectedCourseId;
   const loadoutRef = useRef(loadout);
   loadoutRef.current = loadout;
   const historyRef = useRef(history);
@@ -290,6 +318,15 @@ export const TandemGame: React.FC<TandemGameProps> = ({
   const metrics = useMemo(() => computeTandemDynoMetrics(loadout), [loadout]);
   const metricsRef = useRef(metrics);
   metricsRef.current = metrics;
+
+  const handleSelectCourse = useCallback((courseId: TandemCourseId) => {
+    soundEngine.playSnapPop();
+    courseIdRef.current = courseId;
+    setSelectedCourseId(courseId);
+    try {
+      localStorage.setItem(STORAGE_KEY_TANDEM_COURSE_ID, courseId);
+    } catch {}
+  }, []);
 
   // Persist Loadout Changes
   const persistLoadout = useCallback((next: TandemLoadout) => {
@@ -436,12 +473,14 @@ export const TandemGame: React.FC<TandemGameProps> = ({
 
   const triggerPostRunConclusion = useCallback((isCompleted: boolean) => {
     const finalSim = { ...simStateRef.current };
+    const activeCourse = getTandemCourseById(courseIdRef.current);
     const finalScorecard = computeTandemScorecard(
       finalSim,
       loadoutRef.current,
       metricsRef.current,
       bestDistRef.current,
-      bestTimeRef.current
+      bestTimeRef.current,
+      activeCourse.id
     );
 
     setScorecard(finalScorecard);
@@ -482,7 +521,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
         try {
           localStorage.setItem(STORAGE_KEY_TANDEM_BEST_TIME, String(newBestTime));
         } catch {}
-        if (onUpdateRecord) onUpdateRecord(Math.max(COURSE_LENGTH_FT, finalDist), newBestTime);
+        if (onUpdateRecord) onUpdateRecord(Math.max(activeCourse.lengthFt, finalDist), newBestTime);
       }
     }
 
@@ -499,7 +538,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
     hypeCountdownRef.current = HYPE_COUNTDOWN_DURATION_SEC;
     lastTimeRef.current = performance.now();
 
-    const initialState = createInitialTandemState();
+    const initialState = createInitialTandemState(courseIdRef.current);
     (initialState as any).hypeCountdownSec = HYPE_COUNTDOWN_DURATION_SEC;
     simStateRef.current = initialState;
     setHudSimState({ ...initialState });
@@ -521,7 +560,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
       window.clearTimeout(transitionTimerRef.current);
       transitionTimerRef.current = null;
     }
-    resetTandemState(simStateRef.current);
+    resetTandemState(simStateRef.current, courseIdRef.current);
     controlsRef.current = {
       steer: 0,
       pedalCadence: false,
@@ -559,6 +598,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
       const s = simStateRef.current;
       const controls = controlsRef.current;
       const stats = metricsRef.current.stats;
+      const courseDef = getTandemCourseById(courseIdRef.current);
 
       // 1. DOCK HYPE START PHASE
       if (s.phase === 'hype') {
@@ -598,12 +638,14 @@ export const TandemGame: React.FC<TandemGameProps> = ({
         }
 
         // Obstacle Audio & Impulse Cues (Seesaw fulcrum pivot & Water Cannon spray)
-        if (prevDistFt < 120 && s.distanceFt >= 120) {
+        if (prevDistFt < courseDef.seesawFulcrumFt && s.distanceFt >= courseDef.seesawFulcrumFt) {
           playSafeAudio('playSeesawThud');
         }
-        if (prevDistFt < 140 && s.distanceFt >= 140) {
-          playSafeAudio('playSplash', 0.35);
-          applyWaterCannonBlast(s, 0.32, stats);
+        for (const cannonFt of courseDef.waterCannonStationsFt) {
+          if (prevDistFt < cannonFt && s.distanceFt >= cannonFt) {
+            playSafeAudio('playSplash', 0.35);
+            applyWaterCannonBlast(s, 0.32, stats);
+          }
         }
 
         // Detect Splashdown Trigger
@@ -627,10 +669,10 @@ export const TandemGame: React.FC<TandemGameProps> = ({
         }
 
         // Detect Finish Bell Platform Crossing
-        else if ((s.phase as TandemPhase) === 'finished' || s.distanceFt >= COURSE_LENGTH_FT) {
+        else if ((s.phase as TandemPhase) === 'finished' || s.distanceFt >= courseDef.lengthFt) {
           s.phase = 'finished';
           s.hasFinished = true;
-          s.distanceFt = Math.max(COURSE_LENGTH_FT, s.distanceFt);
+          s.distanceFt = Math.max(courseDef.lengthFt, s.distanceFt);
 
           playSafeAudio('playCanalBell', true);
           playSafeAudio('playCrowdCheer');
@@ -664,7 +706,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
 
       // 4. FINISHED FREEZE
       else if (s.phase === 'finished') {
-        s.distanceFt = Math.max(COURSE_LENGTH_FT, s.distanceFt);
+        s.distanceFt = Math.max(courseDef.lengthFt, s.distanceFt);
       }
     };
 
@@ -702,6 +744,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
       <div className="absolute inset-0 z-0">
         <TandemCanvas3D
           mode={mode === 'workshop' ? 'workshop' : 'course'}
+          courseId={selectedCourseId}
           loadout={loadout}
           metrics={metrics}
           selectedCategory={selectedCategory}
@@ -726,6 +769,8 @@ export const TandemGame: React.FC<TandemGameProps> = ({
           onSelectPaint={handleSelectPaint}
           onApplyPreset={handleApplyPreset}
           onRandomizeLoadout={handleRandomizeLoadout}
+          selectedCourseId={selectedCourseId}
+          onSelectCourse={handleSelectCourse}
           canUndo={history.past.length > 0}
           canRedo={history.future.length > 0}
           onUndo={handleUndo}
@@ -755,6 +800,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
           simStateRef={simStateRef}
           controlsRef={controlsRef}
           metrics={metrics}
+          courseId={selectedCourseId}
           bestDistanceFeet={effectiveBestDist}
           bestTimeSec={effectiveBestTime}
           onTriggerDockLaunch={handleTriggerDockLaunch}

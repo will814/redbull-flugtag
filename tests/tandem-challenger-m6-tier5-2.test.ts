@@ -126,10 +126,10 @@ test('Tier 5 Vector 1: Game State Machine Rapid Transitions & Controls Lockdown'
     }
   });
 
-  await t.test('1.3 Finishing at 200 FT clamps distance and locks state without backward roll', () => {
+  await t.test('1.3 Finishing at 600 FT clamps distance and locks state without backward roll', () => {
     const s = createInitialTandemState();
     s.phase = 'riding';
-    s.distanceFt = 200.0;
+    s.distanceFt = COURSE_LENGTH_FT;
     s.speedMph = 18.0;
 
     const events = stepTandemPhysics(

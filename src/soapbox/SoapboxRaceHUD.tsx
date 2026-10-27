@@ -506,9 +506,9 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
       </div>
 
       {/* ==================================================================== */}
-      {/* CENTER STATUS BANNER + SKIT / STARTER CHUTE SHOVE WINDOW PROMPT      */}
+      {/* UPPER-CENTER STATUS BANNER + SKIT / STARTER CHUTE SHOVE PROMPT       */}
       {/* ==================================================================== */}
-      <div className="my-auto flex flex-col items-center gap-2">
+      <div className="mt-1.5 mb-auto flex flex-col items-center gap-1.5">
         {/* Asymmetric Steering Pull Warning Pill */}
         {simState.pullYawRate !== 0 && !simState.isWrecked && (
           <div
@@ -538,7 +538,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
 
         {simState.statusBanner && (
           <div
-            className={`rounded-2xl border-2 px-4 py-1.5 text-xs sm:text-sm font-black shadow-2xl backdrop-blur-md transition ${
+            className={`rounded-2xl border-2 px-4 py-1 text-xs sm:text-sm font-black shadow-2xl backdrop-blur-md transition ${
               simState.statusBanner.tone === 'danger'
                 ? 'bg-rose-950/90 border-rose-400 text-rose-200 animate-bounce'
                 : simState.statusBanner.tone === 'warn'
@@ -563,11 +563,11 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
 
         {/* Phase 1: Hilltop Start Pavilion Hype & Drop Gate Prompt */}
         {simState.phase === 'skit' && (
-          <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-3xl bg-slate-950/90 border-2 border-amber-400 p-3.5 shadow-2xl backdrop-blur-md max-w-md w-full">
-            <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+          <div className="pointer-events-auto flex flex-col items-center gap-1.5 rounded-2xl bg-slate-950/90 border-2 border-amber-400 px-3.5 py-2.5 shadow-2xl backdrop-blur-md max-w-md w-full">
+            <div className="text-[11px] font-black uppercase tracking-wider text-amber-300">
               🎺 HILLTOP START PAVILION — HYPE THE CROWD!
             </div>
-            <div className="h-3 w-full overflow-hidden rounded-full bg-slate-800 border border-white/15">
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800 border border-white/15">
               <div
                 ref={hypeFillRef}
                 className="h-full w-full origin-left bg-gradient-to-r from-amber-400 via-orange-500 to-red-500"
@@ -580,14 +580,14 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
               <button
                 type="button"
                 onClick={onActionTap}
-                className="rounded-xl bg-amber-400 hover:bg-amber-300 px-3.5 py-1.5 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
+                className="rounded-xl bg-amber-400 hover:bg-amber-300 px-3 py-1 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
               >
                 🎺 HONK AIRHORN [Space]
               </button>
               <button
                 type="button"
                 onClick={onDropGateNow}
-                className="rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3.5 py-1.5 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
+                className="rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3 py-1 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
               >
                 🏁 DROP GATE NOW! [Enter]
               </button>
@@ -597,11 +597,11 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
 
         {/* Phase 2: Steep Starter Chute (-40..0 ft) with Green Push-Bar Shove Window */}
         {simState.phase === 'start_ramp' && (
-          <div className="pointer-events-auto flex flex-col items-center gap-2 rounded-3xl bg-slate-950/90 border-2 border-emerald-400 p-3 shadow-2xl backdrop-blur-md max-w-md w-full">
-            <div className="text-xs font-black uppercase text-emerald-300 text-center">
+          <div className="pointer-events-auto flex flex-col items-center gap-1.5 rounded-2xl bg-slate-950/90 border-2 border-emerald-400 px-3.5 py-2.5 shadow-2xl backdrop-blur-md max-w-md w-full">
+            <div className="text-[11px] font-black uppercase text-emerald-300 text-center">
               🏃 CREW SPRINT CHUTE — TAP PUSH IN THE GREEN SHOVE ZONE (-14..0 FT)!
             </div>
-            <div className="relative h-4 w-full overflow-hidden rounded-full bg-slate-800 border border-white/20">
+            <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-slate-800 border border-white/20">
               {/* Green Push-Bar Shove Window (-14..0 ft = 65%..100% of 40ft chute) */}
               <div
                 className="absolute top-0 bottom-0 bg-emerald-500/45 border-l-2 border-emerald-300"
@@ -625,7 +625,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
             <button
               type="button"
               onClick={onActionTap}
-              className="rounded-xl bg-emerald-400 hover:bg-emerald-300 px-4 py-1.5 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
+              className="rounded-xl bg-emerald-400 hover:bg-emerald-300 px-3.5 py-1 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
             >
               🏃 CREW PUSH / SHOVE! [Space / W / Up]
             </button>

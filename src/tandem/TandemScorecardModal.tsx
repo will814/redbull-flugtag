@@ -68,7 +68,8 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
 }) => {
   const primaryBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  const completed = scorecard.completedCourse || simState.distanceFt >= COURSE_LENGTH_FT;
+  const targetLengthFt = scorecard.courseLengthFt || simState.courseLengthFt || COURSE_LENGTH_FT;
+  const completed = scorecard.completedCourse || simState.distanceFt >= targetLengthFt;
   const starsEarned = scorecard.starsEarned;
   const displayBestFeet = Math.max(bestDistanceFeet, Math.round(scorecard.distanceFt));
 
@@ -140,14 +141,14 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
       score: scorecard.distanceTimeScore,
       emoji: '⏱️',
       critique: completed
-        ? scorecard.finishTimeSec && scorecard.finishTimeSec < 22
-          ? 'Blistering canal sprint! Finished well under 22 seconds!'
-          : 'Rang the canal bell! Clean pier navigation all 200 FT.'
+        ? scorecard.finishTimeSec && scorecard.finishTimeSec < 32
+          ? 'Blistering canal marathon sprint! Elite pace across the pier!'
+          : `Rang the canal bell! Clean pier navigation all ${targetLengthFt} FT.`
         : `Splashed at ${Math.round(scorecard.distanceFt)} FT! Canal water claimed the bike!`,
       bgColor: 'from-emerald-500/10 to-emerald-950/20 border-emerald-500/30',
       accentColor: 'text-emerald-400',
     },
-  ], [scorecard, completed]);
+  ], [scorecard, completed, targetLengthFt]);
 
   return (
     <div
@@ -171,7 +172,7 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
                 >
                   {completed
                     ? `COURSE CLEARED IN ${scorecard.finishTimeSec?.toFixed(1) ?? (simState.timeElapsedSec || 0).toFixed(1)}s!`
-                    : `SPLASHDOWN AT ${Math.round(scorecard.distanceFt)} / ${COURSE_LENGTH_FT} FT!`}
+                    : `SPLASHDOWN AT ${Math.round(scorecard.distanceFt)} / ${targetLengthFt} FT!`}
                 </h2>
                 {scorecard.newDistanceRecord || scorecard.newTimeRecord ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400 px-2 py-0.5 text-[11px] font-black text-slate-950">
@@ -185,7 +186,9 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
                 )}
               </div>
               <div className="text-[11px] sm:text-xs font-extrabold text-sky-300 mt-1">
-                {completed ? 'Golden Canal Bell Rung at 200 FT' : 'Over-Water Wipeout in Canal'} • Peak Cadence:{' '}
+                {completed
+                  ? `Golden Canal Bell Rung at ${targetLengthFt} FT${scorecard.courseName ? ` (${scorecard.courseName})` : ''}`
+                  : `Over-Water Wipeout in Canal${scorecard.courseName ? ` (${scorecard.courseName})` : ''}`} • Peak Cadence:{' '}
                 {Math.round(simState.cadenceRpm || 0)} RPM
               </div>
             </div>
@@ -243,17 +246,17 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
               {completed ? 'Pro Speedrun Tip:' : 'Wipeout Telemetry:'}
             </span>
             {completed
-              ? (scorecard.finishTimeSec ?? 99) < 20
+              ? (scorecard.finishTimeSec ?? 99) < 32
                 ? 'World-class pace! Try different mascot toppers in the Workshop to max out Judge 1 Creativity.'
-                : 'Hold [Space] Sprint on the straightaways and equip high-wattage drivetrains to break the 20.0s barrier!'
-              : scorecard.distanceFt >= 152 && scorecard.distanceFt < 185
-              ? 'Came up short on the 25-ft Canal Gap Jump! Clearing the gap requires ~14+ MPH — hold [Space] Sprint approaching 160 FT or equip a higher-wattage Drivetrain in the Workshop!'
+                : 'Hold [Space] Sprint on the straightaways and equip high-wattage drivetrains to break the course par time!'
+              : scorecard.distanceFt >= targetLengthFt - 95 && scorecard.distanceFt < targetLengthFt - 40
+              ? 'Came up short on the Canal Gap Jump! Clearing the gap requires ~14+ MPH — hold [Space] Sprint approaching the takeoff ramp or equip a higher-wattage Drivetrain in the Workshop!'
               : Math.abs(simState.lateralOffsetFt || 0) >= 1.35
-              ? 'Drifted off the narrow pier beam edge! Feather [A/←] and [D/→] to stay centered, especially past the 140 FT Water Cannons.'
+              ? 'Drifted off the narrow pier beam edge! Feather [A/←] and [D/→] to stay centered, especially through Water Cannon Alley.'
               : Math.abs(simState.rollAngleRad || 0) >= 0.45
               ? 'Tipped past the rollover threshold! Tap [Q] / [E] to counter-lean or equip wider Outriggers / Gyro in the Workshop.'
-              : scorecard.distanceFt >= 100 && scorecard.distanceFt < 140
-              ? 'Stalled on the +10° Seesaw Bridge! Keep pedaling [W/↑] up to the 120 FT pivot so gravity does not pull you backward.'
+              : scorecard.distanceFt >= targetLengthFt * 0.45 && scorecard.distanceFt < targetLengthFt * 0.65
+              ? 'Stalled on the +8.5° Seesaw Bridge! Keep pedaling [W/↑] up to the fulcrum pivot so gravity does not pull you backward.'
               : 'Tipped into the canal! Tap [Q] / [E] to counter-lean and feather [A/D] to keep your tires centered on the timber beam.'}
           </div>
         </div>

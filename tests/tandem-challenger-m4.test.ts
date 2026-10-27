@@ -72,24 +72,24 @@ describe('Milestone 4 Adversarial Verification & Stress Test Suite', () => {
       expect(types).toEqual(['dock', 'beam', 'rollers', 'seesaw', 'hazard', 'gap', 'finish']);
     });
 
-    it('SECTOR_METAS covers all 7 sectors and getSectorForDistance maps cleanly across [0, 200] ft', () => {
+    it('SECTOR_METAS covers all 7 sectors and getSectorForDistance maps cleanly across [0, 600] ft', () => {
       expect(SECTOR_METAS).toHaveLength(7);
 
       // Boundary tests
       expect(getSectorForDistance(0).id).toBe('dock');
       expect(getSectorForDistance(14.9).id).toBe('dock');
-      expect(getSectorForDistance(15).id).toBe('dock'); // or beam_1 depending on boundary
-      expect(getSectorForDistance(40).id).toBe('beam_1');
-      expect(getSectorForDistance(75).id).toBe('rollers');
-      expect(getSectorForDistance(120).id).toBe('seesaw');
-      expect(getSectorForDistance(145).id).toBe('water_cannon');
-      expect(getSectorForDistance(170).id).toBe('gap_jump');
-      expect(getSectorForDistance(190).id).toBe('finish_bell');
-      expect(getSectorForDistance(200).id).toBe('finish_bell');
+      expect(getSectorForDistance(29).id).toBe('dock');
+      expect(getSectorForDistance(80).id).toBe('beam_1');
+      expect(getSectorForDistance(215).id).toBe('rollers');
+      expect(getSectorForDistance(330).id).toBe('seesaw');
+      expect(getSectorForDistance(450).id).toBe('water_cannon');
+      expect(getSectorForDistance(530).id).toBe('gap_jump');
+      expect(getSectorForDistance(580).id).toBe('finish_bell');
+      expect(getSectorForDistance(600).id).toBe('finish_bell');
 
-      // Extreme bounds (negative distance or beyond 200 ft)
+      // Extreme bounds (negative distance or beyond 600 ft)
       expect(getSectorForDistance(-50).id).toBe('dock');
-      expect(getSectorForDistance(300).id).toBe('finish_bell');
+      expect(getSectorForDistance(900).id).toBe('finish_bell');
     });
 
     it('inspects TandemCanvas3D course meshes for physical deck coverage along X axis', () => {
@@ -134,33 +134,30 @@ describe('Milestone 4 Adversarial Verification & Stress Test Suite', () => {
       // Sort segments by minX
       deckSegments.sort((a, b) => a.minX - b.minX);
 
-      // Verify that Sector 1 (Dock: minX ~ -1.5m to 4.5m) and Sector 2 (Beam: 4.57m to 21.34m) exist
+      // Verify that Dock, Beam, Seesaw, and Ramp segments exist along the 600-ft (182.88m) course
       expect(deckSegments.length).toBeGreaterThanOrEqual(4);
 
-      // Check gap between Sector 4 (Seesaw end at ~42.67m) and Sector 6 (Ramp Takeoff at ~46.33m)
-      const seesawSegment = deckSegments.find((d) => d.minX >= 30.0 && d.maxX <= 43.0);
-      const rampSegment = deckSegments.find((d) => d.minX >= 45.0 && d.maxX <= 49.0);
+      // Check Sector 4 (Seesaw bridge 310..350 ft = 94.49m..106.68m) and Sector 6 (Ramp Takeoff 499..515 ft = 152.10m..156.97m)
+      const seesawSegment = deckSegments.find((d) => d.minX >= 92.0 && d.maxX <= 108.5);
+      const rampSegment = deckSegments.find((d) => d.minX >= 150.0 && d.maxX <= 158.5);
 
       expect(seesawSegment).toBeDefined();
       expect(rampSegment).toBeDefined();
 
       if (seesawSegment && rampSegment) {
         const gapMeters = rampSegment.minX - seesawSegment.maxX;
-        const gapFeet = gapMeters / 0.3048;
-        // Notice: in Sector 5 (Water Cannon Hazard, 140 to 160 ft), there is an open gap between seesaw exit and ramp takeoff
-        // Check exact gap size
         expect(gapMeters).toBeGreaterThan(0);
       }
 
       disposeTandemSceneObjects(course.group, true);
     });
 
-    it('verifies physics simulation continuously evaluates deck elevation across all 200 ft without NaN or undefined', () => {
-      for (let s = 0; s <= 200; s += 0.5) {
+    it('verifies physics simulation continuously evaluates deck elevation across all 600 ft without NaN or undefined', () => {
+      for (let s = 0; s <= COURSE_LENGTH_FT; s += 1.0) {
         const y = getTrackElevationAtDistance(s);
         expect(Number.isFinite(y)).toBe(true);
         expect(y).toBeGreaterThanOrEqual(7.0); // roller troughs
-        expect(y).toBeLessThanOrEqual(9.0);    // roller peaks
+        expect(y).toBeLessThanOrEqual(9.5);    // ramp & roller peaks
       }
     });
 
@@ -335,7 +332,7 @@ describe('Milestone 4 Adversarial Verification & Stress Test Suite', () => {
       const finishedState: TandemSimState = {
         ...createInitialTandemState(),
         phase: 'finished',
-        distanceFt: 200,
+        distanceFt: COURSE_LENGTH_FT,
         timeElapsedSec: 21.0,
         stokerSyncPct: 90,
         hypeEnergy: 80,

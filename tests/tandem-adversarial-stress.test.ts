@@ -202,10 +202,10 @@ test('Milestone 2 Adversarial Stress Testing — TandemPhysicsEngine', async (t)
   // ==========================================================================
   // VECTOR 3: Seesaw Torque & Rollback Dynamics
   // ==========================================================================
-  await t.test('Vector 3.1: Stationary unpowered tandem on seesaw incline rolls backward (s <= 115 ft)', () => {
+  await t.test('Vector 3.1: Stationary unpowered tandem on seesaw incline rolls backward (s <= 325 ft)', () => {
     const s = phy.createInitialTandemState();
     s.phase = 'riding';
-    s.distanceFt = 115.0; // On uphill incline before fulcrum (120 ft)
+    s.distanceFt = 325.0; // On uphill incline before fulcrum (330 ft)
     s.speedMph = 0.0;
 
     // Step 60 frames (0.5s) with no pedaling or braking
@@ -213,15 +213,15 @@ test('Milestone 2 Adversarial Stress Testing — TandemPhysicsEngine', async (t)
       phy.stepTandemPhysics(s, defaultStats, neutralControls, SPEC.PHYSICS.FIXED_DT);
     }
 
-    assert.ok(s.distanceFt <= 115.0, `Vehicle on seesaw incline must not advance; got ${s.distanceFt}`);
-    assert.ok(s.distanceFt < 115.0, `Vehicle on seesaw incline must roll backward under gravity; got ${s.distanceFt}`);
+    assert.ok(s.distanceFt <= 325.0, `Vehicle on seesaw incline must not advance; got ${s.distanceFt}`);
+    assert.ok(s.distanceFt < 325.0, `Vehicle on seesaw incline must roll backward under gravity; got ${s.distanceFt}`);
     assert.ok(s.speedMph < 0, `Speed must be negative (reversing); got ${s.speedMph}`);
   });
 
   await t.test('Vector 3.2: Sustained seesaw rollback off entry edge triggers splashdown', () => {
     const s = phy.createInitialTandemState();
     s.phase = 'riding';
-    s.distanceFt = 101.0; // Close to entry lip (100 ft)
+    s.distanceFt = 311.0; // Close to entry lip (310 ft)
     s.speedMph = 0.0;
 
     for (let i = 0; i < 120; i++) {
@@ -230,10 +230,10 @@ test('Milestone 2 Adversarial Stress Testing — TandemPhysicsEngine', async (t)
     }
 
     assert.equal(s.phase, 'splashdown', 'Rolling backward off seesaw entry edge must splashdown');
-    assert.ok(s.distanceFt <= 100.0, `Splashdown position must be at or behind edge, got: ${s.distanceFt}`);
+    assert.ok(s.distanceFt <= 310.0, `Splashdown position must be at or behind edge, got: ${s.distanceFt}`);
   });
 
-  await t.test('Vector 3.3: Seesaw torque changes sign across fulcrum station (120 ft)', () => {
+  await t.test('Vector 3.3: Seesaw torque changes sign across fulcrum station (330 ft)', () => {
     const massKg = 160;
     const torqueBefore = phy.calculateSeesawTorque(massKg, -5.0); // 5 ft before fulcrum
     const torqueAfter = phy.calculateSeesawTorque(massKg, 5.0);  // 5 ft after fulcrum
@@ -243,8 +243,8 @@ test('Milestone 2 Adversarial Stress Testing — TandemPhysicsEngine', async (t)
     assert.equal(Math.abs(torqueBefore), Math.abs(torqueAfter), 'Symmetric distances produce equal magnitude torque');
 
     // Angle verification
-    const tiltBefore = phy.updateSeesawBridgeDynamics(115, massKg);
-    const tiltAfter = phy.updateSeesawBridgeDynamics(125, massKg);
+    const tiltBefore = phy.updateSeesawBridgeDynamics(325, massKg);
+    const tiltAfter = phy.updateSeesawBridgeDynamics(335, massKg);
     assert.ok(tiltBefore > 0, 'Bridge angle before fulcrum is uphill (> 0)');
     assert.ok(tiltAfter < 0, 'Bridge angle after fulcrum is downhill (< 0)');
   });
@@ -404,12 +404,12 @@ test('Milestone 2 Adversarial Stress Testing — TandemPhysicsEngine', async (t)
     let gapJumpEncountered = false;
     let hazardEncountered = false;
 
-    // Simulate up to 15 seconds at 120Hz (1800 steps)
-    for (let step = 0; step < 1800; step++) {
+    // Simulate up to 40 seconds at 120Hz (4800 steps) across 600 FT course
+    for (let step = 0; step < 4800; step++) {
       if (s.phase === 'finished' || s.phase === 'splashdown') break;
 
       // Active pedaling, sprint on seesaw and jump approaches
-      const sprint = s.distanceFt > 95 && s.distanceFt < 135 || s.distanceFt > 150 && s.distanceFt < 165;
+      const sprint = (s.distanceFt > 305 && s.distanceFt < 345) || (s.distanceFt > 495 && s.distanceFt < 525);
       const controls = {
         steer: -s.lateralOffsetFt * 0.15, // Active centering steering
         pedalCadence: true,
@@ -422,12 +422,12 @@ test('Milestone 2 Adversarial Stress Testing — TandemPhysicsEngine', async (t)
 
       if (events.hazardHit) hazardEncountered = true;
       if (events.gapJumped) gapJumpEncountered = true;
-      if (s.distanceFt >= 100 && s.distanceFt <= 140) seesawEncountered = true;
+      if (s.distanceFt >= 310 && s.distanceFt <= 350) seesawEncountered = true;
     }
 
     assert.equal(s.phase, 'finished', `Expected finish but ended with phase ${s.phase} at dist ${s.distanceFt}`);
     assert.ok(s.hasFinished, 'hasFinished flag must be true');
-    assert.ok(s.distanceFt >= SPEC.PHYSICS.FINISH_BELL_S, `Must reach finish distance 200 ft, got ${s.distanceFt}`);
+    assert.ok(s.distanceFt >= SPEC.PHYSICS.FINISH_BELL_S, `Must reach finish distance 600 ft, got ${s.distanceFt}`);
     assert.ok(seesawEncountered, 'Must have traversed seesaw sector');
     assert.ok(gapJumpEncountered, 'Must have jumped and cleared the gap');
     assert.ok(hazardEncountered, 'Must have crossed water cannon station');

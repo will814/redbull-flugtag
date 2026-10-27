@@ -220,15 +220,15 @@ describe('Milestone 4 Forensic Integrity Audit Suite', () => {
 
     it('correctly maps track distance to each sector without gaps or overlaps', () => {
       expect(getSectorForDistance(0).id).toBe('dock');
-      expect(getSectorForDistance(10).id).toBe('dock');
-      expect(getSectorForDistance(25).id).toBe('beam_1');
-      expect(getSectorForDistance(85).id).toBe('rollers');
-      expect(getSectorForDistance(120).id).toBe('seesaw');
-      expect(getSectorForDistance(145).id).toBe('water_cannon');
-      expect(getSectorForDistance(170).id).toBe('gap_jump');
-      expect(getSectorForDistance(195).id).toBe('finish_bell');
-      expect(getSectorForDistance(200).id).toBe('finish_bell');
-      expect(getSectorForDistance(250).id).toBe('finish_bell'); // Clamps to end
+      expect(getSectorForDistance(15).id).toBe('dock');
+      expect(getSectorForDistance(80).id).toBe('beam_1');
+      expect(getSectorForDistance(215).id).toBe('rollers');
+      expect(getSectorForDistance(330).id).toBe('seesaw');
+      expect(getSectorForDistance(450).id).toBe('water_cannon');
+      expect(getSectorForDistance(530).id).toBe('gap_jump');
+      expect(getSectorForDistance(580).id).toBe('finish_bell');
+      expect(getSectorForDistance(600).id).toBe('finish_bell');
+      expect(getSectorForDistance(750).id).toBe('finish_bell'); // Clamps to end
     });
   });
 

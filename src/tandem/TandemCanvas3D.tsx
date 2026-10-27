@@ -1,17 +1,39 @@
 /**
  * Red Bull Tandem Bike Challenge (Game 4)
- * 3D Canvas, Workshop Bay Environment & Over-Water Course 3D Simulation
- * File: src/tandem/TandemCanvas3D.tsx
+ * Interactive 3D Workshop Bay, Balance Dyno Rig & Multi-Course Over-Water Pier Renderer
+ *
+ * Implements:
+ * 1. Workshop Mode:
+ *    - 360-degree spherical orbital camera around the tandem bicycle & 2-person crew
+ *    - Raycasted socket markers (3D toruses visible only in Workshop assembly mode)
+ *    - Interactive Balance & Cadence Dyno Rig with forward pedaling, tangential rollers,
+ *      tilt cradle (-35°..+35°), CoM vector arrow, and bilateral outrigger contact rings
+ * 2. Course Mode:
+ *    - Parameterized multi-course 3D over-water pier environment (600 FT to 1,200 FT)
+ *    - Cohesive per-course sky dome, horizon fog, and true vertical Y-wave ocean surface
+ *    - Seamless 3D extruded Rhythm Rollers, zero-teleport Seesaw Bridge with under-deck H-frame
+ *      fulcrum, multi-battery Water Cannons, continuous Takeoff Ramp, Z-fight-free Landing/Finish
+ *      decks, and 100-FT canal distance buoys
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import type {
-  TandemCategory,
   TandemLoadout,
-  TandemDynoMetrics,
+  TandemCategory,
   TandemSimState,
+  TandemDynoMetrics,
 } from './types.ts';
+import {
+  buildTandemBike3D,
+  updateTandemAnimation,
+  TANDEM_GEOMETRY,
+  type TandemBike3DGroups,
+} from './TandemBike3DBuilder.ts';
+import {
+  computeTandemDynoMetrics,
+  TANDEM_CATEGORIES,
+} from './TandemPartCatalog.ts';
 import {
   COURSE_LENGTH_FT,
   STANDARD_BEAM_HALF_WIDTH_FT,
@@ -20,590 +42,773 @@ import {
   updateSeesawBridgeDynamics,
 } from './TandemPhysicsEngine.ts';
 import {
-  buildTandemBike3D,
-  disposeTandemBike3D,
-  updateTandemAnimation,
-  type TandemBike3DGroups,
-} from './TandemBike3DBuilder.ts';
+  DEFAULT_TANDEM_COURSE_ID,
+  getTandemCourseById,
+  type TandemCourseDef,
+  type TandemCourseId,
+} from './TandemCourses.ts';
 import { soundEngine } from '../audio/SoundEngine.ts';
 
 // ============================================================================
-// 1. INTERFACES & CAMERA PRESETS
+// 1. PROPS & SCENE INTERFACES
 // ============================================================================
 
 export interface TandemCanvas3DProps {
   mode: 'workshop' | 'course';
   loadout: TandemLoadout;
-  metrics: TandemDynoMetrics;
-  selectedCategory: TandemCategory;
-  dynoActive: boolean;
+  simStateRef?: React.MutableRefObject<TandemSimState>;
+  selectedCategory?: TandemCategory;
+  onSelectCategory?: (category: TandemCategory) => void;
+  dynoMetrics?: TandemDynoMetrics;
+  metrics?: TandemDynoMetrics;
+  isDynoActive?: boolean;
+  dynoActive?: boolean;
   dynoTiltAngleDeg?: number;
   dynoSwayAuto?: boolean;
-  paused?: boolean;
-  simStateRef?: React.MutableRefObject<TandemSimState>;
   bestDistanceFeet?: number;
   bestTimeSec?: number | null;
-  onSelectCategory?: (cat: TandemCategory) => void;
-  onHudSync?: (snapshot: TandemSimState) => void;
-  onRunFinished?: (finalState: TandemSimState) => void;
+  onToggleDyno?: (active: boolean) => void;
+  courseId?: TandemCourseId;
 }
 
-const CATEGORY_CAMERA_PRESETS: Record<
-  TandemCategory,
-  { yaw: number; pitch: number; radius: number }
-> = {
-  frame: { yaw: -0.65, pitch: 0.28, radius: 6.2 },
-  drivetrain: { yaw: -1.57, pitch: 0.16, radius: 3.8 },
-  wheels: { yaw: -0.85, pitch: 0.14, radius: 4.4 },
-  steering: { yaw: 0.42, pitch: 0.36, radius: 4.0 },
-  stabilizer: { yaw: -2.35, pitch: 0.22, radius: 5.2 },
-  topper: { yaw: -0.48, pitch: 0.38, radius: 4.6 },
-};
-
-// Metric conversion: 1 ft = 0.3048 m
 const FT_TO_M = 0.3048;
+const SEESAW_MAX_ANGLE_RAD = (8.5 * Math.PI) / 180;
 
 // ============================================================================
-// 2. RESOURCE DISPOSAL UTILITIES
+// 2. SAFE SCENE GRAPH MEMORY DISPOSAL UTILITY
 // ============================================================================
 
-export function disposeTandemSceneObjects(root: THREE.Object3D, disposeRoot = true): void {
+export function disposeTandemSceneObjects(
+  root: THREE.Object3D | null | undefined,
+  disposeCached = false
+): void {
+  if (!root) return;
+
   root.traverse((obj) => {
-    if (obj === root && !disposeRoot) return;
     const mesh = obj as THREE.Mesh;
     if (mesh.isMesh) {
-      if (mesh.geometry) {
+      if (mesh.geometry && (disposeCached || !mesh.geometry.userData?.cached)) {
         mesh.geometry.dispose();
       }
       if (mesh.material) {
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const mat of mats) {
-          if (!mat) continue;
-          const anyMat = mat as unknown as Record<string, unknown>;
-          for (const val of Object.values(anyMat)) {
-            if (val && typeof val === 'object' && 'isTexture' in val) {
-              (val as THREE.Texture).dispose();
-            }
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of materials) {
+          if (mat && (disposeCached || !mat.userData?.cached)) {
+            const stdMat = mat as THREE.MeshStandardMaterial;
+            if (stdMat.map) stdMat.map.dispose();
+            mat.dispose();
           }
-          mat.dispose();
         }
       }
-    }
-    const light = obj as THREE.Light;
-    if (light.isLight && light.shadow?.map) {
-      light.shadow.map.dispose();
     }
   });
 }
 
 // ============================================================================
-// 3. WORKSHOP BAY ENVIRONMENT BUILDER
+// 3. PROCEDURAL ENVIRONMENT BUILDERS (WORKSHOP & MULTI-COURSE PIER)
 // ============================================================================
 
 interface WorkshopBayScene {
   group: THREE.Group;
-  dynoRigBase: THREE.Group;
   dynoPivotGroup: THREE.Group;
-  dynoRollers: THREE.Mesh[];
-  warningBeaconLights: THREE.Mesh[];
-  dynoUnderglowLight: THREE.PointLight;
-  balanceArcGroup: THREE.Group;
-  balanceNeedle: THREE.Mesh;
-  comMarkerGroup: THREE.Group;
+  rollers: THREE.Mesh[];
+  comSphere: THREE.Mesh;
+  comArrow: THREE.ArrowHelper;
   outriggerContactRings: THREE.Mesh[];
+  windParticles: THREE.Points;
 }
 
 function buildWorkshopBayEnvironment(): WorkshopBayScene {
   const group = new THREE.Group();
   group.name = 'WorkshopBayGroup';
-  const dynoRollers: THREE.Mesh[] = [];
-  const warningBeaconLights: THREE.Mesh[] = [];
-  const outriggerContactRings: THREE.Mesh[] = [];
 
-  // 1. Concrete Paddock Floor
-  const floorGeo = new THREE.PlaneGeometry(36, 36);
-  floorGeo.rotateX(-Math.PI / 2);
+  // 1. Timber Pier Floor Planks
+  const floorGeo = new THREE.BoxGeometry(10.0, 0.2, 8.0);
   const floorMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#1e293b'),
-    roughness: 0.42,
-    metalness: 0.28,
+    color: '#1e293b',
+    roughness: 0.75,
+    metalness: 0.15,
   });
-  const floor = new THREE.Mesh(floorGeo, floorMat);
-  floor.position.y = -0.01;
-  floor.receiveShadow = true;
-  group.add(floor);
+  const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+  floorMesh.position.set(0, -0.22, 0);
+  floorMesh.receiveShadow = true;
+  group.add(floorMesh);
 
-  // 2. Center Circular Turntable Platform
-  const turntable = new THREE.Mesh(
-    new THREE.CylinderGeometry(4.8, 5.1, 0.24, 48),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#0f172a'), roughness: 0.45, metalness: 0.35 })
-  );
-  turntable.position.y = -0.12;
-  turntable.receiveShadow = true;
-  group.add(turntable);
-
-  // Safety Hazard Border Ring
-  const hazardRingGeo = new THREE.RingGeometry(4.35, 4.75, 48);
-  hazardRingGeo.rotateX(-Math.PI / 2);
-  const hazardRing = new THREE.Mesh(
-    hazardRingGeo,
-    new THREE.MeshBasicMaterial({ color: new THREE.Color('#facc15'), side: THREE.DoubleSide })
-  );
-  hazardRing.position.y = 0.005;
-  group.add(hazardRing);
-
-  // Red Bull Roundel Logo Ring
-  const logoRingGeo = new THREE.RingGeometry(1.6, 2.6, 48);
-  logoRingGeo.rotateX(-Math.PI / 2);
-  const logoRing = new THREE.Mesh(
-    logoRingGeo,
-    new THREE.MeshBasicMaterial({ color: new THREE.Color('#dc2626'), side: THREE.DoubleSide })
-  );
-  logoRing.position.y = 0.006;
-  group.add(logoRing);
-
-  // 3. Fixed Dyno Base Frame
-  const dynoRigBase = new THREE.Group();
-  dynoRigBase.name = 'DynoRigBase';
-  group.add(dynoRigBase);
-
-  const baseFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(2.6, 0.14, 0.88),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#0f172a'), roughness: 0.5, metalness: 0.7 })
-  );
-  baseFrame.position.y = -0.05;
-  baseFrame.receiveShadow = true;
-  dynoRigBase.add(baseFrame);
-
-  // 4 Corner Safety Warning Strobe Beacons on Dyno Base
-  const beaconGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.12, 12);
-  [
-    [1.25, 0.4],
-    [1.25, -0.4],
-    [-1.25, 0.4],
-    [-1.25, -0.4],
-  ].forEach(([bx, bz]) => {
-    const beaconMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#ef4444'),
-      emissive: new THREE.Color('#dc2626'),
-      emissiveIntensity: 0.4,
-      roughness: 0.2,
-    });
-    const beacon = new THREE.Mesh(beaconGeo, beaconMat);
-    beacon.position.set(bx, 0.08, bz);
-    dynoRigBase.add(beacon);
-    warningBeaconLights.push(beacon);
+  // Decorative wooden deck slats
+  const slatGeo = new THREE.BoxGeometry(0.32, 0.02, 6.4);
+  const slatMat = new THREE.MeshStandardMaterial({
+    color: '#334155',
+    roughness: 0.8,
+    metalness: 0.1,
   });
+  for (let x = -4.2; x <= 4.2; x += 0.42) {
+    const slat = new THREE.Mesh(slatGeo, slatMat);
+    slat.position.set(x, -0.11, 0);
+    slat.receiveShadow = true;
+    group.add(slat);
+  }
 
-  // Dyno Neon Underglow Light
-  const dynoUnderglowLight = new THREE.PointLight(new THREE.Color('#38bdf8'), 0.85, 4.5);
-  dynoUnderglowLight.position.set(0, -0.2, 0);
-  dynoRigBase.add(dynoUnderglowLight);
-
-  // 4. Longitudinal Dyno Pivot Cradle (Rotates around X-axis for roll tilt testing)
+  // 2. Dyno Cradle & Tilt Pivot Group
   const dynoPivotGroup = new THREE.Group();
   dynoPivotGroup.name = 'DynoPivotGroup';
   dynoPivotGroup.position.set(0, 0, 0);
-  dynoRigBase.add(dynoPivotGroup);
 
-  // Dual Metal Rollers for Front & Rear wheels
-  const rollerGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.44, 24);
+  // Steel Dyno Platform Base (sits below y = 0.00 tire contact point)
+  const cradleBaseGeo = new THREE.BoxGeometry(3.1, 0.08, 1.35);
+  const cradleBaseMat = new THREE.MeshStandardMaterial({
+    color: '#0f172a',
+    roughness: 0.35,
+    metalness: 0.8,
+  });
+  const cradleBase = new THREE.Mesh(cradleBaseGeo, cradleBaseMat);
+  cradleBase.position.set(0, -0.07, 0);
+  cradleBase.receiveShadow = true;
+  dynoPivotGroup.add(cradleBase);
+
+  // Neon cyan trim rails on dyno cradle
+  const railGeo = new THREE.BoxGeometry(3.12, 0.03, 0.04);
+  const railMat = new THREE.MeshBasicMaterial({ color: '#06b6d4' });
+  const railL = new THREE.Mesh(railGeo, railMat);
+  railL.position.set(0, -0.03, -0.66);
+  const railR = new THREE.Mesh(railGeo, railMat);
+  railR.position.set(0, -0.03, 0.66);
+  dynoPivotGroup.add(railL, railR);
+
+  // 3. Dual Steel Dyno Rollers (tangential to front & rear tires at y = 0.00, no tire clipping!)
+  const rollers: THREE.Mesh[] = [];
+  const rollerGeo = new THREE.CylinderGeometry(0.052, 0.052, 0.55, 20);
   rollerGeo.rotateX(Math.PI / 2);
-
   const rollerMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#cbd5e1'),
-    roughness: 0.16,
-    metalness: 0.88,
+    color: '#cbd5e1',
+    roughness: 0.18,
+    metalness: 0.92,
   });
 
-  [
-    [0.79, 0.02, 0],
-    [0.97, 0.02, 0],
-    [-0.79, 0.02, 0],
-    [-0.97, 0.02, 0],
-  ].forEach(([rx, ry, rz]) => {
+  const halfWb = TANDEM_GEOMETRY.wheelbaseM / 2; // 0.90m
+  const rollerXPositions = [
+    halfWb - 0.13,
+    halfWb + 0.13,
+    -halfWb - 0.13,
+    -halfWb + 0.13,
+  ];
+
+  for (const rx of rollerXPositions) {
     const roller = new THREE.Mesh(rollerGeo, rollerMat);
-    roller.position.set(rx, ry, rz);
+    // Top of roller is at -0.055 + 0.052 = -0.003m, cradling the tire bottom at y = 0.00m
+    roller.position.set(rx, -0.055, 0);
     roller.castShadow = true;
     dynoPivotGroup.add(roller);
-    dynoRollers.push(roller);
-  });
+    rollers.push(roller);
+  }
 
-  // Outrigger Ground Contact Flash Rings
-  [-1.1, 1.1].forEach((oz) => {
-    const ringGeo = new THREE.RingGeometry(0.12, 0.22, 24);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ring = new THREE.Mesh(
-      ringGeo,
-      new THREE.MeshBasicMaterial({ color: new THREE.Color('#facc15'), side: THREE.DoubleSide, transparent: true, opacity: 0.0 })
-    );
-    ring.position.set(-0.65, 0.01, oz);
-    group.add(ring);
+  // 4. Center of Mass (CoM) 3D Indicator & Gravity Vector Arrow
+  const comSphereGeo = new THREE.SphereGeometry(0.065, 16, 16);
+  const comSphereMat = new THREE.MeshBasicMaterial({
+    color: '#facc15',
+    transparent: true,
+    opacity: 0.9,
+  });
+  const comSphere = new THREE.Mesh(comSphereGeo, comSphereMat);
+  comSphere.position.set(-0.2, 0.68, 0);
+  comSphere.visible = false;
+  dynoPivotGroup.add(comSphere);
+
+  const comArrow = new THREE.ArrowHelper(
+    new THREE.Vector3(0, -1, 0),
+    new THREE.Vector3(-0.2, 0.68, 0),
+    0.55,
+    0xfacc15,
+    0.14,
+    0.09
+  );
+  comArrow.visible = false;
+  dynoPivotGroup.add(comArrow);
+
+  // 5. Outrigger Ground Contact Indicator Rings (Port & Starboard)
+  const outriggerContactRings: THREE.Mesh[] = [];
+  const contactRingGeo = new THREE.RingGeometry(0.08, 0.15, 24);
+  contactRingGeo.rotateX(-Math.PI / 2);
+
+  for (const side of [-1, 1]) {
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: '#22c55e',
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0,
+    });
+    const ring = new THREE.Mesh(contactRingGeo, ringMat);
+    ring.position.set(-0.65, 0.01, side * 1.1);
+    dynoPivotGroup.add(ring);
     outriggerContactRings.push(ring);
+  }
+
+  group.add(dynoPivotGroup);
+
+  // 6. Aerodynamic Wind Streamlines (Dyno Wind Tunnel Particles)
+  const particleCount = 60;
+  const positions = new Float32Array(particleCount * 3);
+  for (let i = 0; i < particleCount; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 6.0;
+    positions[i * 3 + 1] = 0.2 + Math.random() * 1.5;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 2.2;
+  }
+  const windGeo = new THREE.BufferGeometry();
+  windGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const windMat = new THREE.PointsMaterial({
+    color: '#38bdf8',
+    size: 0.05,
+    transparent: true,
+    opacity: 0.0,
   });
+  const windParticles = new THREE.Points(windGeo, windMat);
+  group.add(windParticles);
 
-  // 5. 3D Balance Arc & Rollover Indicator Gizmo
-  const balanceArcGroup = new THREE.Group();
-  balanceArcGroup.position.set(-1.45, 0.35, 0);
-  dynoPivotGroup.add(balanceArcGroup);
-
-  const arcCurve = new THREE.EllipseCurve(0, 0, 0.72, 0.72, -Math.PI / 4, (5 * Math.PI) / 4, false, 0);
-  const arcPoints = arcCurve.getPoints(32).map((p) => new THREE.Vector3(0, p.y + 0.1, p.x));
-  const arcGeo = new THREE.BufferGeometry().setFromPoints(arcPoints);
-  const arcLine = new THREE.Line(
-    arcGeo,
-    new THREE.LineBasicMaterial({ color: new THREE.Color('#38bdf8'), linewidth: 2 })
-  );
-  balanceArcGroup.add(arcLine);
-
-  const needleGeo = new THREE.ConeGeometry(0.04, 0.18, 8);
-  needleGeo.rotateX(Math.PI);
-  const needleMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#facc15') });
-  const balanceNeedle = new THREE.Mesh(needleGeo, needleMat);
-  balanceNeedle.position.set(0, 0.85, 0);
-  balanceArcGroup.add(balanceNeedle);
-
-  // 6. Center of Mass (CoM) Marker Gizmo
-  const comMarkerGroup = new THREE.Group();
-  comMarkerGroup.position.set(0, 0.75, 0);
-  const comSphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.11, 16, 16),
-    new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#facc15'),
-      emissive: new THREE.Color('#f59e0b'),
-      emissiveIntensity: 0.6,
-      roughness: 0.3,
-    })
-  );
-  const comPlumbPin = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.012, 0.012, 0.75, 8),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color('#facc15'), transparent: true, opacity: 0.75 })
-  );
-  comPlumbPin.position.y = -0.375;
-  comMarkerGroup.add(comSphere, comPlumbPin);
-  dynoPivotGroup.add(comMarkerGroup);
+  // 7. Workshop Overhead Gantry Truss & Banner
+  const pillarGeo = new THREE.CylinderGeometry(0.08, 0.08, 3.6, 12);
+  const pillarMat = new THREE.MeshStandardMaterial({
+    color: '#334155',
+    roughness: 0.4,
+    metalness: 0.7,
+  });
+  const pillarL = new THREE.Mesh(pillarGeo, pillarMat);
+  pillarL.position.set(-3.2, 1.6, -2.4);
+  const pillarR = new THREE.Mesh(pillarGeo, pillarMat);
+  pillarR.position.set(3.2, 1.6, -2.4);
+  const crossBeam = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.18, 0.18), pillarMat);
+  crossBeam.position.set(0, 3.3, -2.4);
+  group.add(pillarL, pillarR, crossBeam);
 
   return {
     group,
-    dynoRigBase,
     dynoPivotGroup,
-    dynoRollers,
-    warningBeaconLights,
-    dynoUnderglowLight,
-    balanceArcGroup,
-    balanceNeedle,
-    comMarkerGroup,
+    rollers,
+    comSphere,
+    comArrow,
     outriggerContactRings,
+    windParticles,
   };
 }
-
-// ============================================================================
-// 4. OVER-WATER COURSE 3D ENVIRONMENT BUILDER (7 SECTORS & PARTICLES)
-// ============================================================================
 
 export interface CourseEnvScene {
   group: THREE.Group;
+  courseDef: TandemCourseDef;
+  seesawPivotYM: number;
   waterMesh: THREE.Mesh;
   seesawPivotGroup: THREE.Group;
+  waterCannonJets: THREE.Mesh[];
+  extraWaterCannonJets: THREE.Mesh[];
   finishBellGroup: THREE.Group;
   finishBellMesh: THREE.Mesh;
   finishClapperMesh: THREE.Mesh;
-  waterCannonJets: THREE.Mesh[];
   splashGroup: THREE.Group;
-  splashDrops: Array<{ mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }>;
+  splashDrops: { mesh: THREE.Mesh; vel: THREE.Vector3 }[];
   foamRings: THREE.Mesh[];
   confettiGroup: THREE.Group;
-  confettiParticles: Array<{
-    mesh: THREE.Mesh;
-    vx: number;
-    vy: number;
-    vz: number;
-    rotX: number;
-    rotY: number;
-    rotZ: number;
-  }>;
+  confettiParticles: { mesh: THREE.Mesh; vel: THREE.Vector3; rotVel: THREE.Vector3 }[];
 }
 
-export function buildCourseEnvironment(): CourseEnvScene {
+export function buildCourseEnvironment(
+  courseId: TandemCourseId = DEFAULT_TANDEM_COURSE_ID
+): CourseEnvScene {
+  const courseDef = getTandemCourseById(courseId);
   const group = new THREE.Group();
   group.name = 'CourseEnvGroup';
 
-  // 1. Sparkling Ocean Water Plane with Foam Undulation
-  const waterGeo = new THREE.PlaneGeometry(240, 120, 64, 48);
+  const totalLenM = courseDef.lengthFt * FT_TO_M;
+  const centerXM = totalLenM * 0.5;
+  const pierElevationM = 8.0 * FT_TO_M; // 2.4384m
+
+  // 1. Expansive Animated Canal / Ocean Water Plane (spans full length of all courses up to 1,200 FT+)
+  const waterSpanXM = Math.max(360, totalLenM + 260);
+  const waterSpanZM = 240;
+  const waterGeo = new THREE.PlaneGeometry(waterSpanXM, waterSpanZM, 96, 48);
   waterGeo.rotateX(-Math.PI / 2);
   const waterMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#0284c7'),
-    roughness: 0.18,
-    metalness: 0.22,
+    color: courseDef.theme.waterHex,
+    roughness: 0.16,
+    metalness: 0.55,
     transparent: true,
-    opacity: 0.92,
+    opacity: 0.88,
   });
   const waterMesh = new THREE.Mesh(waterGeo, waterMat);
-  waterMesh.position.set(30, 0, 0);
+  waterMesh.position.set(centerXM, 0, 0);
   waterMesh.receiveShadow = true;
   group.add(waterMesh);
 
-  // Pilings Material & Factory
-  const pilingMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#334155'), roughness: 0.75 });
-  const pilingGeo = new THREE.CylinderGeometry(0.12, 0.14, 2.8, 12);
-  const addPilingPair = (x: number, halfW: number) => {
-    for (const sign of [-1, 1]) {
-      const p = new THREE.Mesh(pilingGeo, pilingMat);
-      p.position.set(x, 1.22, sign * (halfW + 0.08));
-      p.receiveShadow = true;
-      group.add(p);
+  // Deep ocean seabed plane underneath waterMesh so water never shows black void through transparency
+  const seabedGeo = new THREE.PlaneGeometry(waterSpanXM + 80, waterSpanZM + 80, 2, 2);
+  seabedGeo.rotateX(-Math.PI / 2);
+  const seabedMat = new THREE.MeshBasicMaterial({ color: courseDef.theme.waterDeepHex });
+  const seabedMesh = new THREE.Mesh(seabedGeo, seabedMat);
+  seabedMesh.position.set(centerXM, -2.2, 0);
+  group.add(seabedMesh);
+
+  // Shared Materials
+  const woodMat = new THREE.MeshStandardMaterial({
+    color: courseDef.theme.deckWoodHex,
+    roughness: 0.78,
+    metalness: 0.08,
+  });
+  const beamMat = new THREE.MeshStandardMaterial({
+    color: courseDef.theme.beamDeckHex,
+    roughness: 0.55,
+    metalness: 0.12,
+  });
+  const pilingMat = new THREE.MeshStandardMaterial({
+    color: '#451a03',
+    roughness: 0.88,
+    metalness: 0.05,
+  });
+  const redBullBlueMat = new THREE.MeshStandardMaterial({
+    color: '#1d4ed8',
+    roughness: 0.35,
+    metalness: 0.45,
+  });
+  const redBullRedMat = new THREE.MeshStandardMaterial({
+    color: '#dc2626',
+    roughness: 0.35,
+    metalness: 0.45,
+  });
+  const edgeStripeMat = new THREE.MeshBasicMaterial({ color: '#ef4444' });
+
+  const pilingGeo = new THREE.CylinderGeometry(0.12, 0.14, 4.4, 10);
+
+  // Helper to place a solid beam segment from startFt to endFt at elevation 8.0 ft
+  const addBeamSegmentFt = (startFt: number, endFt: number, widthM = 0.9144, mat = beamMat) => {
+    const segLenM = (endFt - startFt) * FT_TO_M;
+    if (segLenM <= 0.01) return;
+    const midXM = ((startFt + endFt) * 0.5) * FT_TO_M;
+    const deckHeightM = 0.20;
+    const segMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(segLenM, deckHeightM, widthM),
+      mat
+    );
+    segMesh.position.set(midXM, pierElevationM - deckHeightM * 0.5, 0);
+    segMesh.receiveShadow = true;
+    segMesh.castShadow = true;
+    group.add(segMesh);
+
+    // High-visibility safety edge stripes along narrow beams
+    if (widthM <= 1.2) {
+      const stripeGeo = new THREE.BoxGeometry(segLenM, 0.015, 0.045);
+      const stripeL = new THREE.Mesh(stripeGeo, edgeStripeMat);
+      stripeL.position.set(midXM, pierElevationM + 0.005, -widthM * 0.5 + 0.03);
+      const stripeR = new THREE.Mesh(stripeGeo, edgeStripeMat);
+      stripeR.position.set(midXM, pierElevationM + 0.005, widthM * 0.5 - 0.03);
+      group.add(stripeL, stripeR);
+    }
+
+    // Support pilings every 7.5m along the segment (tucked cleanly under bottom of deck down to seabed)
+    const startM = startFt * FT_TO_M;
+    const endM = endFt * FT_TO_M;
+    for (let px = startM + 2.0; px <= endM - 1.0; px += 7.5) {
+      for (const side of [-1, 1]) {
+        const piling = new THREE.Mesh(pilingGeo, pilingMat);
+        piling.position.set(px, pierElevationM - deckHeightM - 2.20, side * (widthM * 0.42));
+        group.add(piling);
+      }
     }
   };
 
-  // 2. Sector 1: Dock Launch Platform (s in [0, 15] ft -> X in [-1.5, 4.572] m)
-  const dockDeck = new THREE.Mesh(
-    new THREE.BoxGeometry(6.0, 0.20, 1.83),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#78350f'), roughness: 0.65 })
-  );
-  dockDeck.position.set(1.5, 2.4384 - 0.10, 0);
-  dockDeck.receiveShadow = true;
-  group.add(dockDeck);
-  addPilingPair(-0.5, 0.91);
-  addPilingPair(2.0, 0.91);
-  addPilingPair(4.2, 0.91);
+  // 2. Sector 1: Launch Dock Platform (0 to dock.endFt, width 2.44m)
+  const dockEndFt = courseDef.sectors[0].endFt;
+  addBeamSegmentFt(0, dockEndFt, 2.44, woodMat);
 
-  // Starter Gantry & Red Bull Banner
-  const starterArch = new THREE.Group();
-  const archPillarMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#1e3a8a'), roughness: 0.35 });
-  const p1 = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.6), archPillarMat);
-  p1.position.set(0.6, 2.44 + 1.8, -1.1);
-  const p2 = p1.clone();
-  p2.position.z = 1.1;
-  const crossBeam = new THREE.Mesh(
-    new THREE.BoxGeometry(0.3, 0.4, 2.4),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#dc2626'), roughness: 0.4 })
-  );
-  crossBeam.position.set(0.6, 2.44 + 3.6, 0);
-  starterArch.add(p1, p2, crossBeam);
-  group.add(starterArch);
+  // Start Archway Banner at x = 1.2m
+  const archPillarGeo = new THREE.BoxGeometry(0.24, 3.8, 0.24);
+  const archL = new THREE.Mesh(archPillarGeo, redBullBlueMat);
+  archL.position.set(1.2, pierElevationM + 1.9, -1.25);
+  const archR = new THREE.Mesh(archPillarGeo, redBullBlueMat);
+  archR.position.set(1.2, pierElevationM + 1.9, 1.25);
+  const archTop = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.55, 2.85), redBullRedMat);
+  archTop.position.set(1.2, pierElevationM + 3.8, 0);
+  group.add(archL, archR, archTop);
 
-  // 3. Sector 2: Balance Beam 1 (s in [15, 70] ft -> X in [4.572, 21.336] m)
-  const beamLen = 21.336 - 4.572;
-  const beamDeck = new THREE.Mesh(
-    new THREE.BoxGeometry(beamLen, 0.18, 0.9144),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#92400e'), roughness: 0.55 })
-  );
-  beamDeck.position.set(4.572 + beamLen / 2, 2.4384 - 0.09, 0);
-  beamDeck.receiveShadow = true;
-  group.add(beamDeck);
+  // 3. Sector 2: Narrow Entry Balance Beam (dockEndFt to rollersStartFt, seamless transition!)
+  addBeamSegmentFt(dockEndFt, courseDef.rollersStartFt, 0.9144, beamMat);
 
-  // Hazard border lines along beam rims
-  for (let x = 6.0; x <= 20.0; x += 4.5) {
-    addPilingPair(x, 0.4572);
+  // 4. Sector 3: Solid 3D Extruded Rhythm Rollers (rollersStartFt to rollersEndFt)
+  const rollerStartM = courseDef.rollersStartFt * FT_TO_M;
+  const rollerEndM = courseDef.rollersEndFt * FT_TO_M;
+  const rollerLenFt = courseDef.rollersEndFt - courseDef.rollersStartFt;
+  const rollerSegments = Math.max(48, Math.round(rollerLenFt * 0.8));
+  const rollerWidthM = 0.9144;
+  const rollerHalfW = rollerWidthM * 0.5;
+  const rollerThickM = 0.22;
+
+  const rollerPositions: number[] = [];
+  const rollerIndices: number[] = [];
+
+  // For each sample i along X, create 4 vertices:
+  // 0: Top-Left (-halfW, yTop), 1: Top-Right (+halfW, yTop),
+  // 2: Bottom-Left (-halfW, yBot), 3: Bottom-Right (+halfW, yBot)
+  for (let i = 0; i <= rollerSegments; i++) {
+    const frac = i / rollerSegments;
+    const sFt = courseDef.rollersStartFt + frac * rollerLenFt;
+    const xM = sFt * FT_TO_M;
+    const yTopM = getTrackElevationAtDistance(sFt, courseDef.id) * FT_TO_M;
+    const yBotM = yTopM - rollerThickM;
+
+    rollerPositions.push(xM, yTopM, -rollerHalfW); // 4*i + 0
+    rollerPositions.push(xM, yTopM, rollerHalfW);  // 4*i + 1
+    rollerPositions.push(xM, yBotM, -rollerHalfW); // 4*i + 2
+    rollerPositions.push(xM, yBotM, rollerHalfW);  // 4*i + 3
   }
 
-  // 4. Sector 3: Rhythm Rollers (s in [70, 100] ft -> X in [21.336, 30.48] m)
-  const rollerGroup = new THREE.Group();
-  const rollerSteps = 40;
-  const rStart = 21.336;
-  const rEnd = 30.48;
-  const rWidth = 0.9144;
-  const rollerGeo = new THREE.BufferGeometry();
-  const rollerPos: number[] = [];
-  const rollerIdx: number[] = [];
+  for (let i = 0; i < rollerSegments; i++) {
+    const b0 = i * 4;
+    const b1 = (i + 1) * 4;
+    // Top riding surface
+    rollerIndices.push(b0 + 0, b0 + 1, b1 + 0);
+    rollerIndices.push(b0 + 1, b1 + 1, b1 + 0);
+    // Bottom surface
+    rollerIndices.push(b0 + 2, b1 + 2, b0 + 3);
+    rollerIndices.push(b0 + 3, b1 + 2, b1 + 3);
+    // Left side wall (-Z)
+    rollerIndices.push(b0 + 0, b1 + 0, b0 + 2);
+    rollerIndices.push(b1 + 0, b1 + 2, b0 + 2);
+    // Right side wall (+Z)
+    rollerIndices.push(b0 + 1, b0 + 3, b1 + 1);
+    rollerIndices.push(b1 + 1, b0 + 3, b1 + 3);
+  }
 
-  for (let i = 0; i <= rollerSteps; i++) {
-    const frac = i / rollerSteps;
-    const x = rStart + frac * (rEnd - rStart);
-    const y = 2.4384 + 0.3048 * Math.sin(((x - rStart) / 3.6576) * Math.PI * 2);
-    rollerPos.push(x, y, -rWidth / 2);
-    rollerPos.push(x, y, rWidth / 2);
-    if (i < rollerSteps) {
-      const base = i * 2;
-      rollerIdx.push(base, base + 1, base + 2);
-      rollerIdx.push(base + 1, base + 3, base + 2);
+  const rollerGeo = new THREE.BufferGeometry();
+  rollerGeo.setAttribute('position', new THREE.Float32BufferAttribute(rollerPositions, 3));
+  rollerGeo.setIndex(rollerIndices);
+  rollerGeo.computeVertexNormals();
+
+  const rollerMat = new THREE.MeshStandardMaterial({
+    color: '#f59e0b',
+    roughness: 0.48,
+    metalness: 0.22,
+    side: THREE.DoubleSide,
+  });
+  const rollerMesh = new THREE.Mesh(rollerGeo, rollerMat);
+  rollerMesh.receiveShadow = true;
+  rollerMesh.castShadow = true;
+  group.add(rollerMesh);
+
+  // Support pilings under Rhythm Rollers (dynamically matched to wave underside at each px)
+  for (let px = rollerStartM + 3.0; px <= rollerEndM - 1.5; px += 6.5) {
+    const localRollerY = getTrackElevationAtDistance(px / FT_TO_M, courseDef.id) * FT_TO_M;
+    for (const side of [-1, 1]) {
+      const piling = new THREE.Mesh(pilingGeo, pilingMat);
+      piling.position.set(px, localRollerY - rollerThickM - 2.20, side * 0.36);
+      group.add(piling);
     }
   }
-  rollerGeo.setAttribute('position', new THREE.Float32BufferAttribute(rollerPos, 3));
-  rollerGeo.setIndex(rollerIdx);
-  rollerGeo.computeVertexNormals();
-  const rollerMesh = new THREE.Mesh(
-    rollerGeo,
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#b45309'), roughness: 0.5, side: THREE.DoubleSide })
-  );
-  rollerMesh.receiveShadow = true;
-  rollerGroup.add(rollerMesh);
-  group.add(rollerGroup);
 
-  // Pilings supporting rhythm roller crests
-  [22.25, 25.9, 29.55].forEach((rx) => {
-    addPilingPair(rx, 0.4572);
-  });
+  // 5. Sector 4: Tilting Seesaw Bridge (with zero-step elevated fulcrum & under-deck H-frame cradle)
+  // Fixed approach beam from rollersEndFt to seesawStartFt
+  addBeamSegmentFt(courseDef.rollersEndFt, courseDef.seesawStartFt, 0.9144, beamMat);
 
-  // 5. Sector 4: Tilting Seesaw Bridge (s in [100, 140] ft -> X in [30.48, 42.672] m, fulcrum at 36.576m)
-  const fulcrumX = 36.576;
+  const seesawFulcrumXM = courseDef.seesawFulcrumFt * FT_TO_M;
+  const seesawLenM = (courseDef.seesawEndFt - courseDef.seesawStartFt) * FT_TO_M;
+  // Elevate fulcrum by L_half * sin(8.5°) so entry at +8.5° and exit at -8.5° meet the 8.0-ft pier with ZERO step!
+  const seesawPivotYM =
+    (8.0 + courseDef.seesawHalfLengthFt * Math.sin(SEESAW_MAX_ANGLE_RAD)) * FT_TO_M;
+
   const seesawPivotGroup = new THREE.Group();
-  seesawPivotGroup.position.set(fulcrumX, 2.4384, 0);
+  seesawPivotGroup.name = 'SeesawPivotGroup';
+  seesawPivotGroup.position.set(seesawFulcrumXM, seesawPivotYM, 0);
+  seesawPivotGroup.rotation.z = SEESAW_MAX_ANGLE_RAD;
 
-  const seesawLen = 12.192;
-  const seesawDeck = new THREE.Mesh(
-    new THREE.BoxGeometry(seesawLen, 0.16, 0.9144),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#d97706'), roughness: 0.5 })
-  );
-  seesawDeck.position.set(0, -0.08, 0);
+  // Seesaw Plank Deck (children[0] must be BoxGeometry for forensic test contract!)
+  const seesawDeckGeo = new THREE.BoxGeometry(seesawLenM, 0.18, 0.92);
+  const seesawDeckMat = new THREE.MeshStandardMaterial({
+    color: '#fb923c',
+    roughness: 0.55,
+    metalness: 0.22,
+  });
+  const seesawDeck = new THREE.Mesh(seesawDeckGeo, seesawDeckMat);
+  seesawDeck.position.set(0, -0.09, 0);
+  seesawDeck.castShadow = true;
   seesawDeck.receiveShadow = true;
   seesawPivotGroup.add(seesawDeck);
+
+  // Seesaw side guard curbs
+  const curbGeo = new THREE.BoxGeometry(seesawLenM, 0.06, 0.05);
+  const curbL = new THREE.Mesh(curbGeo, redBullRedMat);
+  curbL.position.set(0, 0.03, -0.435);
+  const curbR = new THREE.Mesh(curbGeo, redBullRedMat);
+  curbR.position.set(0, 0.03, 0.435);
+  seesawPivotGroup.add(curbL, curbR);
+
   group.add(seesawPivotGroup);
 
-  // Fulcrum A-Frame Base
-  const fulcrumAFrame = new THREE.Mesh(
-    new THREE.ConeGeometry(0.65, 2.44, 4),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#1e293b'), roughness: 0.4 })
+  // Under-deck steel H-frame fulcrum support cradle (never pokes through the plank deck!)
+  const fulcrumSteelMat = new THREE.MeshStandardMaterial({
+    color: '#475569',
+    roughness: 0.35,
+    metalness: 0.82,
+  });
+  const fulcrumAxle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.11, 0.11, 1.35, 16).rotateX(Math.PI / 2),
+    fulcrumSteelMat
   );
-  fulcrumAFrame.position.set(fulcrumX, 1.22, 0);
-  group.add(fulcrumAFrame);
+  fulcrumAxle.position.set(seesawFulcrumXM, seesawPivotYM - 0.18, 0);
+  const fulcrumPostGeo = new THREE.CylinderGeometry(0.13, 0.16, seesawPivotYM + 2.2, 12);
+  const fulcrumPostL = new THREE.Mesh(fulcrumPostGeo, fulcrumSteelMat);
+  fulcrumPostL.position.set(seesawFulcrumXM, (seesawPivotYM - 2.2) * 0.5, -0.60);
+  const fulcrumPostR = new THREE.Mesh(fulcrumPostGeo, fulcrumSteelMat);
+  fulcrumPostR.position.set(seesawFulcrumXM, (seesawPivotYM - 2.2) * 0.5, 0.60);
+  group.add(fulcrumAxle, fulcrumPostL, fulcrumPostR);
 
-  // 6. Sector 5: Water Cannon Hazard Zone (X around 42.672m to 46.35m)
-  const cannonAlleyDeck = new THREE.Mesh(
-    new THREE.BoxGeometry(3.64, 0.18, 0.9144),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#92400e'), roughness: 0.55 })
-  );
-  cannonAlleyDeck.position.set(44.50, 2.4384 - 0.09, 0);
-  cannonAlleyDeck.receiveShadow = true;
-  group.add(cannonAlleyDeck);
+  // Fixed beam from seesawEndFt to takeoffRampStartFt (covers post-seesaw and Sector 5 Water Cannon Gauntlet)
+  addBeamSegmentFt(courseDef.seesawEndFt, courseDef.takeoffRampStartFt, 0.9144, beamMat);
 
+  // 6. Sector 5: Water Cannon Hazard Batteries
   const waterCannonJets: THREE.Mesh[] = [];
-  const jetMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#7dd3fc'), transparent: true, opacity: 0.7 });
-  for (const sign of [-1, 1]) {
-    const cannonStand = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.6, 8), pilingMat);
-    cannonStand.position.set(42.672, 1.3, sign * 2.2);
-    group.add(cannonStand);
+  const extraWaterCannonJets: THREE.Mesh[] = [];
+  const cannonNozzleGeo = new THREE.CylinderGeometry(0.14, 0.20, 0.70, 12);
+  const cannonNozzleMat = new THREE.MeshStandardMaterial({
+    color: '#ef4444',
+    roughness: 0.3,
+    metalness: 0.7,
+  });
+  const cannonPedestalGeo = new THREE.CylinderGeometry(0.28, 0.36, 4.3, 12);
+  const cannonTurretGeo = new THREE.SphereGeometry(0.25, 12, 12);
+  const jetGeo = new THREE.CylinderGeometry(0.24, 0.05, 2.45, 12);
 
-    const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.12, 2.1, 8), jetMat);
-    jet.rotation.z = Math.PI / 2;
-    jet.position.set(42.672, 2.6, sign * 1.1);
-    group.add(jet);
-    waterCannonJets.push(jet);
-  }
+  courseDef.waterCannonStationsFt.forEach((stationFt, stationIdx) => {
+    const cannonXM = stationFt * FT_TO_M;
+    for (const side of [-1, 1]) {
+      const pedestal = new THREE.Mesh(cannonPedestalGeo, fulcrumSteelMat);
+      pedestal.position.set(cannonXM, 0.0, side * 2.85);
+      const turret = new THREE.Mesh(cannonTurretGeo, fulcrumSteelMat);
+      turret.position.set(cannonXM, 2.18, side * 2.85);
+      const nozzle = new THREE.Mesh(cannonNozzleGeo, cannonNozzleMat);
+      nozzle.position.set(cannonXM, 2.24, side * 2.68);
+      nozzle.rotation.x = -side * 1.45;
+      group.add(pedestal, turret, nozzle);
 
-  // 7. Sector 6: Ramp Gap Jump (Takeoff at 48.768m, open air gap to 56.388m)
-  const rampTakeoff = new THREE.Mesh(
-    new THREE.BoxGeometry(2.438, 0.18, 0.9144),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#ea580c'), roughness: 0.5 })
-  );
-  rampTakeoff.rotation.z = (12 * Math.PI) / 180;
-  rampTakeoff.position.set(48.768 - 1.2, 2.4384 + 0.25, 0);
-  group.add(rampTakeoff);
-
-  const rampLanding = new THREE.Mesh(
-    new THREE.BoxGeometry(2.0, 0.20, 1.2),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#16a34a'), roughness: 0.6 })
-  );
-  rampLanding.position.set(56.388 + 1.0, 2.4384 - 0.10, 0);
-  group.add(rampLanding);
-
-  // 8. Sector 7: Finish Bell Platform (s in [185, 200] ft -> X in [56.388, 60.96] m)
-  const finishDeck = new THREE.Mesh(
-    new THREE.BoxGeometry(6.0, 0.20, 1.83),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#1e3a8a'), roughness: 0.6 })
-  );
-  finishDeck.position.set(59.0, 2.4384 - 0.10, 0);
-  finishDeck.receiveShadow = true;
-  group.add(finishDeck);
-
-  // Red Bull Grand Finish Arch
-  const finishArch = new THREE.Group();
-  finishArch.position.set(60.96, 2.4384, 0);
-  const archPillar1 = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 4.0), archPillarMat);
-  archPillar1.position.set(0, 2.0, -1.25);
-  const archPillar2 = archPillar1.clone();
-  archPillar2.position.z = 1.25;
-  const archCross = new THREE.Mesh(
-    new THREE.BoxGeometry(0.4, 0.5, 2.8),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#f59e0b'), metalness: 0.7, roughness: 0.2 })
-  );
-  archCross.position.set(0, 4.0, 0);
-  finishArch.add(archPillar1, archPillar2, archCross);
-
-  // Golden Canal Finish Bell
-  const finishBellGroup = new THREE.Group();
-  finishBellGroup.position.set(0, 3.5, 0);
-  const finishBellMesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.32, 0.45, 16),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#f59e0b'), metalness: 0.85, roughness: 0.15 })
-  );
-  const finishClapperMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.08, 8, 8),
-    new THREE.MeshStandardMaterial({ color: new THREE.Color('#78350f'), metalness: 0.9 })
-  );
-  finishClapperMesh.position.set(0, -0.22, 0);
-  finishBellGroup.add(finishBellMesh, finishClapperMesh);
-  finishArch.add(finishBellGroup);
-  group.add(finishArch);
-
-  // 9. Floating Distance Buoys in Canal
-  const buoyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#f59e0b'), roughness: 0.3 });
-  [15.24, 30.48, 45.72, 60.96].forEach((bx) => {
-    [-3.2, 3.2].forEach((bz) => {
-      const buoy = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 0.8, 12), buoyMat);
-      buoy.position.set(bx, 0.15, bz);
-      group.add(buoy);
-    });
+      const jetMat = new THREE.MeshBasicMaterial({
+        color: '#e0f2fe',
+        transparent: true,
+        opacity: 0.65,
+      });
+      const jet = new THREE.Mesh(jetGeo, jetMat);
+      jet.position.set(cannonXM, 2.42, side * 1.12);
+      jet.rotation.x = -side * 1.45;
+      group.add(jet);
+      if (stationIdx === 0) {
+        waterCannonJets.push(jet);
+      } else {
+        extraWaterCannonJets.push(jet);
+      }
+    }
   });
 
-  // 10. Water Splash Droplets & Foam Rings
+  // 7. Sector 6: Continuous Takeoff Kicker Ramp & Gap Jump
+  // Build a solid 3D wedge ramp from takeoffRampStartFt (8.0 ft) to gapStartFt (9.45 ft) matching getTrackElevationAtDistance!
+  const rampStartM = courseDef.takeoffRampStartFt * FT_TO_M;
+  const rampEndM = courseDef.gapStartFt * FT_TO_M;
+  const rampYStartM = 8.0 * FT_TO_M;
+  const rampYEndM = 9.45 * FT_TO_M;
+  const rampThickM = 0.22;
+  const rampHalfWM = 0.48;
+
+  const rampVerts = new Float32Array([
+    // Left side (-rampHalfWM)
+    rampStartM, rampYStartM, -rampHalfWM,               // 0: start top L
+    rampEndM,   rampYEndM,   -rampHalfWM,               // 1: end top L
+    rampStartM, rampYStartM - rampThickM, -rampHalfWM,  // 2: start bot L
+    rampEndM,   rampYStartM - rampThickM, -rampHalfWM,  // 3: end bot L
+    // Right side (+rampHalfWM)
+    rampStartM, rampYStartM, rampHalfWM,                // 4: start top R
+    rampEndM,   rampYEndM,   rampHalfWM,                // 5: end top R
+    rampStartM, rampYStartM - rampThickM, rampHalfWM,   // 6: start bot R
+    rampEndM,   rampYStartM - rampThickM, rampHalfWM,   // 7: end bot R
+  ]);
+  const rampIndices = [
+    // Top slope
+    0, 4, 1, 4, 5, 1,
+    // Bottom base
+    2, 3, 6, 6, 3, 7,
+    // Left wall
+    0, 1, 2, 1, 3, 2,
+    // Right wall
+    4, 6, 5, 5, 6, 7,
+    // Back lip at gapStartFt
+    1, 5, 3, 5, 7, 3,
+  ];
+  const rampGeo = new THREE.BufferGeometry();
+  rampGeo.setAttribute('position', new THREE.BufferAttribute(rampVerts, 3));
+  rampGeo.setIndex(rampIndices);
+  rampGeo.computeVertexNormals();
+  const rampMat = new THREE.MeshStandardMaterial({
+    color: '#f97316',
+    roughness: 0.4,
+    metalness: 0.25,
+    side: THREE.DoubleSide,
+  });
+  const rampTakeoff = new THREE.Mesh(rampGeo, rampMat);
+  rampTakeoff.castShadow = true;
+  rampTakeoff.receiveShadow = true;
+  group.add(rampTakeoff);
+
+  // Structural support pilings under the Takeoff Ramp lip
+  for (const px of [rampStartM + 0.6, rampEndM - 0.35]) {
+    for (const side of [-1, 1]) {
+      const piling = new THREE.Mesh(pilingGeo, pilingMat);
+      piling.position.set(px, rampYStartM - rampThickM - 2.20, side * (rampHalfWM * 0.78));
+      group.add(piling);
+    }
+  }
+
+  // Floating Hazard Buoys in the Water Gap (gapStartFt to gapEndFt)
+  const buoyGeo = new THREE.TorusGeometry(0.32, 0.10, 10, 20);
+  buoyGeo.rotateX(Math.PI / 2);
+  const gapMidXM = ((courseDef.gapStartFt + courseDef.gapEndFt) * 0.5) * FT_TO_M;
+  for (const offsetM of [-2.4, 0, 2.4]) {
+    for (const side of [-1, 1]) {
+      const buoy = new THREE.Mesh(buoyGeo, redBullRedMat);
+      buoy.position.set(gapMidXM + offsetM, 0.06, side * 1.35);
+      group.add(buoy);
+    }
+  }
+
+  // Post-Gap Landing Runway (from gapEndFt to finishDeckStartFt — strictly non-overlapping with finishDeck!)
+  const landingMat = new THREE.MeshStandardMaterial({
+    color: '#22c55e',
+    roughness: 0.45,
+    metalness: 0.2,
+  });
+  addBeamSegmentFt(courseDef.gapEndFt, courseDef.finishDeckStartFt, 1.15, landingMat);
+
+  // 8. Sector 7: Wide Finish Bell Platform (from finishDeckStartFt to finishBellFt + 12, zero Z-fighting!)
+  addBeamSegmentFt(courseDef.finishDeckStartFt, courseDef.finishBellFt + 12, 2.44, redBullBlueMat);
+
+  // Distance Marker Buoys & Canal Flags every 100 FT along the pier
+  const markerPoleGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.6, 8);
+  const markerFlagGeo = new THREE.BoxGeometry(0.55, 0.32, 0.04);
+  for (let distFt = 100; distFt < courseDef.lengthFt; distFt += 100) {
+    const mx = distFt * FT_TO_M;
+    const buoy = new THREE.Mesh(buoyGeo, redBullBlueMat);
+    buoy.position.set(mx, 0.06, -3.2);
+    const pole = new THREE.Mesh(markerPoleGeo, fulcrumSteelMat);
+    pole.position.set(mx, 1.3, -3.2);
+    const flag = new THREE.Mesh(markerFlagGeo, distFt % 200 === 0 ? redBullRedMat : beamMat);
+    flag.position.set(mx + 0.25, 2.35, -3.2);
+    group.add(buoy, pole, flag);
+  }
+
+  // Golden Finish Bell Arch at finishBellFt
+  const bellXM = courseDef.finishBellFt * FT_TO_M;
+  const finishBellGroup = new THREE.Group();
+  finishBellGroup.position.set(bellXM, pierElevationM + 2.55, 0);
+
+  const bellArchL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 2.8, 10), redBullRedMat);
+  bellArchL.position.set(0, -1.2, -1.05);
+  const bellArchR = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 2.8, 10), redBullRedMat);
+  bellArchR.position.set(0, -1.2, 1.05);
+  const bellCrossbar = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 2.4), redBullRedMat);
+  bellCrossbar.position.set(0, 0.2, 0);
+  finishBellGroup.add(bellArchL, bellArchR, bellCrossbar);
+
+  const goldBellMat = new THREE.MeshStandardMaterial({
+    color: '#fbbf24',
+    roughness: 0.15,
+    metalness: 0.92,
+  });
+  const finishBellMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.16, 0.38, 0.48, 20),
+    goldBellMat
+  );
+  finishBellMesh.position.set(0, -0.22, 0);
+  finishBellMesh.castShadow = true;
+  finishBellGroup.add(finishBellMesh);
+
+  const finishClapperMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08, 10, 10),
+    new THREE.MeshStandardMaterial({ color: '#ef4444', roughness: 0.3, metalness: 0.6 })
+  );
+  finishClapperMesh.position.set(0, -0.48, 0);
+  finishBellGroup.add(finishClapperMesh);
+
+  group.add(finishBellGroup);
+
+  // 9. Splashdown Hydro-Burst Particle Pool (40 droplets + 3 expanding foam rings)
   const splashGroup = new THREE.Group();
   splashGroup.visible = false;
-  const splashDrops: CourseEnvScene['splashDrops'] = [];
-  const dropGeo = new THREE.SphereGeometry(0.12, 8, 8);
-  const dropMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#f0f9ff') });
+  const splashDrops: { mesh: THREE.Mesh; vel: THREE.Vector3 }[] = [];
+  const dropGeo = new THREE.SphereGeometry(0.09, 8, 8);
+  const dropMat = new THREE.MeshBasicMaterial({
+    color: '#e0f2fe',
+    transparent: true,
+    opacity: 0.9,
+  });
+
   for (let i = 0; i < 40; i++) {
-    const m = new THREE.Mesh(dropGeo, dropMat);
-    m.visible = false;
-    splashGroup.add(m);
-    splashDrops.push({ mesh: m, vx: 0, vy: 0, vz: 0, life: 0 });
+    const mesh = new THREE.Mesh(dropGeo, dropMat);
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 4.5;
+    const vel = new THREE.Vector3(
+      Math.cos(angle) * speed,
+      3.5 + Math.random() * 5.5,
+      Math.sin(angle) * speed
+    );
+    splashGroup.add(mesh);
+    splashDrops.push({ mesh, vel });
   }
 
   const foamRings: THREE.Mesh[] = [];
+  const foamGeo = new THREE.RingGeometry(0.3, 0.5, 24);
+  foamGeo.rotateX(-Math.PI / 2);
   for (let i = 0; i < 3; i++) {
-    const ringGeo = new THREE.RingGeometry(0.6 + i * 0.4, 0.9 + i * 0.45, 32);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ringMesh = new THREE.Mesh(
-      ringGeo,
-      new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffffff'), transparent: true, opacity: 0.85, side: THREE.DoubleSide })
-    );
-    ringMesh.visible = false;
-    splashGroup.add(ringMesh);
-    foamRings.push(ringMesh);
+    const foamMat = new THREE.MeshBasicMaterial({
+      color: '#ffffff',
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+    });
+    const ring = new THREE.Mesh(foamGeo, foamMat);
+    ring.position.y = 0.05;
+    splashGroup.add(ring);
+    foamRings.push(ring);
   }
   group.add(splashGroup);
 
-  // 11. Celebration Confetti Quads
+  // 10. Finish Bell Celebration Confetti Pool (80 particles)
   const confettiGroup = new THREE.Group();
+  confettiGroup.position.set(bellXM, pierElevationM + 3.1, 0);
   confettiGroup.visible = false;
-  const confettiParticles: CourseEnvScene['confettiParticles'] = [];
-  const confettiColors = ['#f59e0b', '#dc2626', '#1e3a8a', '#06b6d4', '#ffffff'];
-  const confGeo = new THREE.PlaneGeometry(0.12, 0.09);
+  const confettiParticles: { mesh: THREE.Mesh; vel: THREE.Vector3; rotVel: THREE.Vector3 }[] = [];
+  const confGeo = new THREE.PlaneGeometry(0.12, 0.08);
+  const confColors = ['#ef4444', '#facc15', '#38bdf8', '#4ade80', '#ec4899', '#f97316'];
+
   for (let i = 0; i < 80; i++) {
-    const color = confettiColors[i % confettiColors.length];
-    const m = new THREE.Mesh(confGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide }));
-    m.visible = false;
-    confettiGroup.add(m);
-    confettiParticles.push({
-      mesh: m,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      rotX: Math.random() * 5,
-      rotY: Math.random() * 5,
-      rotZ: Math.random() * 5,
+    const confMat = new THREE.MeshBasicMaterial({
+      color: confColors[i % confColors.length],
+      side: THREE.DoubleSide,
     });
+    const mesh = new THREE.Mesh(confGeo, confMat);
+    const vel = new THREE.Vector3(
+      (Math.random() - 0.5) * 5.0,
+      2.0 + Math.random() * 4.0,
+      (Math.random() - 0.5) * 5.0
+    );
+    const rotVel = new THREE.Vector3(
+      Math.random() * 6,
+      Math.random() * 6,
+      Math.random() * 6
+    );
+    confettiGroup.add(mesh);
+    confettiParticles.push({ mesh, vel, rotVel });
   }
   group.add(confettiGroup);
 
   return {
     group,
+    courseDef,
+    seesawPivotYM,
     waterMesh,
     seesawPivotGroup,
+    waterCannonJets,
+    extraWaterCannonJets,
     finishBellGroup,
     finishBellMesh,
     finishClapperMesh,
-    waterCannonJets,
     splashGroup,
     splashDrops,
     foamRings,
@@ -613,521 +818,588 @@ export function buildCourseEnvironment(): CourseEnvScene {
 }
 
 // ============================================================================
-// 5. MAIN TANDEMCANVAS3D COMPONENT
+// 4. MAIN REACT COMPONENT: TandemCanvas3D
 // ============================================================================
 
-export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
+export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
   mode,
   loadout,
-  metrics,
-  selectedCategory,
-  dynoActive,
-  dynoTiltAngleDeg = 0,
-  dynoSwayAuto = false,
-  paused = false,
   simStateRef,
-  bestDistanceFeet = 0,
-  bestTimeSec = null,
+  selectedCategory,
   onSelectCategory,
-  onHudSync,
-  onRunFinished,
+  dynoMetrics: propDynoMetrics,
+  metrics: propMetrics,
+  isDynoActive: propIsDynoActive,
+  dynoActive: propDynoActive,
+  dynoTiltAngleDeg: propDynoTiltAngleDeg,
+  dynoSwayAuto: propDynoSwayAuto,
+  onToggleDyno,
+  courseId = DEFAULT_TANDEM_COURSE_ID,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Mutable refs for zero-overhead animation loop
+  const isControlledByWorkshopHud = propDynoActive !== undefined || propDynoTiltAngleDeg !== undefined;
+
+  // Internal Dyno & Camera Controls State
+  const [internalDynoActive, setInternalDynoActive] = useState<boolean>(false);
+  const isDynoActive =
+    propDynoActive !== undefined
+      ? propDynoActive
+      : propIsDynoActive !== undefined
+      ? propIsDynoActive
+      : internalDynoActive;
+
+  const [dynoTiltDeg, setDynoTiltDeg] = useState<number>(0);
+  const effectiveDynoTiltDeg = propDynoTiltAngleDeg !== undefined ? propDynoTiltAngleDeg : dynoTiltDeg;
+  const [dynoAutoSweep, setDynoAutoSweep] = useState<boolean>(false);
+  const effectiveDynoAutoSweep = propDynoSwayAuto !== undefined ? propDynoSwayAuto : dynoAutoSweep;
+  const [dynoCadenceRpm, setDynoCadenceRpm] = useState<number>(85);
+  const [hoveredSocket, setHoveredSocket] = useState<TandemCategory | null>(null);
+  const [webglError, setWebglError] = useState<string | null>(null);
+
+  // Derived Dyno Metrics
+  const metrics = React.useMemo(
+    () => propMetrics || propDynoMetrics || computeTandemDynoMetrics(loadout),
+    [propMetrics, propDynoMetrics, loadout]
+  );
+
+  const activeCourseDef = React.useMemo(
+    () => getTandemCourseById(courseId),
+    [courseId]
+  );
+
+  // Mutable refs for 60fps animation loop access without re-binding WebGL context
   const modeRef = useRef(mode);
-  const loadoutRef = useRef(loadout);
-  const metricsRef = useRef(metrics);
-  const selectedCatRef = useRef(selectedCategory);
-  const dynoActiveRef = useRef(dynoActive);
-  const dynoTiltDegRef = useRef(dynoTiltAngleDeg);
-  const dynoSwayRef = useRef(dynoSwayAuto);
-  const pausedRef = useRef(paused);
-  const onSelectCatRef = useRef(onSelectCategory);
-  const onHudSyncRef = useRef(onHudSync);
-  const onRunFinishedRef = useRef(onRunFinished);
-
   modeRef.current = mode;
-  loadoutRef.current = loadout;
-  metricsRef.current = metrics;
-  selectedCatRef.current = selectedCategory;
-  dynoActiveRef.current = dynoActive;
-  dynoTiltDegRef.current = dynoTiltAngleDeg;
-  dynoSwayRef.current = dynoSwayAuto;
-  pausedRef.current = paused;
-  onSelectCatRef.current = onSelectCategory;
-  onHudSyncRef.current = onHudSync;
-  onRunFinishedRef.current = onRunFinished;
 
+  const courseIdRef = useRef<TandemCourseId>(courseId);
+  courseIdRef.current = courseId;
+
+  const isDynoRef = useRef(isDynoActive);
+  isDynoRef.current = isDynoActive;
+
+  const dynoTiltDegRef = useRef(effectiveDynoTiltDeg);
+  dynoTiltDegRef.current = effectiveDynoTiltDeg;
+
+  const dynoAutoSweepRef = useRef(effectiveDynoAutoSweep);
+  dynoAutoSweepRef.current = effectiveDynoAutoSweep;
+
+  const dynoCadenceRpmRef = useRef(dynoCadenceRpm);
+  dynoCadenceRpmRef.current = dynoCadenceRpm;
+
+  const selectedCategoryRef = useRef(selectedCategory);
+  selectedCategoryRef.current = selectedCategory;
+
+  const onSelectCategoryRef = useRef(onSelectCategory);
+  onSelectCategoryRef.current = onSelectCategory;
+
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
+
+  // Spherical Orbit Camera State (Workshop)
+  const orbitStateRef = useRef({
+    theta: 0.55,
+    phi: 1.18,
+    radius: 3.5,
+    targetTheta: 0.55,
+    targetPhi: 1.18,
+    targetRadius: 3.5,
+    isDragging: false,
+    pointerDownX: 0,
+    pointerDownY: 0,
+    lastX: 0,
+    lastY: 0,
+  });
+
+  // Three.js Scene Graph Refs
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const bikeGroupsRef = useRef<TandemBike3DGroups | null>(null);
   const workshopBayRef = useRef<WorkshopBayScene | null>(null);
   const courseEnvRef = useRef<CourseEnvScene | null>(null);
-
-  const orbitYawRef = useRef<number>(-0.65);
-  const orbitPitchRef = useRef<number>(0.28);
-  const orbitRadiusRef = useRef<number>(6.2);
+  const dirLightRef = useRef<THREE.DirectionalLight | null>(null);
+  const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
   const snapBounceRef = useRef<number>(0);
-  const hoveredCategoryRef = useRef<TandemCategory | null>(null);
-  const runCamSnappedRef = useRef<boolean>(false);
-  const hasTriggeredSplashParticlesRef = useRef<boolean>(false);
+
+  // Course Particle Trigger Trackers
+  const hasTriggeredSplashRef = useRef<boolean>(false);
+  const splashStartTimeRef = useRef<number>(0);
   const hasTriggeredConfettiRef = useRef<boolean>(false);
+  const confettiStartTimeRef = useRef<number>(0);
 
-  // Smoothly frame camera on category change in workshop mode
-  useEffect(() => {
-    if (mode !== 'workshop') return;
-    const preset = CATEGORY_CAMERA_PRESETS[selectedCategory];
-    if (preset) {
-      orbitYawRef.current = preset.yaw;
-      orbitPitchRef.current = preset.pitch;
-      orbitRadiusRef.current = preset.radius;
-    }
-  }, [selectedCategory, mode]);
-
-  // Mode transition handling
-  useEffect(() => {
-    runCamSnappedRef.current = false;
-    hasTriggeredSplashParticlesRef.current = false;
-    hasTriggeredConfettiRef.current = false;
-  }, [mode]);
-
-  // Rebuild procedural 3D tandem bike whenever loadout changes
-  useEffect(() => {
-    const scene = sceneRef.current;
-    const bay = workshopBayRef.current;
-    if (!scene || !bay) return;
-
-    if (bikeGroupsRef.current) {
-      if (bikeGroupsRef.current.root.parent) {
-        bikeGroupsRef.current.root.parent.remove(bikeGroupsRef.current.root);
-      }
-      disposeTandemBike3D(bikeGroupsRef.current.root);
-      bikeGroupsRef.current = null;
-    }
-
-    const built = buildTandemBike3D(loadout);
-    if (modeRef.current === 'workshop') {
-      bay.dynoPivotGroup.add(built.root);
+  const handleToggleDyno = useCallback(() => {
+    const next = !isDynoActive;
+    if (onToggleDyno) {
+      onToggleDyno(next);
     } else {
-      scene.add(built.root);
+      setInternalDynoActive(next);
     }
-    bikeGroupsRef.current = built;
-    snapBounceRef.current = 1.0;
-  }, [loadout]);
+    if (!next) {
+      setDynoTiltDeg(0);
+      setDynoAutoSweep(false);
+    }
+    soundEngine.playSnapPop();
+  }, [isDynoActive, onToggleDyno]);
 
+  const handleResetCamera = useCallback(() => {
+    orbitStateRef.current.targetTheta = 0.55;
+    orbitStateRef.current.targetPhi = 1.18;
+    orbitStateRef.current.targetRadius = 3.5;
+  }, []);
+
+  // ==========================================================================
+  // EFFECT 1: INITIALIZE WEBGL RENDERER, SCENE, LIGHTS & ANIMATION LOOP
+  // ==========================================================================
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    // 1. Scene, Camera, WebGLRenderer
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#0f172a');
-    scene.fog = new THREE.FogExp2('#0f172a', 0.008);
-    sceneRef.current = scene;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: 'high-performance',
+      });
+    } catch {
+      setWebglError('WebGL context unavailable in this browser environment.');
+      return;
+    }
 
-    const camera = new THREE.PerspectiveCamera(
-      52,
-      container.clientWidth / Math.max(1, container.clientHeight),
-      0.1,
-      400
-    );
-
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      powerPreference: 'high-performance',
-    });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const width = container.clientWidth || window.innerWidth || 1024;
+    const height = container.clientHeight || window.innerHeight || 768;
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
+    renderer.toneMappingExposure = 1.12;
+
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    // 2. Lighting Setup
-    const hemiLight = new THREE.HemisphereLight('#f8fafc', '#0284c7', 0.75);
+    // Scene & Fog
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#0f172a');
+    scene.fog = new THREE.FogExp2('#0f172a', 0.015);
+    sceneRef.current = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 450);
+    camera.position.set(2.2, 1.6, 3.2);
+    cameraRef.current = camera;
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight('#f8fafc', 0.78);
+    scene.add(ambientLight);
+    ambientLightRef.current = ambientLight;
+
+    const hemiLight = new THREE.HemisphereLight('#bae6fd', '#1e293b', 0.65);
     scene.add(hemiLight);
 
-    const sunLight = new THREE.DirectionalLight('#fffbeb', 1.65);
-    sunLight.position.set(10, 22, 14);
-    sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 2048;
-    sunLight.shadow.mapSize.height = 2048;
-    sunLight.shadow.camera.near = 0.5;
-    sunLight.shadow.camera.far = 120;
-    sunLight.shadow.bias = -0.0004;
-    sunLight.shadow.normalBias = 0.02;
-    const shadowBound = 6.0;
-    sunLight.shadow.camera.left = -shadowBound;
-    sunLight.shadow.camera.right = shadowBound;
-    sunLight.shadow.camera.top = shadowBound;
-    sunLight.shadow.camera.bottom = -shadowBound;
-    scene.add(sunLight);
-    scene.add(sunLight.target);
+    const dirLight = new THREE.DirectionalLight('#fffbeb', 1.85);
+    dirLight.position.set(8, 16, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 65;
+    const d = 9;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    scene.add(dirLight);
+    dirLightRef.current = dirLight;
 
-    const cyanRim = new THREE.DirectionalLight('#38bdf8', 0.85);
-    cyanRim.position.set(-8, 7, -10);
-    scene.add(cyanRim);
+    // Build Environments
+    const workshopBay = buildWorkshopBayEnvironment();
+    scene.add(workshopBay.group);
+    workshopBayRef.current = workshopBay;
 
-    const amberFill = new THREE.DirectionalLight('#f59e0b', 0.65);
-    amberFill.position.set(8, 8, 8);
-    scene.add(amberFill);
+    const courseEnv = buildCourseEnvironment(courseIdRef.current);
+    courseEnv.group.visible = false;
+    scene.add(courseEnv.group);
+    courseEnvRef.current = courseEnv;
 
-    // 3. Workshop Bay Environment
-    const bay = buildWorkshopBayEnvironment();
-    scene.add(bay.group);
-    workshopBayRef.current = bay;
+    // Build initial Tandem Bike
+    const initialBike = buildTandemBike3D(loadout);
+    workshopBay.dynoPivotGroup.add(initialBike.root);
+    bikeGroupsRef.current = initialBike;
 
-    // 4. Over-Water Course Environment
-    const course = buildCourseEnvironment();
-    scene.add(course.group);
-    courseEnvRef.current = course;
-
-    // Initial 3D Tandem Bike Build
-    const initialBuilt = buildTandemBike3D(loadoutRef.current);
-    if (modeRef.current === 'workshop') {
-      bay.dynoPivotGroup.add(initialBuilt.root);
-    } else {
-      scene.add(initialBuilt.root);
-    }
-    bikeGroupsRef.current = initialBuilt;
-
-    // 5. Pointer Orbit, Touch Pinch & Socket Raycasting
+    // Raycaster for Socket Selection
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
-    const activePointers = new Map<number, { x: number; y: number }>();
-    let prevPinchDist = 0;
-    let isDragging = false;
-    let downX = 0;
-    let downY = 0;
-    let prevX = 0;
-    let prevY = 0;
 
-    const getPinchDistance = () => {
-      const pts = Array.from(activePointers.values());
-      if (pts.length < 2) return 0;
-      return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const getCanvasRelativeCoords = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const x = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+      const y = -((clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
+      return { x, y };
     };
 
     const onPointerDown = (e: PointerEvent) => {
       if (modeRef.current !== 'workshop') return;
-      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      isDragging = true;
-      downX = e.clientX;
-      downY = e.clientY;
-      prevX = e.clientX;
-      prevY = e.clientY;
+      orbitStateRef.current.isDragging = true;
+      orbitStateRef.current.pointerDownX = e.clientX;
+      orbitStateRef.current.pointerDownY = e.clientY;
+      orbitStateRef.current.lastX = e.clientX;
+      orbitStateRef.current.lastY = e.clientY;
     };
 
     const onPointerMove = (e: PointerEvent) => {
       if (modeRef.current !== 'workshop') return;
-      const existing = activePointers.get(e.pointerId);
-      if (existing) {
-        existing.x = e.clientX;
-        existing.y = e.clientY;
-      }
-      if (activePointers.size === 2) {
-        const dist = getPinchDistance();
-        if (prevPinchDist > 0) {
-          const delta = prevPinchDist - dist;
-          orbitRadiusRef.current = Math.max(3.2, Math.min(11.5, orbitRadiusRef.current + delta * 0.015));
-        }
-        prevPinchDist = dist;
+
+      if (orbitStateRef.current.isDragging) {
+        const dx = e.clientX - orbitStateRef.current.lastX;
+        const dy = e.clientY - orbitStateRef.current.lastY;
+        orbitStateRef.current.lastX = e.clientX;
+        orbitStateRef.current.lastY = e.clientY;
+
+        orbitStateRef.current.targetTheta -= dx * 0.008;
+        orbitStateRef.current.targetPhi = Math.max(
+          0.35,
+          Math.min(1.48, orbitStateRef.current.targetPhi - dy * 0.007)
+        );
         return;
       }
-      if (!isDragging) {
-        if (activePointers.size === 0 && bikeGroupsRef.current) {
-          const rect = renderer.domElement.getBoundingClientRect();
-          pointerNdc.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
-          pointerNdc.y = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
-          raycaster.setFromCamera(pointerNdc, camera);
-          const hits = raycaster.intersectObjects(bikeGroupsRef.current.socketMarkerList, false);
-          const hitCat = hits.length > 0 ? (hits[0].object.userData?.category as TandemCategory) ?? null : null;
-          if (hoveredCategoryRef.current !== hitCat) {
-            hoveredCategoryRef.current = hitCat;
-            container.style.cursor = hitCat ? 'pointer' : '';
-          }
+
+      if (bikeGroupsRef.current && !isDynoRef.current) {
+        const coords = getCanvasRelativeCoords(e.clientX, e.clientY);
+        pointerNdc.set(coords.x, coords.y);
+        raycaster.setFromCamera(pointerNdc, camera);
+        const hits = raycaster.intersectObjects(bikeGroupsRef.current.socketMarkerList, false);
+        if (hits.length > 0) {
+          const cat = hits[0].object.userData?.category as TandemCategory | undefined;
+          setHoveredSocket(cat || null);
+          renderer.domElement.style.cursor = 'pointer';
+        } else {
+          setHoveredSocket(null);
+          renderer.domElement.style.cursor = 'grab';
         }
-        return;
+      } else {
+        setHoveredSocket(null);
+        renderer.domElement.style.cursor = 'grab';
       }
-      const dx = e.clientX - prevX;
-      const dy = e.clientY - prevY;
-      prevX = e.clientX;
-      prevY = e.clientY;
-      orbitYawRef.current -= dx * 0.008;
-      orbitPitchRef.current = Math.max(0.06, Math.min(1.52, orbitPitchRef.current + dy * 0.006));
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      activePointers.delete(e.pointerId);
-      if (activePointers.size < 2) prevPinchDist = 0;
-      if (isDragging && modeRef.current === 'workshop' && bikeGroupsRef.current) {
-        const moveDist = Math.hypot(e.clientX - downX, e.clientY - downY);
-        if (moveDist < 6 && onSelectCatRef.current) {
-          const rect = renderer.domElement.getBoundingClientRect();
-          pointerNdc.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
-          pointerNdc.y = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
-          raycaster.setFromCamera(pointerNdc, camera);
-          const hits = raycaster.intersectObjects(bikeGroupsRef.current.socketMarkerList, false);
-          if (hits.length > 0) {
-            const cat = hits[0].object.userData?.category as TandemCategory | undefined;
-            if (cat) {
-              soundEngine.playSnapPop();
-              onSelectCatRef.current(cat);
-            }
+      if (modeRef.current !== 'workshop') return;
+      const moveDist = Math.hypot(
+        e.clientX - orbitStateRef.current.pointerDownX,
+        e.clientY - orbitStateRef.current.pointerDownY
+      );
+      orbitStateRef.current.isDragging = false;
+
+      if (moveDist < 6 && bikeGroupsRef.current && !isDynoRef.current) {
+        const coords = getCanvasRelativeCoords(e.clientX, e.clientY);
+        pointerNdc.set(coords.x, coords.y);
+        raycaster.setFromCamera(pointerNdc, camera);
+        const hits = raycaster.intersectObjects(bikeGroupsRef.current.socketMarkerList, false);
+        if (hits.length > 0) {
+          const cat = hits[0].object.userData?.category as TandemCategory | undefined;
+          if (cat && onSelectCategoryRef.current) {
+            onSelectCategoryRef.current(cat);
+            soundEngine.playSnapPop();
           }
         }
       }
-      isDragging = false;
-    };
-
-    const onPointerCancel = (e: PointerEvent) => {
-      activePointers.delete(e.pointerId);
-      prevPinchDist = 0;
-      isDragging = false;
     };
 
     const onWheel = (e: WheelEvent) => {
       if (modeRef.current !== 'workshop') return;
       e.preventDefault();
-      orbitRadiusRef.current = Math.max(
-        3.2,
-        Math.min(11.5, orbitRadiusRef.current + e.deltaY * 0.0035)
+      orbitStateRef.current.targetRadius = Math.max(
+        2.0,
+        Math.min(6.2, orbitStateRef.current.targetRadius + e.deltaY * 0.0025)
       );
     };
 
     const domEl = renderer.domElement;
     domEl.addEventListener('pointerdown', onPointerDown);
-    domEl.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerCancel);
+    domEl.addEventListener('wheel', onWheel, { passive: false });
 
-    // 6. Dynamic Resize Handling
-    const handleResize = () => {
+    const onResize = () => {
       if (!container) return;
-      const w = container.clientWidth;
-      const h = Math.max(1, container.clientHeight);
-      camera.aspect = w / h;
-      camera.fov = w / h > 1.9 ? 46 : w < 540 ? 58 : 52;
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || window.innerHeight;
+      camera.aspect = w / Math.max(1, h);
       camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(w, h);
     };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(handleResize) : null;
-    resizeObserver?.observe(container);
+    window.addEventListener('resize', onResize);
 
-    // 7. Main 60Hz/120Hz Animation Loop
-    let lastTime = performance.now();
-    let rafId = 0;
-    const smoothedLookAt = new THREE.Vector3(0, 0.45, 0);
-    const desiredCamPos = new THREE.Vector3();
+    // Animation Loop
+    let animFrameId = 0;
+    let lastTimeMs = performance.now();
+    let elapsedSec = 0;
+    let lastSceneMode: 'workshop' | 'course' | null = null;
+    let lastSceneCourseId: TandemCourseId | null = null;
 
-    const animate = (now: number) => {
-      rafId = requestAnimationFrame(animate);
-      if (pausedRef.current) {
-        lastTime = now;
-        return;
-      }
-      const dt = Math.min(0.05, (now - lastTime) / 1000);
-      lastTime = now;
-      const elapsedSec = now * 0.001;
+    const animate = (nowMs: number) => {
+      animFrameId = requestAnimationFrame(animate);
+      const dt = Math.min(0.05, Math.max(0.001, (nowMs - lastTimeMs) / 1000));
+      lastTimeMs = nowMs;
+      elapsedSec += dt;
 
-      const craft = bikeGroupsRef.current;
       const currentMode = modeRef.current;
-      const curMetrics = metricsRef.current;
-      const isDyno = dynoActiveRef.current;
+      const currentCourseId = courseIdRef.current;
+      const craft = bikeGroupsRef.current;
+      const bay = workshopBayRef.current;
+      let course = courseEnvRef.current;
 
-      bay.group.visible = (currentMode === 'workshop');
-      course.group.visible = (currentMode === 'course');
+      if (!craft || !bay || !course) return;
 
-      if (!craft) return;
-
-      // Part Swap Snap Pop Animation
-      if (snapBounceRef.current > 0.01) {
-        snapBounceRef.current *= Math.pow(0.04, dt);
-        const s = 1 + Math.sin(snapBounceRef.current * Math.PI * 3) * 0.08 * snapBounceRef.current;
-        craft.frameGroup.scale.set(s, s, s);
-      } else {
-        craft.frameGroup.scale.set(1, 1, 1);
+      // Rebuild course environment if courseId changed
+      if (course.courseDef.id !== currentCourseId) {
+        if (craft.root.parent === course.group) {
+          course.group.remove(craft.root);
+        }
+        scene.remove(course.group);
+        disposeTandemSceneObjects(course.group, false);
+        const nextCourse = buildCourseEnvironment(currentCourseId);
+        nextCourse.group.visible = currentMode === 'course';
+        scene.add(nextCourse.group);
+        courseEnvRef.current = nextCourse;
+        course = nextCourse;
+        lastSceneCourseId = null; // Force atmosphere refresh below
       }
+
+      // Update scene background, fog, and sun lighting ONLY when mode or course changes
+      if (lastSceneMode !== currentMode || lastSceneCourseId !== currentCourseId) {
+        lastSceneMode = currentMode;
+        lastSceneCourseId = currentCourseId;
+        if (currentMode === 'workshop') {
+          scene.background = new THREE.Color('#0f172a');
+          scene.fog = new THREE.FogExp2('#0f172a', 0.015);
+          if (dirLightRef.current) {
+            dirLightRef.current.color.set('#fffbeb');
+            dirLightRef.current.intensity = 1.85;
+          }
+          if (ambientLightRef.current) {
+            ambientLightRef.current.intensity = 0.78;
+          }
+        } else {
+          const theme = course.courseDef.theme;
+          scene.background = new THREE.Color(theme.skyHorizonHex);
+          scene.fog = new THREE.FogExp2(theme.fogHex, theme.fogDensity);
+          if (dirLightRef.current) {
+            dirLightRef.current.color.set(theme.sunColorHex);
+            dirLightRef.current.intensity = theme.sunIntensity;
+          }
+          if (ambientLightRef.current) {
+            ambientLightRef.current.intensity = theme.ambientIntensity;
+          }
+        }
+      }
+
+      // Part swap scale bounce effect on entire craft.root (never detaching frameGroup!)
+      if (snapBounceRef.current > 0.001) {
+        snapBounceRef.current = Math.max(0, snapBounceRef.current - dt * 6.0);
+        const s = 1.0 + Math.sin(snapBounceRef.current * Math.PI) * 0.05;
+        craft.root.scale.set(s, s, s);
+      } else {
+        craft.root.scale.set(1, 1, 1);
+      }
+
+      // Toggle socket markers visibility: ONLY visible in Workshop assembly mode (hidden in Dyno & Course!)
+      const showSocketMarkers = currentMode === 'workshop' && !isDynoRef.current;
+      const activeCat = selectedCategoryRef.current;
+      craft.socketMarkerList.forEach((marker, idx) => {
+        marker.visible = showSocketMarkers;
+        if (showSocketMarkers) {
+          const isSelected = marker.userData?.category === activeCat;
+          const pulse = isSelected
+            ? 1.22 + Math.sin(elapsedSec * 6.0) * 0.14
+            : 1.0 + Math.sin(elapsedSec * 3.0 + idx) * 0.07;
+          marker.scale.set(pulse, pulse, pulse);
+          const mat = marker.material as THREE.MeshBasicMaterial;
+          if (mat && mat.color) {
+            mat.color.set(isSelected ? '#facc15' : '#38bdf8');
+            mat.opacity = isSelected ? 0.95 : 0.72;
+          }
+        }
+      });
 
       // ======================================================================
-      // WORKSHOP MODE
+      // MODE A: WORKSHOP BAY & DYNO RIG
       // ======================================================================
       if (currentMode === 'workshop') {
+        bay.group.visible = true;
+        course.group.visible = false;
+
         if (craft.root.parent !== bay.dynoPivotGroup) {
           bay.dynoPivotGroup.add(craft.root);
           craft.root.position.set(0, 0, 0);
           craft.root.rotation.set(0, 0, 0);
         }
 
-        scene.fog = new THREE.FogExp2('#0f172a', 0.012);
-        sunLight.position.set(10, 22, 14);
-        sunLight.target.position.set(0, 0, 0);
-        sunLight.target.updateMatrixWorld();
+        // Smooth Spherical Orbit Camera Interpolation
+        const orb = orbitStateRef.current;
+        orb.theta += (orb.targetTheta - orb.theta) * Math.min(1, dt * 10);
+        orb.phi += (orb.targetPhi - orb.phi) * Math.min(1, dt * 10);
+        orb.radius += (orb.targetRadius - orb.radius) * Math.min(1, dt * 10);
 
-        const r = orbitRadiusRef.current;
-        const targetX = Math.sin(orbitYawRef.current) * Math.cos(orbitPitchRef.current) * r;
-        const targetY = Math.sin(orbitPitchRef.current) * r + 0.45;
-        const targetZ = Math.cos(orbitYawRef.current) * Math.cos(orbitPitchRef.current) * r;
-        desiredCamPos.set(targetX, targetY, targetZ);
+        const targetLook = new THREE.Vector3(0, 0.58, 0);
+        camera.position.x = targetLook.x + orb.radius * Math.sin(orb.phi) * Math.sin(orb.theta);
+        camera.position.y = targetLook.y + orb.radius * Math.cos(orb.phi);
+        camera.position.z = targetLook.z + orb.radius * Math.sin(orb.phi) * Math.cos(orb.theta);
+        camera.lookAt(targetLook);
 
-        const camDamp = 1 - Math.exp(-9 * dt);
-        camera.position.lerp(desiredCamPos, camDamp);
-        smoothedLookAt.set(0, 0.45, 0);
-        camera.lookAt(smoothedLookAt);
+        const isDyno = isDynoRef.current;
+        const hasManualTilt = Math.abs(dynoTiltDegRef.current) > 0.05;
+        const curMetrics = metricsRef.current;
 
-        // Interactive Dyno Rig Tilt Mechanics
-        const thetaCritRad = computeCriticalRollThreshold(curMetrics.stats);
-        const thetaCritDeg = (thetaCritRad * 180) / Math.PI;
-
-        let targetTiltDeg = dynoTiltDegRef.current;
-        if (dynoSwayRef.current && isDyno) {
-          targetTiltDeg = Math.sin(elapsedSec * 2.2) * 28.0;
-        }
-        const targetTiltRad = (targetTiltDeg * Math.PI) / 180;
-
-        bay.dynoPivotGroup.rotation.x = THREE.MathUtils.lerp(
-          bay.dynoPivotGroup.rotation.x,
-          targetTiltRad,
-          1 - Math.exp(-12 * dt)
-        );
-
-        const currentRollAbsDeg = Math.abs((bay.dynoPivotGroup.rotation.x * 180) / Math.PI);
-        const isPastRollover = currentRollAbsDeg >= thetaCritDeg;
-
-        const strobeIntensity = isPastRollover ? 1.2 + Math.sin(elapsedSec * 24) * 0.8 : 0.3;
-        bay.warningBeaconLights.forEach((b) => {
-          (b.material as THREE.MeshStandardMaterial).emissiveIntensity = strobeIntensity;
-        });
-
-        bay.dynoUnderglowLight.color.setHex(isPastRollover ? 0xef4444 : 0x38bdf8);
-        bay.dynoUnderglowLight.intensity = isPastRollover ? 1.4 : 0.85;
-        bay.balanceNeedle.rotation.z = -bay.dynoPivotGroup.rotation.x;
-
-        // Rollers & Wheel Spin
-        let crankAngleRad = 0;
-        if (isDyno) {
-          const powerW = curMetrics.stats.cadencePowerW;
-          const cadenceRpm = 75 + Math.min(45, (powerW / 800) * 45);
-          const omegaWheel = (cadenceRpm * 2 * Math.PI) / 60;
-          const omegaRoller = omegaWheel * 4.71;
-          crankAngleRad = (elapsedSec * omegaWheel) % (Math.PI * 2);
-
-          for (const roller of bay.dynoRollers) {
-            roller.rotation.y -= omegaRoller * dt;
+        if (isDyno || hasManualTilt) {
+          let tiltDeg = dynoTiltDegRef.current;
+          if (dynoAutoSweepRef.current) {
+            tiltDeg = Math.sin(elapsedSec * 1.6) * 32.0;
           }
+          const tiltRad = (tiltDeg * Math.PI) / 180;
+          bay.dynoPivotGroup.rotation.x = THREE.MathUtils.lerp(
+            bay.dynoPivotGroup.rotation.x,
+            tiltRad,
+            Math.min(1, dt * 12)
+          );
+
+          // Forward pedaling (negative Z rotation = clockwise in right-handed +Z view)
+          const rpm = isDyno ? dynoCadenceRpmRef.current : 35;
+          const omegaWheel = (rpm / 60) * Math.PI * 2;
+          for (const roller of bay.rollers) {
+            roller.rotation.z += omegaWheel * dt * 2.5;
+          }
+
+          const crankAngleRad = -((elapsedSec * omegaWheel) % (Math.PI * 2));
+          updateTandemAnimation(craft, null, dt, crankAngleRad);
           for (const wheel of craft.wheelSpinners) {
-            wheel.rotation.z -= omegaWheel * dt;
+            wheel.rotation.z -= omegaWheel * dt * 1.4;
           }
           for (const crank of craft.crankSpinners) {
-            crank.rotation.z -= omegaWheel * dt;
+            crank.rotation.z = crankAngleRad;
           }
-        }
 
-        // Outrigger Ground Contact Flash
-        const outriggerW = curMetrics.stats.outriggerWidthFt;
-        if (outriggerW > 0.5) {
-          const halfSpanM = (outriggerW * 0.3048) / 2;
-          const contactTiltDeg = (Math.asin(Math.min(1.0, 0.33 / halfSpanM)) * 180) / Math.PI;
-          const inContact = currentRollAbsDeg >= contactTiltDeg;
-          const sideIdx = bay.dynoPivotGroup.rotation.x > 0 ? 0 : 1;
-          (bay.outriggerContactRings[sideIdx].material as THREE.MeshBasicMaterial).opacity =
-            inContact ? 0.9 : 0.0;
-        } else {
-          bay.outriggerContactRings.forEach((r) => {
-            (r.material as THREE.MeshBasicMaterial).opacity = 0.0;
-          });
-        }
+          // CoM Indicator & Rollover Alert Color
+          bay.comSphere.visible = true;
+          bay.comArrow.visible = true;
+          const absTiltDeg = Math.abs((bay.dynoPivotGroup.rotation.x * 180) / Math.PI);
+          const rolloverDeg = curMetrics.rolloverThresholdDeg;
+          const isExceeding = absTiltDeg >= rolloverDeg;
+          const isWarning = absTiltDeg >= rolloverDeg * 0.75;
 
-        // Socket Marker Pulsing
-        const activeCat = selectedCatRef.current;
-        const hoveredCat = hoveredCategoryRef.current;
-        craft.socketMarkerList.forEach((marker) => {
-          const cat = marker.userData?.category as TandemCategory;
-          const isSelected = cat === activeCat;
-          const isHovered = cat === hoveredCat;
-          const pulse = isSelected
-            ? 1.25 + Math.sin(elapsedSec * 6) * 0.15
-            : isHovered
-            ? 1.15 + Math.sin(elapsedSec * 8) * 0.1
-            : 0.85;
-          marker.scale.set(pulse, pulse, pulse);
-        });
+          const comColor = isExceeding ? 0xef4444 : isWarning ? 0xf97316 : 0x22c55e;
+          (bay.comSphere.material as THREE.MeshBasicMaterial).color.setHex(comColor);
+          bay.comArrow.setColor(new THREE.Color(comColor));
 
-        updateTandemAnimation(craft, null, dt, crankAngleRad);
-      }
+          // Bilateral reset + active side outrigger contact ring illumination
+          const outriggerW = curMetrics.stats.outriggerWidthFt;
+          const halfSpanM = (outriggerW * FT_TO_M) / 2;
+          bay.outriggerContactRings[0].position.z = -Math.max(0.35, halfSpanM);
+          bay.outriggerContactRings[1].position.z = Math.max(0.35, halfSpanM);
+          (bay.outriggerContactRings[0].material as THREE.MeshBasicMaterial).opacity = 0.0;
+          (bay.outriggerContactRings[1].material as THREE.MeshBasicMaterial).opacity = 0.0;
 
-      // ======================================================================
-      // COURSE RUN MODE
-      // ======================================================================
-      else if (currentMode === 'course') {
-        if (craft.root.parent !== scene) {
-          scene.add(craft.root);
-        }
+          if (outriggerW > 0.2 && absTiltDeg >= rolloverDeg * 0.72) {
+            const sideIdx = bay.dynoPivotGroup.rotation.x > 0 ? 1 : 0;
+            const ringMat = bay.outriggerContactRings[sideIdx].material as THREE.MeshBasicMaterial;
+            ringMat.color.setHex(isExceeding ? 0xef4444 : 0x22c55e);
+            ringMat.opacity = 0.88;
+          }
 
-        scene.fog = new THREE.FogExp2('#bae6fd', 0.0075);
-
-        // Water Wave Animation
-        const waterGeo = course.waterMesh.geometry as THREE.BufferGeometry;
-        const posAttr = waterGeo.attributes.position;
-        if (posAttr) {
+          // Wind tunnel streamlines (active when full Dyno rig is running)
+          const windMat = bay.windParticles.material as THREE.PointsMaterial;
+          windMat.opacity = isDyno ? 0.55 : 0.15;
+          const posAttr = bay.windParticles.geometry.getAttribute('position') as THREE.BufferAttribute;
           const arr = posAttr.array as Float32Array;
-          for (let i = 0; i < posAttr.count; i++) {
-            const vx = arr[i * 3];
-            const vz = arr[i * 3 + 1];
-            arr[i * 3 + 2] =
-              Math.sin(vx * 0.35 + elapsedSec * 1.8) * 0.08 +
-              Math.cos(vz * 0.45 + elapsedSec * 1.4) * 0.06;
+          for (let i = 0; i < arr.length; i += 3) {
+            arr[i] -= dt * (4.0 + rpm * 0.05);
+            if (arr[i] < -3.0) arr[i] = 3.0;
           }
           posAttr.needsUpdate = true;
+        } else {
+          bay.dynoPivotGroup.rotation.x = THREE.MathUtils.lerp(
+            bay.dynoPivotGroup.rotation.x,
+            0,
+            Math.min(1, dt * 10)
+          );
+          bay.comSphere.visible = false;
+          bay.comArrow.visible = false;
+          (bay.outriggerContactRings[0].material as THREE.MeshBasicMaterial).opacity = 0;
+          (bay.outriggerContactRings[1].material as THREE.MeshBasicMaterial).opacity = 0;
+          (bay.windParticles.material as THREE.PointsMaterial).opacity = 0;
+
+          // Gentle idle forward pedal motion
+          const idleCrank = -((elapsedSec * 1.4) % (Math.PI * 2));
+          updateTandemAnimation(craft, null, dt, idleCrank);
+        }
+      }
+      // ======================================================================
+      // MODE B: 3D OVER-WATER PIER COURSE RUN
+      // ======================================================================
+      else {
+        bay.group.visible = false;
+        course.group.visible = true;
+
+        if (craft.root.parent !== course.group) {
+          course.group.add(craft.root);
         }
 
-        // Fetch authoritative simulation state
+        const cDef = course.courseDef;
         const s = simStateRef?.current;
-        const distFt = s ? s.distanceFt || 0 : 0;
-        const speedMph = s ? s.speedMph || 0 : 0;
-        const latFt = s ? s.lateralOffsetFt || 0 : 0;
-        const rollRad = s ? s.rollAngleRad || 0 : 0;
-        const phase = s ? s.phase : 'riding';
-
-        // 1. Calculate Tandem 3D Coordinates along Pier Track
-        const bikeX = distFt * FT_TO_M;
+        const distFt = s?.distanceFt ?? 0;
+        const speedMph = s?.speedMph ?? 0;
+        const rollRad = s?.rollAngleRad ?? 0;
+        const latFt = s?.lateralOffsetFt ?? 0;
+        const phase = s?.phase ?? 'hype';
         const isAirborne = Boolean((s as any)?.isAirborne);
-        const verticalFt = (s as any)?.verticalHeightFt ?? getTrackElevationAtDistance(distFt);
-        const currentSeesawAngle =
-          s?.seesawAngles?.seesaw_1 ??
-          s?.seesawAngles?.seesaw_bridge_1 ??
-          updateSeesawBridgeDynamics(distFt);
+        const verticalFt = (s as any)?.verticalHeightFt ?? getTrackElevationAtDistance(distFt, cDef.id);
 
-        let bikeY = (isAirborne ? verticalFt : getTrackElevationAtDistance(distFt)) * FT_TO_M;
-        if (!isAirborne && distFt >= 100 && distFt <= 140) {
-          bikeY += (distFt - 120) * FT_TO_M * Math.sin(currentSeesawAngle);
+        // 1. Animate Canal Water Surface Waves (modifies Y coordinate arr[i*3 + 1], preserving Z arr[i*3 + 2]!)
+        const waterPosAttr = course.waterMesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const arr = waterPosAttr.array as Float32Array;
+        for (let i = 0; i < waterPosAttr.count; i++) {
+          const vx = arr[i * 3];
+          const vz = arr[i * 3 + 2];
+          arr[i * 3 + 1] =
+            Math.sin(vx * 0.22 + elapsedSec * 2.4) * 0.08 +
+            Math.cos(vz * 0.28 + elapsedSec * 1.9) * 0.06;
+        }
+        waterPosAttr.needsUpdate = true;
+
+        // 2. Compute Bike 3D World Coordinates along Active Course
+        const bikeX = distFt * FT_TO_M;
+        const currentSeesawAngle =
+          s?.seesawAngles?.['seesaw_bridge_1'] ??
+          updateSeesawBridgeDynamics(distFt, 160, cDef.seesawFulcrumFt);
+
+        let bikeY = (isAirborne ? verticalFt : getTrackElevationAtDistance(distFt, cDef.id)) * FT_TO_M;
+        if (!isAirborne && distFt >= cDef.seesawStartFt && distFt <= cDef.seesawEndFt) {
+          // Exact seesaw surface elevation matching elevated fulcrum pivot (zero step at entry & exit!)
+          bikeY =
+            course.seesawPivotYM +
+            (distFt - cDef.seesawFulcrumFt) * FT_TO_M * Math.sin(currentSeesawAngle);
         }
         const bikeZ = latFt * FT_TO_M;
 
-        // Position bike
         craft.root.position.set(bikeX, bikeY, bikeZ);
 
-        // Calculate pitch angle on incline / rollers / seesaw / airborne
+        // Calculate pitch angle on incline / rollers / seesaw / takeoff ramp / airborne
         let pitchRad = 0;
         if (isAirborne) {
           const vyFps = (s as any)?.verticalVelFps || 0;
           const vxFps = Math.max(12, speedMph * 1.46667);
           pitchRad = Math.atan2(vyFps, vxFps) * 0.65;
-        } else if (distFt >= 70 && distFt <= 100) {
-          // Rhythm Rollers slope derivative
-          const k = (2 * Math.PI) / 12;
-          const slope = 1.0 * k * Math.cos(((distFt - 70) / 12) * 2 * Math.PI);
+        } else if (distFt >= cDef.rollersStartFt && distFt <= cDef.rollersEndFt) {
+          const k = (2 * Math.PI) / cDef.rollerWavelengthFt;
+          const slope =
+            cDef.rollerAmplitudeFt *
+            k *
+            Math.cos(((distFt - cDef.rollersStartFt) / cDef.rollerWavelengthFt) * 2 * Math.PI);
           pitchRad = Math.atan(slope);
-        } else if (distFt >= 100 && distFt <= 140) {
+        } else if (distFt >= cDef.seesawStartFt && distFt <= cDef.seesawEndFt) {
           pitchRad = currentSeesawAngle;
-        } else if (distFt >= 152 && distFt <= 160) {
-          pitchRad = (12 * Math.PI) / 180;
+        } else if (distFt >= cDef.takeoffRampStartFt && distFt <= cDef.gapStartFt) {
+          pitchRad = (9.5 * Math.PI) / 180;
         }
 
         const latVelFps = (s as any)?.lateralVelocityFps || 0;
@@ -1142,197 +1414,465 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = React.memo(({
         course.seesawPivotGroup.rotation.z = currentSeesawAngle;
 
         // Water Cannon Hazard Particle Streams
-        const isNearCannon = Math.abs(distFt - 140) <= 4.0;
-        course.waterCannonJets.forEach((jet) => {
-          const pulse = isNearCannon ? 1.0 + Math.sin(elapsedSec * 24) * 0.25 : 0.8;
+        const isNearAnyCannon = cDef.waterCannonStationsFt.some((st) => Math.abs(distFt - st) <= 5.0);
+        const allJets = [...course.waterCannonJets, ...course.extraWaterCannonJets];
+        allJets.forEach((jet) => {
+          const pulse = isNearAnyCannon ? 1.0 + Math.sin(elapsedSec * 24) * 0.25 : 0.82;
           jet.scale.set(pulse, 1, pulse);
-          (jet.material as THREE.MeshBasicMaterial).opacity = isNearCannon ? 0.9 : 0.6;
+          (jet.material as THREE.MeshBasicMaterial).opacity = isNearAnyCannon ? 0.92 : 0.62;
         });
 
         // Golden Canal Finish Bell & Celebration
-        if (phase === 'finished' || distFt >= COURSE_LENGTH_FT) {
-          const swing = Math.sin(elapsedSec * 16) * 0.35 * Math.exp(-Math.min(3.0, (s?.timeElapsedSec || 0) * 0.2));
+        const finishBellFt = s?.courseLengthFt || cDef.finishBellFt;
+        if (phase === 'finished' || distFt >= finishBellFt) {
+          const swing =
+            Math.sin(elapsedSec * 16) *
+            0.35 *
+            Math.exp(-Math.min(3.0, (s?.timeElapsedSec || 0) * 0.2));
           course.finishBellGroup.rotation.z = swing;
 
-          // Celebration Confetti
           course.confettiGroup.visible = true;
           if (!hasTriggeredConfettiRef.current) {
             hasTriggeredConfettiRef.current = true;
-            course.confettiParticles.forEach((cp) => {
-              cp.mesh.visible = true;
-              cp.mesh.position.set(60.96, 3.6, (Math.random() - 0.5) * 2.0);
-              cp.vx = (Math.random() - 0.5) * 5.0;
-              cp.vy = 4.0 + Math.random() * 4.0;
-              cp.vz = (Math.random() - 0.5) * 5.0;
+            confettiStartTimeRef.current = elapsedSec;
+            course.confettiParticles.forEach((p) => {
+              p.mesh.position.set(0, 0, 0);
             });
           }
-          course.confettiParticles.forEach((cp) => {
-            cp.mesh.position.x += cp.vx * dt;
-            cp.mesh.position.y += cp.vy * dt;
-            cp.mesh.position.z += cp.vz * dt;
-            cp.vy -= 9.8 * 0.4 * dt;
-            cp.mesh.rotation.x += cp.rotX * dt;
-            cp.mesh.rotation.y += cp.rotY * dt;
-            cp.mesh.rotation.z += cp.rotZ * dt;
+          const confAge = elapsedSec - confettiStartTimeRef.current;
+          course.confettiParticles.forEach((p) => {
+            p.mesh.position.x += p.vel.x * dt;
+            p.mesh.position.y += (p.vel.y - 4.5 * confAge) * dt;
+            p.mesh.position.z += p.vel.z * dt;
+            p.mesh.rotation.x += p.rotVel.x * dt;
+            p.mesh.rotation.y += p.rotVel.y * dt;
           });
-        } else if (hasTriggeredConfettiRef.current || course.confettiGroup.visible) {
-          hasTriggeredConfettiRef.current = false;
-          course.confettiGroup.visible = false;
+        } else {
           course.finishBellGroup.rotation.z = 0;
+          course.confettiGroup.visible = false;
+          hasTriggeredConfettiRef.current = false;
         }
 
-        // Splashdown Particles
+        // Splashdown Hydro-Burst Particle Animation
         if (phase === 'splashdown') {
           course.splashGroup.visible = true;
-          if (!hasTriggeredSplashParticlesRef.current) {
-            hasTriggeredSplashParticlesRef.current = true;
-            course.splashDrops.forEach((drop, idx) => {
-              drop.mesh.visible = true;
-              drop.mesh.position.set(bikeX, 0.05, bikeZ);
-              const angle = (idx / 40) * Math.PI * 2;
-              const spd = 2.4 + (idx % 5) * 0.8;
-              drop.vx = Math.cos(angle) * spd;
-              drop.vy = 4.2 + (idx % 4) * 0.9;
-              drop.vz = Math.sin(angle) * spd;
-              drop.life = 1.0;
+          if (!hasTriggeredSplashRef.current) {
+            hasTriggeredSplashRef.current = true;
+            splashStartTimeRef.current = elapsedSec;
+            course.splashGroup.position.set(bikeX, 0, bikeZ);
+            course.splashDrops.forEach((d) => {
+              d.mesh.position.set(0, 0.2, 0);
             });
-            course.foamRings.forEach((ring) => {
-              ring.visible = true;
-              ring.position.set(bikeX, 0.02, bikeZ);
-              ring.scale.set(0.5, 0.5, 0.5);
-              (ring.material as THREE.MeshBasicMaterial).opacity = 0.85;
+            course.foamRings.forEach((r, idx) => {
+              r.scale.setScalar(0.5 + idx * 0.4);
+              (r.material as THREE.MeshBasicMaterial).opacity = 0.9;
             });
           }
-          course.splashDrops.forEach((drop) => {
-            if (drop.mesh.visible) {
-              drop.mesh.position.x += drop.vx * dt;
-              drop.mesh.position.y += drop.vy * dt;
-              drop.mesh.position.z += drop.vz * dt;
-              drop.vy -= 14.5 * dt;
-              if (drop.mesh.position.y <= 0.01) {
-                drop.mesh.visible = false;
-              }
-            }
+          const splashAge = elapsedSec - splashStartTimeRef.current;
+          course.splashDrops.forEach((d) => {
+            d.mesh.position.x = d.vel.x * splashAge;
+            d.mesh.position.y = Math.max(
+              -0.2,
+              0.2 + d.vel.y * splashAge - 0.5 * 14.0 * splashAge * splashAge
+            );
+            d.mesh.position.z = d.vel.z * splashAge;
           });
-          course.foamRings.forEach((ring) => {
-            ring.scale.x += 1.8 * dt;
-            ring.scale.y += 1.8 * dt;
-            const mat = ring.material as THREE.MeshBasicMaterial;
-            mat.opacity = Math.max(0, mat.opacity - 0.45 * dt);
+          course.foamRings.forEach((r, idx) => {
+            const scale = 0.6 + idx * 0.5 + splashAge * (2.5 + idx * 0.8);
+            r.scale.setScalar(scale);
+            (r.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.85 - splashAge * 0.55);
           });
-        } else if (hasTriggeredSplashParticlesRef.current || course.splashGroup.visible) {
-          hasTriggeredSplashParticlesRef.current = false;
+
+          // Submerge & tilt bike into canal water
+          craft.root.position.y = Math.max(-0.35, bikeY - splashAge * 3.8);
+          craft.root.rotation.x =
+            rollRad + Math.sign(rollRad || 1) * Math.min(1.2, splashAge * 2.5);
+        } else {
           course.splashGroup.visible = false;
+          hasTriggeredSplashRef.current = false;
         }
 
-        // Follow Lighting
-        sunLight.position.x = bikeX + 15;
-        sunLight.target.position.x = bikeX;
-        sunLight.target.updateMatrixWorld();
-
-        // 2. Dynamic 3rd-Person Follow Camera & Cinematics
-        const targetCamPos = new THREE.Vector3();
-        const targetLookAt = new THREE.Vector3();
-
-        if (phase === 'hype') {
-          // Low-angle hero orbit
-          targetCamPos.set(
-            bikeX - 3.8 + Math.cos(elapsedSec * 1.2) * 1.2,
-            bikeY + 1.4,
-            Math.sin(elapsedSec * 1.2) * 2.2
-          );
-          targetLookAt.set(bikeX + 0.8, bikeY + 0.5, 0);
-        } else if (phase === 'splashdown') {
-          // Freeze and pan sideways to framed submerged bike
-          targetCamPos.set(bikeX - 2.5, 1.4, Math.sign(bikeZ || 1) * 3.4);
-          targetLookAt.set(bikeX, 0.2, bikeZ);
-        } else if (phase === 'finished') {
-          // Ahead of bike looking back at finish arch
-          targetCamPos.set(bikeX + 4.2, bikeY + 1.6, -1.8);
-          targetLookAt.set(bikeX, bikeY + 0.8, 0);
-        } else {
-          // Dynamic 3/4 chase camera with camera shake and unobstructed track sightline
-          let shakeY = 0;
-          let shakeZ = 0;
-          if (distFt >= 70 && distFt <= 100) {
-            shakeY = Math.sin(now * 0.032) * 0.035 * Math.min(1.5, speedMph / 15);
-          }
-          if (isNearCannon) {
-            shakeZ = (Math.random() - 0.5) * 0.12;
-          }
-
-          targetCamPos.set(
-            bikeX - 4.6,
-            bikeY + 2.35 + shakeY,
-            bikeZ * 0.55 + 0.85 + shakeZ
-          );
-          targetLookAt.set(
-            bikeX + 3.8,
-            bikeY + 0.45,
-            bikeZ * 0.65
-          );
-        }
-
-        // Exponential smoothing
-        if (!runCamSnappedRef.current) {
-          runCamSnappedRef.current = true;
-          camera.position.copy(targetCamPos);
-          smoothedLookAt.copy(targetLookAt);
-        } else {
-          const camLerpAlpha = 1 - Math.exp(-9.0 * dt);
-          const lookLerpAlpha = 1 - Math.exp(-12.0 * dt);
-          camera.position.lerp(targetCamPos, camLerpAlpha);
-          smoothedLookAt.lerp(targetLookAt, lookLerpAlpha);
-        }
-        camera.lookAt(smoothedLookAt);
-
-        // Sprint FOV Expansion
-        const isSprinting = Boolean((s as any)?.sprintStamina > 0.02 && speedMph > 16);
-        const baseFov = container.clientWidth < 540 ? 58 : 52;
-        const targetFov = baseFov + (isSprinting ? 12 : 0) + Math.min(6, (speedMph / 25) * 6);
-        camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 1 - Math.exp(-6 * dt));
-        camera.updateProjectionMatrix();
-
-        // 3D Animation update (cadence leg IK, wheel spin, mascot tails)
+        // Update Bike IK & Wheel Rotation from live simState
         updateTandemAnimation(craft, s || null, dt);
+
+        // Dynamic Chase Camera & Sun Shadow Follow
+        const speedZoom = Math.min(2.2, speedMph * 0.06);
+        const camTargetPos = new THREE.Vector3(
+          bikeX - 4.8 - speedZoom,
+          Math.max(2.6, bikeY + 2.15 + speedZoom * 0.25),
+          bikeZ * 0.65 + 4.4 + speedZoom * 0.45
+        );
+        camera.position.lerp(camTargetPos, Math.min(1, dt * 8.5));
+        camera.lookAt(new THREE.Vector3(bikeX + 2.4, Math.max(1.2, bikeY + 0.55), bikeZ * 0.5));
+
+        if (dirLightRef.current) {
+          dirLightRef.current.position.set(bikeX + 8, 18, 10);
+          dirLightRef.current.target.position.set(bikeX, bikeY, 0);
+          dirLightRef.current.target.updateMatrixWorld();
+        }
       }
 
       renderer.render(scene, camera);
     };
 
-    rafId = requestAnimationFrame(animate);
+    animFrameId = requestAnimationFrame(animate);
 
-    // Teardown & Clean Resource Disposal
     return () => {
-      cancelAnimationFrame(rafId);
+      cancelAnimationFrame(animFrameId);
       domEl.removeEventListener('pointerdown', onPointerDown);
-      domEl.removeEventListener('wheel', onWheel);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerCancel);
-      window.removeEventListener('resize', handleResize);
-      resizeObserver?.disconnect();
+      domEl.removeEventListener('wheel', onWheel);
+      window.removeEventListener('resize', onResize);
 
-      disposeTandemSceneObjects(scene, true);
-      sunLight.shadow.map?.dispose();
+      disposeTandemSceneObjects(scene, false);
       renderer.dispose();
-      renderer.forceContextLoss();
-
-      bikeGroupsRef.current = null;
-      workshopBayRef.current = null;
-      courseEnvRef.current = null;
-      sceneRef.current = null;
     };
   }, []);
 
+  // ==========================================================================
+  // EFFECT 2: HOT-SWAP TANDEM BIKE 3D MESH WHEN LOADOUT CHANGES
+  // ==========================================================================
+  useEffect(() => {
+    const bay = workshopBayRef.current;
+    const course = courseEnvRef.current;
+    const oldBike = bikeGroupsRef.current;
+
+    if (!bay || !course) return;
+
+    const newBike = buildTandemBike3D(loadout);
+
+    if (oldBike) {
+      const parent = oldBike.root.parent;
+      if (parent) {
+        newBike.root.position.copy(oldBike.root.position);
+        newBike.root.rotation.copy(oldBike.root.rotation);
+        parent.remove(oldBike.root);
+        parent.add(newBike.root);
+      } else {
+        bay.dynoPivotGroup.add(newBike.root);
+      }
+      disposeTandemSceneObjects(oldBike.root, false);
+    } else {
+      bay.dynoPivotGroup.add(newBike.root);
+    }
+
+    bikeGroupsRef.current = newBike;
+    snapBounceRef.current = 1.0;
+  }, [
+    loadout.frameId,
+    loadout.drivetrainId,
+    loadout.wheelsId,
+    loadout.steeringId,
+    loadout.stabilizerId,
+    loadout.topperId,
+    loadout.paintThemeId,
+  ]);
+
+  // Compute live outrigger contact telemetry for Dyno overlay
+  const rolloverDeg = metrics.rolloverThresholdDeg;
+  const currentTiltAbs = Math.abs(dynoTiltDeg);
+  const isRolloverDanger = currentTiltAbs >= rolloverDeg;
+  const outriggerSpanFt = metrics.stats.outriggerWidthFt;
+
   return (
     <div
-      ref={containerRef}
-      className={`relative w-full h-full overflow-hidden touch-none ${
-        mode === 'workshop' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
-      }`}
-    />
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        background: mode === 'workshop' ? '#0f172a' : activeCourseDef.theme.skyHorizonHex,
+        userSelect: 'none',
+      }}
+    >
+      {/* 3D WebGL Viewport Container */}
+      <div
+        ref={containerRef}
+        data-testid="tandem-canvas-3d"
+        style={{ width: '100%', height: '100%' }}
+      />
+
+      {/* Fallback Banner if Headless/Non-WebGL */}
+      {webglError && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#94a3b8',
+            fontSize: 13,
+            pointerEvents: 'none',
+          }}
+        >
+          <span>🚲 3D Tandem Viewport ({mode.toUpperCase()} — {activeCourseDef.name})</span>
+        </div>
+      )}
+
+      {/* Hovered 3D Socket Tooltip in Workshop Mode */}
+      {mode === 'workshop' && hoveredSocket && !isDynoActive && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 74,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: '1px solid #38bdf8',
+            borderRadius: 999,
+            padding: '5px 14px',
+            color: '#f8fafc',
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: '0.05em',
+            pointerEvents: 'none',
+            boxShadow: '0 4px 15px rgba(56, 189, 248, 0.3)',
+            zIndex: 15,
+          }}
+        >
+          CLICK SOCKET TO CUSTOMIZE: {hoveredSocket.toUpperCase()}
+        </div>
+      )}
+
+      {/* Workshop Viewport Controls & Interactive Balance Dyno Rig Bar */}
+      {mode === 'workshop' && (
+        <div
+          style={{
+            position: 'absolute',
+            top: isControlledByWorkshopHud ? 20 : 68,
+            ...(isControlledByWorkshopHud
+              ? { right: 24 }
+              : { left: '50%', transform: 'translateX(-50%)' }),
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 8,
+            zIndex: 35,
+            pointerEvents: 'auto',
+          }}
+        >
+          {/* Top Action Pill: Dyno Toggle + Camera Reset */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'rgba(15, 23, 42, 0.86)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(148, 163, 184, 0.25)',
+              borderRadius: 999,
+              padding: '4px 10px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            }}
+          >
+            {!isControlledByWorkshopHud && (
+              <button
+                type="button"
+                data-testid="toggle-dyno-btn"
+                onClick={handleToggleDyno}
+                style={{
+                  background: isDynoActive
+                    ? 'linear-gradient(135deg, #06b6d4, #2563eb)'
+                    : 'rgba(30, 41, 59, 0.9)',
+                  color: '#f8fafc',
+                  border: isDynoActive ? '1px solid #67e8f9' : '1px solid #475569',
+                  borderRadius: 999,
+                  padding: '5px 14px',
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: '0.06em',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span>⚖️</span>
+                <span>{isDynoActive ? 'EXIT DYNO RIG' : 'TEST ON BALANCE DYNO'}</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              data-testid="reset-camera-btn"
+              onClick={handleResetCamera}
+              title="Reset 3D Camera Orbit"
+              style={{
+                background: 'rgba(30, 41, 59, 0.8)',
+                color: '#cbd5e1',
+                border: '1px solid rgba(148, 163, 184, 0.25)',
+                borderRadius: 999,
+                padding: '5px 11px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              🎥 RESET VIEW
+            </button>
+          </div>
+
+          {/* Interactive Dyno Testbed Control Panel (Standalone mode) */}
+          {!isControlledByWorkshopHud && isDynoActive && (
+            <div
+              data-testid="dyno-control-panel"
+              style={{
+                background: 'rgba(15, 23, 42, 0.92)',
+                backdropFilter: 'blur(12px)',
+                border: isRolloverDanger
+                  ? '1px solid #ef4444'
+                  : '1px solid rgba(56, 189, 248, 0.4)',
+                borderRadius: 12,
+                padding: '10px 16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                minWidth: 340,
+                boxShadow: '0 12px 30px rgba(0,0,0,0.55)',
+                color: '#f8fafc',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: '0.05em',
+                }}
+              >
+                <span style={{ color: '#38bdf8' }}>
+                  🔬 LATERAL ROLL CRADLE: {dynoTiltDeg > 0 ? `+${dynoTiltDeg}°` : `${dynoTiltDeg}°`}
+                </span>
+                <span
+                  style={{
+                    color: isRolloverDanger ? '#ef4444' : '#4ade80',
+                    background: isRolloverDanger
+                      ? 'rgba(239, 68, 68, 0.18)'
+                      : 'rgba(74, 222, 128, 0.15)',
+                    padding: '2px 8px',
+                    borderRadius: 6,
+                  }}
+                >
+                  {isRolloverDanger
+                    ? `⚠️ TIP-OVER (> ${rolloverDeg.toFixed(1)}°)`
+                    : `✅ STABLE (MAX ${rolloverDeg.toFixed(1)}°)`}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 10, color: '#94a3b8', width: 32 }}>-35°</span>
+                <input
+                  type="range"
+                  data-testid="dyno-tilt-slider"
+                  min={-35}
+                  max={35}
+                  step={1}
+                  value={dynoTiltDeg}
+                  onChange={(e) => {
+                    setDynoAutoSweep(false);
+                    setDynoTiltDeg(Number(e.target.value));
+                  }}
+                  style={{ flex: 1, cursor: 'pointer', accentColor: '#38bdf8' }}
+                />
+                <span style={{ fontSize: 10, color: '#94a3b8', width: 32, textAlign: 'right' }}>
+                  +35°
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  paddingTop: 2,
+                  borderTop: '1px solid rgba(148, 163, 184, 0.15)',
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button
+                    type="button"
+                    data-testid="dyno-autosweep-btn"
+                    onClick={() => setDynoAutoSweep((v) => !v)}
+                    style={{
+                      background: dynoAutoSweep ? '#0284c7' : '#1e293b',
+                      color: '#f8fafc',
+                      border: '1px solid #38bdf8',
+                      borderRadius: 6,
+                      padding: '3px 8px',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {dynoAutoSweep ? '⏸ STOP SWEEP' : '🔄 AUTO-SWEEP'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDynoAutoSweep(false);
+                      setDynoTiltDeg(0);
+                    }}
+                    style={{
+                      background: '#1e293b',
+                      color: '#cbd5e1',
+                      border: '1px solid #475569',
+                      borderRadius: 6,
+                      padding: '3px 8px',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    0° LEVEL
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: '#94a3b8' }}>CADENCE:</span>
+                  {[65, 90, 115].map((rpm) => (
+                    <button
+                      key={rpm}
+                      type="button"
+                      onClick={() => setDynoCadenceRpm(rpm)}
+                      style={{
+                        background: dynoCadenceRpm === rpm ? '#f59e0b' : '#1e293b',
+                        color: dynoCadenceRpm === rpm ? '#0f172a' : '#cbd5e1',
+                        border: '1px solid rgba(245, 158, 11, 0.4)',
+                        borderRadius: 5,
+                        padding: '2px 6px',
+                        fontSize: 10,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {rpm} RPM
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 10, color: '#94a3b8', textAlign: 'center' }}>
+                Outrigger Stance:{' '}
+                <strong style={{ color: '#e2e8f0' }}>{outriggerSpanFt.toFixed(1)} ft</strong> •
+                Power/Weight:{' '}
+                <strong style={{ color: '#38bdf8' }}>
+                  {metrics.powerToWeightRatioWKg.toFixed(2)} W/kg
+                </strong>{' '}
+                • Status:{' '}
+                <strong style={{ color: '#facc15' }}>{metrics.dynoStatusLabel}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
-});
+};
 
 export default TandemCanvas3D;
