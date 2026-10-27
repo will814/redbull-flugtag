@@ -5,9 +5,14 @@ import {
   SoapboxPart,
 } from './SoapboxPartCatalog';
 import { SoapboxSimulationState } from './SoapboxPhysicsEngine';
+import {
+  SoapboxCourseId,
+  getSoapboxCourse,
+} from './SoapboxCourses';
 import { RotateCcw, Wrench, Trophy, Sparkles } from 'lucide-react';
 
 interface SoapboxScorecardModalProps {
+  selectedCourseId?: SoapboxCourseId;
   simState: SoapboxSimulationState;
   newlyUnlockedParts: SoapboxPart[];
   totalStars: number;
@@ -19,6 +24,7 @@ interface SoapboxScorecardModalProps {
 }
 
 export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React.memo(({
+  selectedCourseId,
   simState,
   newlyUnlockedParts,
   totalStars,
@@ -30,6 +36,12 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
 }) => {
   const scores = simState.judgeScores;
   const primaryBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const activeCourse = useMemo(
+    () => getSoapboxCourse(selectedCourseId || 'alpine_panorama'),
+    [selectedCourseId]
+  );
+  const courseLength = simState.courseLengthFeet || activeCourse.lengthFeet || SOAPBOX_COURSE_LENGTH_FEET;
 
   const nextLockedPart = useMemo(() => {
     const locked = SOAPBOX_PART_CATALOG.filter(
@@ -94,7 +106,7 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
                 >
                   {simState.completedCourse
                     ? `FINISHED IN ${simState.elapsedRaceTimeSec.toFixed(1)}s!`
-                    : `${simState.distanceFeet} / ${SOAPBOX_COURSE_LENGTH_FEET} FT!`}
+                    : `${simState.distanceFeet} / ${courseLength.toLocaleString()} FT!`}
                 </h2>
                 {scores.newTimeRecord || scores.newDistanceRecord ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400 px-2 py-0.5 text-[11px] font-black text-slate-950">
@@ -129,6 +141,38 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
           </div>
         </div>
 
+        {/* COURSE IDENTITY BANNER */}
+        <div className="flex items-center justify-between gap-2 rounded-2xl bg-slate-950/80 border border-amber-400/50 px-3 py-1.5 text-xs font-bold text-slate-300">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">{activeCourse.emoji}</span>
+            <div>
+              <span className="font-display font-black text-white">{activeCourse.name}</span>
+              <span className="text-slate-400 text-[10px] ml-1.5">
+                📉 -{activeCourse.dropFeet} ft drop • 📏 {activeCourse.lengthFeet.toLocaleString()} ft
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 text-amber-400 text-[11px]">
+            <span>{'★'.repeat(activeCourse.difficultyStars)}{'☆'.repeat(5 - activeCourse.difficultyStars)}</span>
+            <span className="text-slate-400 text-[10px] uppercase font-black">({activeCourse.difficultyLabel})</span>
+          </div>
+        </div>
+
+        {/* CRASH / WRECK DIAGNOSTIC BANNER */}
+        {(simState.isWrecked || simState.isRolledOver) && (
+          <div className="flex flex-col gap-1 rounded-2xl bg-rose-950/80 border-2 border-rose-500 p-2.5 text-xs text-rose-200">
+            <div className="flex items-center gap-2 font-black text-rose-300">
+              <span className="text-base">💥</span>
+              <span>
+                CRASH DIAGNOSTIC: {simState.wreckReason || (simState.isRolledOver ? 'CRAFT ROLLED OVER ON APEX' : 'CRAFT WRECKED')}
+              </span>
+            </div>
+            <div className="text-[11px] text-rose-300/80">
+              Distance Reached: {simState.distanceFeet} ft • Lost {simState.lostParts.length} Parts along the mountain!
+            </div>
+          </div>
+        )}
+
         {/* TELEMETRY SUMMARY STRIP */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-slate-950/65 border border-white/10 px-3 py-1.5 text-[11px] font-extrabold">
           <span
@@ -156,6 +200,61 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
           </div>
         </div>
 
+        {/* PARTS INTEGRITY & DETACHMENT BREAKDOWN */}
+        <div className="rounded-2xl bg-slate-950/70 border border-white/10 p-2.5 text-xs">
+          <div className="flex items-center justify-between mb-1.5 font-black text-slate-300 text-[11px] uppercase tracking-wider">
+            <span>Parts Integrity ({Object.values(simState.attachedParts).filter(Boolean).length}/6 Intact)</span>
+            <span className={simState.lostParts.length > 0 ? 'text-amber-400' : 'text-emerald-400'}>
+              {simState.lostParts.length > 0 ? `-${simState.lostParts.length} Parts Lost` : '100% Intact'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px]">
+            {(
+              [
+                { slot: 'wheel_fl', label: 'Front-Left Wheel' },
+                { slot: 'wheel_fr', label: 'Front-Right Wheel' },
+                { slot: 'wheel_rl', label: 'Rear-Left Wheel' },
+                { slot: 'wheel_rr', label: 'Rear-Right Wheel' },
+                { slot: 'bumper', label: 'Front Bumper' },
+                { slot: 'topper', label: 'Roof Topper' },
+              ] as const
+            ).map(({ slot, label }) => {
+              const intact = simState.attachedParts[slot];
+              const lostInfo = simState.lostParts.find((lp) => lp.slot === slot);
+              return (
+                <div
+                  key={slot}
+                  className={`flex flex-col justify-between rounded-xl px-2 py-1 border ${
+                    intact
+                      ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200'
+                      : 'bg-rose-950/40 border-rose-500/50 text-rose-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-black text-[10px]">
+                    <span>{label}</span>
+                    <span>{intact ? '✅ Intact' : '❌ Lost'}</span>
+                  </div>
+                  {lostInfo && (
+                    <div className="text-[9px] text-rose-300/80 truncate">
+                      At {Math.round(lostInfo.sFeet)} ft • {lostInfo.reason}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* DAMAGE PENALTY DEDUCTION BANNER */}
+        {simState.lostParts.length > 0 && (
+          <div className="flex items-center justify-between rounded-xl bg-rose-500/15 border border-rose-400/40 px-3 py-1.5 text-[11px] font-black text-rose-300">
+            <span>⚠️ Judge Score Penalties (Lost Parts):</span>
+            <span>
+              -{simState.lostParts.reduce((acc, p) => acc + (p.slot.startsWith('wheel') ? 1.5 : p.slot === 'topper' ? 2.0 : 1.0), 0).toFixed(1)} PTS DEDUCTED
+            </span>
+          </div>
+        )}
+
         {/* 3 CELEBRITY JUDGES' SCORECARDS */}
         <div className="grid grid-cols-3 gap-2">
           {/* Judge 1: Speed & Racing Line */}
@@ -171,7 +270,7 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
             <span className="text-[10px] font-bold text-slate-300">
               {simState.completedCourse
                 ? `${simState.elapsedRaceTimeSec.toFixed(1)}s Finish Time`
-                : `${simState.distanceFeet} / 1,000 ft`}
+                : `${simState.distanceFeet} / ${courseLength.toLocaleString()} ft`}
             </span>
           </div>
 

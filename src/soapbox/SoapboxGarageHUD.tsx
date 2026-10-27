@@ -29,7 +29,13 @@ import {
   ChevronDown,
   ChevronUp,
   Flag,
+  X,
 } from 'lucide-react';
+import {
+  SoapboxCourseId,
+  SOAPBOX_COURSE_LIST,
+  getSoapboxCourse,
+} from './SoapboxCourses';
 
 export interface SavedSoapboxSlot {
   id: string;
@@ -39,6 +45,8 @@ export interface SavedSoapboxSlot {
 }
 
 interface SoapboxGarageHUDProps {
+  selectedCourseId: SoapboxCourseId;
+  onSelectCourse: (courseId: SoapboxCourseId) => void;
   loadout: SoapboxLoadout;
   metrics: ComputedSoapboxMetrics;
   selectedCategory: SoapboxPartCategory;
@@ -66,6 +74,8 @@ interface SoapboxGarageHUDProps {
 }
 
 export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
+  selectedCourseId,
+  onSelectCourse,
   loadout,
   metrics,
   selectedCategory,
@@ -91,6 +101,7 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
   muted,
   onToggleMute,
 }) => {
+  const [showCourseModal, setShowCourseModal] = useState(false);
   const [showGarageModal, setShowGarageModal] = useState(false);
   const [showPaintDrawer, setShowPaintDrawer] = useState(false);
   const [dockCollapsed, setDockCollapsed] = useState(false);
@@ -99,6 +110,11 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
   const [justSavedToast, setJustSavedToast] = useState(false);
   const toastTimerRef = useRef<number | null>(null);
   const activePartCardRef = useRef<HTMLButtonElement | null>(null);
+
+  const activeCourse = useMemo(
+    () => getSoapboxCourse(selectedCourseId),
+    [selectedCourseId]
+  );
 
   const categoryParts = useMemo(
     () => getSoapboxPartsByCategory(selectedCategory),
@@ -170,7 +186,9 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
 
       if (e.code === 'Escape') {
         e.preventDefault();
-        if (showGarageModal) {
+        if (showCourseModal) {
+          setShowCourseModal(false);
+        } else if (showGarageModal) {
           setShowGarageModal(false);
         } else if (showPaintDrawer) {
           setShowPaintDrawer(false);
@@ -197,7 +215,7 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showGarageModal, showPaintDrawer, onReturnToHub, onUndo, onRedo]);
+  }, [showCourseModal, showGarageModal, showPaintDrawer, onReturnToHub, onUndo, onRedo]);
 
   useEffect(() => {
     return () => {
@@ -273,7 +291,7 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
               </div>
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-300">
                 <span>
-                  🏆 Best: <strong className="text-yellow-300">{bestRecordFeet} / 1,000 ft</strong>
+                  🏆 Best: <strong className="text-yellow-300">{bestRecordFeet} / {activeCourse.lengthFeet.toLocaleString()} ft</strong>
                 </span>
                 {bestTimeSec !== null && (
                   <span>
@@ -283,6 +301,31 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Center: Course Selector Pill */}
+        <div className="pointer-events-auto flex items-center">
+          <button
+            type="button"
+            onClick={() => setShowCourseModal(true)}
+            className="flex items-center gap-2 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border-2 border-amber-400 px-3 py-1.5 shadow-xl backdrop-blur-md transition hover:scale-105 active:scale-95 cursor-pointer text-left"
+            title="Click to Choose Downhill Course"
+          >
+            <span className="text-xl">{activeCourse.emoji}</span>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black tracking-wider text-amber-300 uppercase">
+                Active Course
+              </span>
+              <span className="font-display text-xs sm:text-sm font-black text-white">
+                {activeCourse.name}
+              </span>
+            </div>
+            <div className="ml-1 hidden sm:flex flex-col text-[10px] font-bold text-slate-300">
+              <span>📉 -{activeCourse.dropFeet} ft drop</span>
+              <span>📏 {activeCourse.lengthFeet.toLocaleString()} ft</span>
+            </div>
+            <ChevronDown className="h-4 w-4 text-amber-400 ml-0.5" />
+          </button>
         </div>
 
         {/* Right: Shaker Dyno Rig, Garage Presets, Undo/Redo, Randomize, Mute & DROP GATE CTA */}
@@ -847,6 +890,113 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* COURSE SELECTOR MODAL                                                */}
+      {/* ==================================================================== */}
+      {showCourseModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="soapbox-course-modal-heading"
+          className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-md"
+          onClick={() => setShowCourseModal(false)}
+        >
+          <div
+            className="flex w-full max-w-2xl flex-col gap-3.5 rounded-3xl bg-slate-900 border-4 border-amber-400 p-4 sm:p-5 shadow-2xl max-h-[92dvh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/15 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🏔️</span>
+                <h2
+                  id="soapbox-course-modal-heading"
+                  className="font-display text-lg sm:text-xl font-black text-amber-300 uppercase tracking-wide"
+                >
+                  Select Downhill Course
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCourseModal(false)}
+                className="rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-1 text-xs font-black text-slate-200 cursor-pointer"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {SOAPBOX_COURSE_LIST.map((course) => {
+                const isSelected = course.id === selectedCourseId;
+                return (
+                  <button
+                    key={course.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectCourse(course.id);
+                      setShowCourseModal(false);
+                    }}
+                    className={`relative flex flex-col justify-between rounded-2xl p-3.5 text-left transition cursor-pointer border-3 ${
+                      isSelected
+                        ? 'bg-amber-500/15 border-amber-400 shadow-lg shadow-amber-500/20 ring-2 ring-amber-400'
+                        : 'bg-slate-800/80 hover:bg-slate-800 border-white/15 hover:border-amber-400/70'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{course.emoji}</span>
+                          <span className="font-display text-sm sm:text-base font-black text-white">
+                            {course.name}
+                          </span>
+                        </div>
+                        {isSelected && (
+                          <span className="rounded-full bg-amber-400 text-slate-950 px-2 py-0.5 text-[10px] font-black uppercase">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-300 font-medium line-clamp-2">
+                        {course.description}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 space-y-1.5 pt-2 border-t border-white/10 text-[11px] font-bold text-slate-300">
+                      <div className="flex items-center justify-between">
+                        <span>Drop / Length:</span>
+                        <span className="text-yellow-300">
+                          📉 -{course.dropFeet} ft / 📏 {course.lengthFeet.toLocaleString()} ft
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Avg Grade / Peak:</span>
+                        <span className="text-orange-300">
+                          {course.avgGradePercent}% / {course.peakGradePercent}%
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Difficulty:</span>
+                        <span className="text-amber-400">
+                          {'★'.repeat(course.difficultyStars)}{'☆'.repeat(5 - course.difficultyStars)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span>Surface:</span>
+                        <span className="text-cyan-300 font-medium capitalize">
+                          {course.surfaceType}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 italic">
+                        Hazards: {course.hazardsDescription}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

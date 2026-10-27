@@ -18,6 +18,7 @@ import {
   SoapboxSimulationState,
   triggerSoapboxActionTap,
 } from './SoapboxPhysicsEngine';
+import { SoapboxCourseId } from './SoapboxCourses';
 import { SoapboxCanvas3D } from './SoapboxCanvas3D';
 import { SavedSoapboxSlot, SoapboxGarageHUD } from './SoapboxGarageHUD';
 import { SoapboxRaceHUD } from './SoapboxRaceHUD';
@@ -35,9 +36,28 @@ export interface SoapboxGameProps {
   onReturnToHub: () => void;
 }
 
-const STORAGE_KEY_SOAPBOX_LOADOUT = 'soapbox_standalone_loadout_v1';
-const STORAGE_KEY_SOAPBOX_SAVED = 'soapbox_standalone_saved_builds_v1';
+export const STORAGE_KEY_SOAPBOX_LOADOUT = 'soapbox_standalone_loadout_v1';
+export const STORAGE_KEY_SOAPBOX_SAVED = 'soapbox_standalone_saved_builds_v1';
+export const STORAGE_KEY_SOAPBOX_COURSE = 'soapbox_standalone_selected_course_v1';
+export const VALID_SOAPBOX_COURSE_IDS: SoapboxCourseId[] = [
+  'alpine_panorama',
+  'canyon_plunge',
+  'urban_downhill',
+  'extreme_peak',
+];
 const MAX_HISTORY_LENGTH = 25;
+
+export function loadInitialSoapboxCourse(): SoapboxCourseId {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SOAPBOX_COURSE);
+    if (raw && (VALID_SOAPBOX_COURSE_IDS as string[]).includes(raw)) {
+      return raw as SoapboxCourseId;
+    }
+  } catch {
+    // ignore
+  }
+  return 'alpine_panorama';
+}
 
 function loadInitialSoapboxLoadout(): SoapboxLoadout {
   try {
@@ -98,6 +118,10 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
   );
   const [selectedCategory, setSelectedCategory] =
     useState<SoapboxPartCategory>('chassis');
+  const [selectedCourseId, setSelectedCourseId] =
+    useState<SoapboxCourseId>(loadInitialSoapboxCourse);
+  const selectedCourseIdRef = useRef<SoapboxCourseId>(selectedCourseId);
+  selectedCourseIdRef.current = selectedCourseId;
   const [shakerRigActive, setShakerRigActive] = useState<boolean>(false);
 
   const loadoutRef = useRef(loadout);
@@ -107,12 +131,25 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
   const totalStarsRef = useRef(totalStars);
   totalStarsRef.current = totalStars;
 
-  const simStateRef = useRef<SoapboxSimulationState>(createInitialSoapboxState());
+  const simStateRef = useRef<SoapboxSimulationState>(createInitialSoapboxState(selectedCourseId));
   const [hudSimState, setHudSimState] = useState<SoapboxSimulationState>(() =>
-    createInitialSoapboxState()
+    createInitialSoapboxState(selectedCourseId)
   );
   const [showScorecardModal, setShowScorecardModal] = useState<boolean>(false);
   const [newlyUnlockedParts, setNewlyUnlockedParts] = useState<SoapboxPart[]>([]);
+
+  const handleSelectCourse = useCallback((courseId: SoapboxCourseId) => {
+    soundEngine.playSnapPop();
+    setSelectedCourseId(courseId);
+    try {
+      localStorage.setItem(STORAGE_KEY_SOAPBOX_COURSE, courseId);
+    } catch {
+      // ignore
+    }
+    const fresh = createInitialSoapboxState(courseId);
+    simStateRef.current = fresh;
+    setHudSimState(fresh);
+  }, []);
 
   const metrics = useMemo(() => computeSoapboxMetrics(loadout), [loadout]);
   const metricsRef = useRef(metrics);
@@ -282,7 +319,7 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
     setShakerRigActive(false);
     setShowScorecardModal(false);
     setNewlyUnlockedParts([]);
-    const fresh = createInitialSoapboxState();
+    const fresh = createInitialSoapboxState(selectedCourseIdRef.current);
     simStateRef.current = fresh;
     setHudSimState(fresh);
     setMode('race');
@@ -291,6 +328,9 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
   const handleReturnToGarage = useCallback(() => {
     soundEngine.playSnapPop();
     setShowScorecardModal(false);
+    const fresh = createInitialSoapboxState(selectedCourseIdRef.current);
+    simStateRef.current = fresh;
+    setHudSimState(fresh);
     setMode('garage');
   }, []);
 
@@ -375,9 +415,10 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
 
   return (
     <div className="relative h-dvh w-dvw overflow-hidden bg-slate-950 select-none">
-      {/* 3D WebGL Soapbox Garage & 1,000-Ft Alpine Downhill Course */}
+      {/* 3D WebGL Soapbox Garage & Downhill Courses */}
       <SoapboxCanvas3D
         mode={mode}
+        courseId={selectedCourseId}
         paused={showScorecardModal}
         loadout={loadout}
         metrics={metrics}
@@ -394,6 +435,8 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
       {/* GARAGE BUILDER HUD */}
       {mode === 'garage' && (
         <SoapboxGarageHUD
+          selectedCourseId={selectedCourseId}
+          onSelectCourse={handleSelectCourse}
           loadout={loadout}
           metrics={metrics}
           selectedCategory={selectedCategory}
@@ -424,6 +467,7 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
       {/* DOWNHILL RACE HUD */}
       {mode === 'race' && !showScorecardModal && (
         <SoapboxRaceHUD
+          selectedCourseId={selectedCourseId}
           simState={hudSimState}
           simStateRef={simStateRef}
           bestRecordFeet={bestRecordFeet}
@@ -441,6 +485,7 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
       {/* POST-RUN 3-JUDGE SCORECARD MODAL */}
       {mode === 'race' && showScorecardModal && (
         <SoapboxScorecardModal
+          selectedCourseId={selectedCourseId}
           simState={hudSimState}
           newlyUnlockedParts={newlyUnlockedParts}
           totalStars={totalStars}

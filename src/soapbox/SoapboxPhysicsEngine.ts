@@ -1,8 +1,12 @@
 import {
-  SOAPBOX_COURSE_LENGTH_FEET,
   SOAPBOX_START_RAMP_FEET,
 } from './SoapboxPartCatalog';
 import { ComputedSoapboxMetrics } from './SoapboxMetrics';
+import {
+  SoapboxCourseId,
+  SoapboxCourseDef,
+  getSoapboxCourse,
+} from './SoapboxCourses';
 
 export type SoapboxPhase = 'skit' | 'start_ramp' | 'racing' | 'finished';
 
@@ -25,9 +29,37 @@ export interface SoapboxObstacle {
   triggered: boolean;
 }
 
-export interface SoapboxDebrisPiece {
+export type SoapboxDetachablePartSlot =
+  | 'wheel_fl'
+  | 'wheel_fr'
+  | 'wheel_rl'
+  | 'wheel_rr'
+  | 'bumper'
+  | 'topper';
+
+export interface SoapboxPartDamageState {
+  slot: SoapboxDetachablePartSlot;
+  health: number; // 0.0 to 1.0 (1.0 = full health, 0.0 = broken/detached)
+  isDetached: boolean;
+  detachedAtS?: number;
+}
+
+export interface SoapboxDebrisItem {
   id: string;
-  kind: 'wheel_fl' | 'wheel_fr' | 'wheel_rl' | 'wheel_rr' | 'topper' | 'bumper';
+  slot: SoapboxDetachablePartSlot;
+  kind: SoapboxDetachablePartSlot; // backwards-compatible alias
+  // Road-relative Frenet frame coordinates in feet:
+  sFeet: number;          // longitudinal distance along track
+  lateralFeet: number;    // lateral offset from centerline
+  heightFeet: number;     // elevation above road surface
+  // Linear velocities in ft/s:
+  velSFtS: number;
+  velLatFtS: number;
+  velHeightFtS: number;
+  // Rotation and angular velocities:
+  rotation: { x: number; y: number; z: number };
+  rotVel: { x: number; y: number; z: number };
+  // Backwards-compatible Cartesian aliases:
   xFeet: number;
   yFeet: number;
   zFeet: number;
@@ -40,7 +72,11 @@ export interface SoapboxDebrisPiece {
   vrx: number;
   vry: number;
   vrz: number;
+  scale: number;
+  lifeSeconds: number;
 }
+
+export type SoapboxDebrisPiece = SoapboxDebrisItem;
 
 export interface SoapboxHayBurst {
   id: number;
@@ -58,6 +94,10 @@ export interface SoapboxJudgeScorecard {
   runTitle: string;
   newDistanceRecord: boolean;
   newTimeRecord: boolean;
+  damagePenalty?: number;
+  partsLostCount?: number;
+  wrecked?: boolean;
+  courseId?: SoapboxCourseId;
 }
 
 export interface SoapboxRoadState {
@@ -76,11 +116,15 @@ export interface SoapboxRoadState {
   surface: 'asphalt' | 'cobblestone';
   /** Named course sector for HUD telemetry */
   sectionName: string;
+  /** Active course ID */
+  courseId?: SoapboxCourseId;
 }
 
 export interface SoapboxSimulationState {
   phase: SoapboxPhase;
   phaseTime: number;
+  courseId: SoapboxCourseId;
+  courseLengthFeet: number;
   sFeet: number;
   distanceFeet: number;
   speedFtS: number;
@@ -126,10 +170,21 @@ export interface SoapboxSimulationState {
   } | null;
   statusBannerTimer: number;
   obstacles: SoapboxObstacle[];
-  debris: SoapboxDebrisPiece[];
+  debris: SoapboxDebrisItem[];
   hayBursts: SoapboxHayBurst[];
   sparkIntensity: number;
   judgeScores: SoapboxJudgeScorecard | null;
+
+  // Destructible parts tracking & handling degradation
+  parts: Record<SoapboxDetachablePartSlot, SoapboxPartDamageState>;
+  attachedParts: Record<SoapboxDetachablePartSlot, boolean>;
+  partHealth: Record<SoapboxDetachablePartSlot, number>;
+  partsDetachedCount: number;
+  isWrecked: boolean;
+  wreckReason: string | null;
+  steeringPullFtS2: number;
+  pullYawRate: number;
+  lostParts: Array<{ slot: SoapboxDetachablePartSlot; sFeet: number; reason: string }>;
 }
 
 export interface SoapboxStepEvents {
@@ -143,136 +198,38 @@ export interface SoapboxStepEvents {
   driftChirp: boolean;
   rolledOver: boolean;
   finishedRun: boolean;
+  partDetached: SoapboxDetachablePartSlot | null;
+  wrecked: boolean;
 }
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = clamp((x - edge0) / Math.max(1e-5, edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
-}
-
 /**
- * Evaluates the 1,000-Ft Winding Alpine Hilltop Course Profile at distance `sFeet`.
- * - Start Pavilion & Chute: s in [-40, 0] ft at +110 ft elevation
- * - Downhill Winding Course: s in [0, 1000] ft descending from +100 ft to 0 ft
+ * Evaluates the course road state at distance `sFeet`.
+ * Routes evaluations through the active course definition.
  */
-export function getSoapboxRoadState(sFeet: number): SoapboxRoadState {
-  const s = clamp(sFeet, -50, 1140);
+export function getSoapboxRoadState(
+  sFeet: number,
+  courseId: SoapboxCourseId = 'alpine_panorama'
+): SoapboxRoadState {
+  const course: SoapboxCourseDef = getSoapboxCourse(courseId);
+  const s = clamp(sFeet, -course.startRampFeet - 10, course.lengthFeet + 140);
 
-  // 1. Elevation Profile Y(s) in feet
-  let yFeet = 0;
-  let dyDs = 0;
-
-  if (s < 0) {
-    // Steep starter chute from s = -40 ft (y = 111.5 ft) down to s = 0 ft (y = 100 ft)
-    const u = clamp((s + SOAPBOX_START_RAMP_FEET) / SOAPBOX_START_RAMP_FEET, 0, 1);
-    yFeet = 111.5 - u * 11.5;
-    dyDs = -11.5 / SOAPBOX_START_RAMP_FEET;
-  } else if (s <= SOAPBOX_COURSE_LENGTH_FEET) {
-    const u = s / SOAPBOX_COURSE_LENGTH_FEET;
-    // Steady 10% average downhill grade with steeper drops before jumps & hairpin
-    const baseDrop = 100 * (1 - u);
-    const undulation =
-      3.8 * Math.sin(u * Math.PI * 4) +
-      2.4 * Math.cos(u * Math.PI * 2);
-    // Smooth out at s = 0 and s = 1000
-    const env = Math.sin(u * Math.PI);
-    yFeet = baseDrop + undulation * env;
-
-    const dBaseDs = -100 / SOAPBOX_COURSE_LENGTH_FEET;
-    const dUndDs =
-      ((3.8 * Math.PI * 4 * Math.cos(u * Math.PI * 4) -
-        2.4 * Math.PI * 2 * Math.sin(u * Math.PI * 2)) *
-        env) /
-      SOAPBOX_COURSE_LENGTH_FEET;
-    dyDs = dBaseDs + dUndDs;
-  } else {
-    // Flat finish celebration apron past 1,000 ft
-    const excess = s - SOAPBOX_COURSE_LENGTH_FEET;
-    yFeet = Math.max(-2.5, -excess * 0.02);
-    dyDs = -0.02;
-  }
-
-  // 2. Lateral Winding Centerline Z(s) in feet (sweeping S-curves + Hairpin Switchback at 560-680 ft)
-  let zFeet = 0;
-  let dzDs = 0;
-  let d2zDs2 = 0;
-
-  if (s > 0) {
-    const sEff = Math.min(s, SOAPBOX_COURSE_LENGTH_FEET);
-    const rampIn = smoothstep(0, 55, sEff);
-    const rampOut = 1 - smoothstep(935, 1000, sEff);
-    const env = rampIn * rampOut;
-
-    // Sweeping Alpine S-curves + pronounced Hairpin Switchback bulge around s = 620 ft
-    const k1 = 0.0125; // wavelength ~502 ft
-    const k2 = 0.026; // chicane harmonic
-    const hpCenter = 620;
-    const hpWidth = 68;
-    const hpArg = (sEff - hpCenter) / hpWidth;
-    const hpGauss = Math.exp(-hpArg * hpArg);
-
-    const waveZ =
-      38 * Math.sin(k1 * sEff) +
-      16 * Math.sin(k2 * sEff - 0.6) +
-      44 * hpGauss * Math.sin(0.036 * (sEff - 540));
-
-    const dWaveDs =
-      38 * k1 * Math.cos(k1 * sEff) +
-      16 * k2 * Math.cos(k2 * sEff - 0.6) +
-      44 *
-        hpGauss *
-        ((-2 * hpArg) / hpWidth * Math.sin(0.036 * (sEff - 540)) +
-          0.036 * Math.cos(0.036 * (sEff - 540)));
-
-    const d2WaveDs2 =
-      -38 * k1 * k1 * Math.sin(k1 * sEff) -
-      16 * k2 * k2 * Math.sin(k2 * sEff - 0.6) -
-      44 *
-        hpGauss *
-        (0.036 * 0.036 * Math.sin(0.036 * (sEff - 540)) +
-          (2 / (hpWidth * hpWidth)) * Math.sin(0.036 * (sEff - 540)));
-
-    zFeet = waveZ * env;
-    dzDs = dWaveDs * env;
-    d2zDs2 = d2WaveDs2 * env;
-  }
+  const elev = course.getElevation(s);
+  const center = course.getCenterline(s);
+  const surface = course.getSurface(s);
+  const sectionName = course.getSectionName(s);
 
   const xFeet = s;
-  const headingRad = Math.atan2(dzDs, 1);
-  const slopeRad = Math.atan2(-dyDs, 1);
+  const yFeet = elev.yFeet;
+  const zFeet = center.zFeet;
 
-  // Curvature kappa(s) in 1/ft (+ = right bend, - = left bend)
-  const denom = Math.pow(1 + dzDs * dzDs, 1.5);
-  const curvature = clamp(d2zDs2 / denom, -0.028, 0.028);
-
-  // Surface type (Cobblestone sectors in Old Town & Lower Sprint)
-  const isCobble =
-    (s >= 250 && s <= 300) ||
-    (s >= 415 && s <= 475) ||
-    (s >= 810 && s <= 865);
-  const surface: 'asphalt' | 'cobblestone' = isCobble ? 'cobblestone' : 'asphalt';
-
-  // Named Course Sector
-  let sectionName = 'Hilltop Start Pavilion';
-  if (s >= 0 && s < 230) {
-    sectionName = 'Alpine Panorama S-Curves';
-  } else if (s >= 230 && s < 350) {
-    sectionName = 'Old Town Cobbles & Kicker #1';
-  } else if (s >= 350 && s < 550) {
-    sectionName = 'Brewery Alley Chicanes';
-  } else if (s >= 550 && s < 695) {
-    sectionName = "Deadman's Hairpin Switchback";
-  } else if (s >= 695 && s < 800) {
-    sectionName = 'Canyon Gap Kicker Jump #2';
-  } else if (s >= 800 && s < 1000) {
-    sectionName = 'Final Cobble Sprint to Finish';
-  } else if (s >= 1000) {
-    sectionName = '1,000-Ft Checkered Finish Arch';
-  }
+  const headingRad = Math.atan2(center.dzDs, 1);
+  const slopeRad = Math.atan2(-elev.dyDs, 1);
+  const denom = Math.pow(1 + center.dzDs * center.dzDs, 1.5);
+  const curvature = clamp(center.d2zDs2 / Math.max(1e-5, denom), -0.035, 0.035);
 
   return {
     sFeet: s,
@@ -284,221 +241,55 @@ export function getSoapboxRoadState(sFeet: number): SoapboxRoadState {
     curvature,
     surface,
     sectionName,
+    courseId,
   };
 }
 
-/**
- * Generates the deterministic list of course obstacles & hazards along the 1,000-ft road.
- */
-export function createSoapboxCourseObstacles(): SoapboxObstacle[] {
-  return [
-    // Upper S-Curves
-    {
-      id: 'obs_hay_1',
-      type: 'hay_bale',
-      sFeet: 95,
-      lengthFeet: 8,
-      lateralCenterFeet: -6.5,
-      halfWidthFeet: 3.6,
-      triggered: false,
-    },
-    {
-      id: 'obs_slick_1',
-      type: 'water_slick',
-      sFeet: 148,
-      lengthFeet: 22,
-      lateralCenterFeet: 4.2,
-      halfWidthFeet: 4.5,
-      triggered: false,
-    },
-    {
-      id: 'obs_hay_2',
-      type: 'hay_bale',
-      sFeet: 186,
-      lengthFeet: 8,
-      lateralCenterFeet: 6.8,
-      halfWidthFeet: 3.6,
-      triggered: false,
-    },
-    {
-      id: 'obs_gate_1',
-      type: 'speed_gate',
-      sFeet: 222,
-      lengthFeet: 10,
-      lateralCenterFeet: -1.5,
-      halfWidthFeet: 4.2,
-      triggered: false,
-    },
-
-    // Old Town Cobbles & Kicker Jump #1
-    {
-      id: 'obs_cobble_1',
-      type: 'cobble_strip',
-      sFeet: 275,
-      lengthFeet: 50,
-      lateralCenterFeet: 0,
-      halfWidthFeet: 13,
-      triggered: false,
-    },
-    {
-      id: 'obs_kicker_1',
-      type: 'kicker_jump',
-      sFeet: 310,
-      lengthFeet: 16,
-      lateralCenterFeet: 0,
-      halfWidthFeet: 6.5,
-      triggered: false,
-    },
-
-    // Brewery Alley Chicanes
-    {
-      id: 'obs_hay_3',
-      type: 'hay_bale',
-      sFeet: 375,
-      lengthFeet: 8,
-      lateralCenterFeet: -5.8,
-      halfWidthFeet: 3.8,
-      triggered: false,
-    },
-    {
-      id: 'obs_cobble_2',
-      type: 'cobble_strip',
-      sFeet: 445,
-      lengthFeet: 60,
-      lateralCenterFeet: 0,
-      halfWidthFeet: 13,
-      triggered: false,
-    },
-    {
-      id: 'obs_slick_2',
-      type: 'water_slick',
-      sFeet: 468,
-      lengthFeet: 24,
-      lateralCenterFeet: -3.8,
-      halfWidthFeet: 4.6,
-      triggered: false,
-    },
-    {
-      id: 'obs_hay_4',
-      type: 'hay_bale',
-      sFeet: 508,
-      lengthFeet: 8,
-      lateralCenterFeet: 6.2,
-      halfWidthFeet: 3.8,
-      triggered: false,
-    },
-    {
-      id: 'obs_gate_2',
-      type: 'speed_gate',
-      sFeet: 542,
-      lengthFeet: 10,
-      lateralCenterFeet: 2.0,
-      halfWidthFeet: 4.0,
-      triggered: false,
-    },
-
-    // Deadman's Hairpin Switchback (560 - 680 ft)
-    {
-      id: 'obs_hay_5',
-      type: 'hay_bale',
-      sFeet: 595,
-      lengthFeet: 8,
-      lateralCenterFeet: -7.2,
-      halfWidthFeet: 3.8,
-      triggered: false,
-    },
-    {
-      id: 'obs_slick_3',
-      type: 'water_slick',
-      sFeet: 638,
-      lengthFeet: 24,
-      lateralCenterFeet: 3.5,
-      halfWidthFeet: 4.5,
-      triggered: false,
-    },
-    {
-      id: 'obs_hay_6',
-      type: 'hay_bale',
-      sFeet: 676,
-      lengthFeet: 8,
-      lateralCenterFeet: 7.0,
-      halfWidthFeet: 3.8,
-      triggered: false,
-    },
-
-    // Canyon Kicker Jump #2 & Lower Sprint
-    {
-      id: 'obs_kicker_2',
-      type: 'kicker_jump',
-      sFeet: 720,
-      lengthFeet: 18,
-      lateralCenterFeet: 0,
-      halfWidthFeet: 6.5,
-      triggered: false,
-    },
-    {
-      id: 'obs_gate_3',
-      type: 'speed_gate',
-      sFeet: 768,
-      lengthFeet: 10,
-      lateralCenterFeet: -2.2,
-      halfWidthFeet: 4.0,
-      triggered: false,
-    },
-    {
-      id: 'obs_hay_7',
-      type: 'hay_bale',
-      sFeet: 798,
-      lengthFeet: 8,
-      lateralCenterFeet: 5.8,
-      halfWidthFeet: 3.6,
-      triggered: false,
-    },
-    {
-      id: 'obs_cobble_3',
-      type: 'cobble_strip',
-      sFeet: 838,
-      lengthFeet: 55,
-      lateralCenterFeet: 0,
-      halfWidthFeet: 13,
-      triggered: false,
-    },
-    {
-      id: 'obs_slick_4',
-      type: 'water_slick',
-      sFeet: 882,
-      lengthFeet: 22,
-      lateralCenterFeet: -4.2,
-      halfWidthFeet: 4.5,
-      triggered: false,
-    },
-    {
-      id: 'obs_hay_8',
-      type: 'hay_bale',
-      sFeet: 922,
-      lengthFeet: 8,
-      lateralCenterFeet: -6.4,
-      halfWidthFeet: 3.6,
-      triggered: false,
-    },
-    {
-      id: 'obs_gate_4',
-      type: 'speed_gate',
-      sFeet: 958,
-      lengthFeet: 10,
-      lateralCenterFeet: 0,
-      halfWidthFeet: 4.2,
-      triggered: false,
-    },
-  ];
+export function createSoapboxCourseObstacles(
+  courseId: SoapboxCourseId = 'alpine_panorama'
+): SoapboxObstacle[] {
+  return getSoapboxCourse(courseId).generateObstacles();
 }
 
-export function createInitialSoapboxState(): SoapboxSimulationState {
-  const initialRoad = getSoapboxRoadState(-SOAPBOX_START_RAMP_FEET);
+export function createInitialSoapboxState(
+  courseId: SoapboxCourseId = 'alpine_panorama'
+): SoapboxSimulationState {
+  const course = getSoapboxCourse(courseId);
+  const initialRoad = getSoapboxRoadState(-course.startRampFeet, courseId);
+
+  const initialParts: Record<SoapboxDetachablePartSlot, SoapboxPartDamageState> = {
+    wheel_fl: { slot: 'wheel_fl', health: 1.0, isDetached: false },
+    wheel_fr: { slot: 'wheel_fr', health: 1.0, isDetached: false },
+    wheel_rl: { slot: 'wheel_rl', health: 1.0, isDetached: false },
+    wheel_rr: { slot: 'wheel_rr', health: 1.0, isDetached: false },
+    bumper: { slot: 'bumper', health: 1.0, isDetached: false },
+    topper: { slot: 'topper', health: 1.0, isDetached: false },
+  };
+
+  const initialAttachedParts: Record<SoapboxDetachablePartSlot, boolean> = {
+    wheel_fl: true,
+    wheel_fr: true,
+    wheel_rl: true,
+    wheel_rr: true,
+    bumper: true,
+    topper: true,
+  };
+
+  const initialPartHealth: Record<SoapboxDetachablePartSlot, number> = {
+    wheel_fl: 1.0,
+    wheel_fr: 1.0,
+    wheel_rl: 1.0,
+    wheel_rr: 1.0,
+    bumper: 1.0,
+    topper: 1.0,
+  };
+
   return {
     phase: 'skit',
     phaseTime: 0,
-    sFeet: -SOAPBOX_START_RAMP_FEET,
+    courseId: course.id,
+    courseLengthFeet: course.lengthFeet,
+    sFeet: -course.startRampFeet,
     distanceFeet: 0,
     speedFtS: 0,
     mph: 0,
@@ -522,7 +313,7 @@ export function createInitialSoapboxState(): SoapboxSimulationState {
     verticalVelFtS: 0,
     suspensionCompression: 0,
     bottomedOutCount: 0,
-    onCobblestone: false,
+    onCobblestone: initialRoad.surface === 'cobblestone',
     inWaterSlickTimer: 0,
     structuralIntegrity: 100,
     hypeMeter: 30,
@@ -542,15 +333,25 @@ export function createInitialSoapboxState(): SoapboxSimulationState {
       tone: 'info',
     },
     statusBannerTimer: 4.0,
-    obstacles: createSoapboxCourseObstacles(),
+    obstacles: createSoapboxCourseObstacles(courseId),
     debris: [],
     hayBursts: [],
     sparkIntensity: 0,
     judgeScores: null,
+
+    parts: initialParts,
+    attachedParts: initialAttachedParts,
+    partHealth: initialPartHealth,
+    partsDetachedCount: 0,
+    isWrecked: false,
+    wreckReason: null,
+    steeringPullFtS2: 0,
+    pullYawRate: 0,
+    lostParts: [],
   };
 }
 
-function setBanner(
+export function setBanner(
   state: SoapboxSimulationState,
   text: string,
   tone: 'info' | 'good' | 'warn' | 'danger',
@@ -606,7 +407,7 @@ export function triggerSoapboxActionTap(
 
     // Standard starter chute crew sprint tap
     const tapBoost = 5.2 * massFactor;
-    state.speedFtS = clamp(state.speedFtS + tapBoost, 12, 54);
+    state.speedFtS = clamp(state.speedFtS + tapBoost, 0, 54);
     state.mph = state.speedFtS * 0.681818;
     return { event: 'crew_push', shovePerfect: false };
   }
@@ -637,13 +438,243 @@ export function dropSoapboxStartGate(
   );
 }
 
-function spawnRolloverDebris(state: SoapboxSimulationState): void {
-  if (state.debris.length > 0) return;
-  const road = getSoapboxRoadState(state.sFeet);
-  const baseZ = road.zFeet + state.lateralOffsetFeet;
-  const baseY = road.yFeet + state.airborneHeightFeet + 1.2;
+// ==============================================================================
+// DESTRUCTIBLE PARTS & DAMAGE ROUTING
+// ==============================================================================
 
-  const kinds: SoapboxDebrisPiece['kind'][] = [
+export function damagePartSlot(
+  state: SoapboxSimulationState,
+  slot: SoapboxDetachablePartSlot,
+  amount: number,
+  eventsOrReason?: SoapboxStepEvents | string
+): void {
+  const part = state.parts[slot];
+  if (!part || part.isDetached) return;
+
+  part.health = Math.max(0, part.health - amount);
+  state.partHealth[slot] = part.health;
+
+  if (part.health <= 0 && state.attachedParts[slot]) {
+    detachSoapboxPart(state, slot, eventsOrReason);
+  }
+}
+
+export function detachSoapboxPart(
+  state: SoapboxSimulationState,
+  slot: SoapboxDetachablePartSlot,
+  eventsOrReason?: SoapboxStepEvents | string
+): void {
+  if (!state.attachedParts[slot]) return;
+
+  let reason = 'Impact Detachment';
+  let events: SoapboxStepEvents | undefined = undefined;
+
+  if (typeof eventsOrReason === 'string') {
+    reason = eventsOrReason;
+  } else if (eventsOrReason && typeof eventsOrReason === 'object') {
+    events = eventsOrReason;
+  }
+
+  state.attachedParts[slot] = false;
+  state.parts[slot].isDetached = true;
+  state.parts[slot].health = 0;
+  state.parts[slot].detachedAtS = state.sFeet;
+  state.partHealth[slot] = 0;
+  state.partsDetachedCount += 1;
+  state.lostParts.push({ slot, sFeet: state.sFeet, reason });
+  if (events) {
+    events.partDetached = slot;
+  }
+
+  // Lateral offsets and ejection impulses per slot
+  let sOffset = 0;
+  let latOffset = 0;
+  let heightOffset = 1.2;
+  let vLatImpulse = 0;
+  let vHeightImpulse = 14 + Math.random() * 6;
+  let vsImpulse = state.speedFtS * 0.75 + Math.random() * 6;
+
+  switch (slot) {
+    case 'wheel_fl':
+      sOffset = 2.7;
+      latOffset = -2.2;
+      vLatImpulse = -14 - Math.random() * 6; // Outward left
+      break;
+    case 'wheel_fr':
+      sOffset = 2.7;
+      latOffset = 2.2;
+      vLatImpulse = 14 + Math.random() * 6;  // Outward right
+      break;
+    case 'wheel_rl':
+      sOffset = -2.7;
+      latOffset = -2.2;
+      vLatImpulse = -12 - Math.random() * 5;
+      break;
+    case 'wheel_rr':
+      sOffset = -2.7;
+      latOffset = 2.2;
+      vLatImpulse = 12 + Math.random() * 5;
+      break;
+    case 'bumper':
+      sOffset = 4.2;
+      latOffset = 0;
+      vLatImpulse = (Math.random() - 0.5) * 8;
+      vsImpulse = state.speedFtS * 0.6 + 10;
+      break;
+    case 'topper':
+      sOffset = -1.2;
+      latOffset = 0;
+      heightOffset = 3.2;
+      vHeightImpulse = 18 + Math.random() * 8; // High vertical launch
+      vLatImpulse = (Math.random() - 0.5) * 12;
+      break;
+  }
+
+  const road = getSoapboxRoadState(state.sFeet + sOffset, state.courseId);
+
+  const debrisPiece: SoapboxDebrisItem = {
+    id: `debris_${slot}_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    slot,
+    kind: slot,
+    sFeet: state.sFeet + sOffset,
+    lateralFeet: state.lateralOffsetFeet + latOffset,
+    heightFeet: heightOffset,
+    velSFtS: vsImpulse,
+    velLatFtS: vLatImpulse,
+    velHeightFtS: vHeightImpulse,
+    rotation: { x: Math.random() * Math.PI, y: Math.random() * Math.PI, z: 0 },
+    rotVel: {
+      x: (Math.random() - 0.5) * 16,
+      y: (Math.random() - 0.5) * 16,
+      z: (Math.random() - 0.5) * 20,
+    },
+    xFeet: road.xFeet,
+    yFeet: road.yFeet + heightOffset,
+    zFeet: road.zFeet + state.lateralOffsetFeet + latOffset,
+    vxFtS: vsImpulse,
+    vyFtS: vHeightImpulse,
+    vzFtS: vLatImpulse,
+    rx: 0,
+    ry: 0,
+    rz: 0,
+    vrx: 0,
+    vry: 0,
+    vrz: 0,
+    scale: 1.0,
+    lifeSeconds: 0,
+  };
+
+  debrisPiece.rx = debrisPiece.rotation.x;
+  debrisPiece.ry = debrisPiece.rotation.y;
+  debrisPiece.rz = debrisPiece.rotation.z;
+  debrisPiece.vrx = debrisPiece.rotVel.x;
+  debrisPiece.vry = debrisPiece.rotVel.y;
+  debrisPiece.vrz = debrisPiece.rotVel.z;
+
+  state.debris.push(debrisPiece);
+
+  const slotLabels: Record<SoapboxDetachablePartSlot, string> = {
+    wheel_fl: '💥 FRONT-LEFT WHEEL TORN OFF! STEERING PULLING LEFT!',
+    wheel_fr: '💥 FRONT-RIGHT WHEEL TORN OFF! STEERING PULLING RIGHT!',
+    wheel_rl: '💥 REAR-LEFT WHEEL LOST! OVERSTEER INSTABILITY!',
+    wheel_rr: '💥 REAR-RIGHT WHEEL LOST! OVERSTEER INSTABILITY!',
+    bumper: '🛡️ FRONT BUMPER SMASHED AWAY! NO MORE PLOW ARMOR!',
+    topper: '🎭 TOPPER THROWN OFF BY SEVERE IMPACT!',
+  };
+  setBanner(state, slotLabels[slot], 'danger', 2.8);
+}
+
+export function applyDirectionalObstacleDamage(
+  state: SoapboxSimulationState,
+  metrics: ComputedSoapboxMetrics,
+  obs: SoapboxObstacle,
+  events?: SoapboxStepEvents
+): void {
+  const deltaLat = state.lateralOffsetFeet - obs.lateralCenterFeet;
+  const speedScale = clamp(state.speedFtS / 32, 0.6, 1.8);
+  const toughnessMod = 80 / Math.max(45, metrics.structuralToughness);
+  const baseDamage = 0.55 * speedScale * toughnessMod;
+
+  if (Math.abs(deltaLat) <= 0.8) {
+    // 1. Frontal Head-On Impact -> Bumper
+    if (state.attachedParts.bumper) {
+      const plowMitigation = metrics.hayPlowProtection;
+      const actualDmg = baseDamage * (1 - plowMitigation * 0.5);
+      damagePartSlot(state, 'bumper', actualDmg, events);
+    } else {
+      // Bumper already gone: heavy damage splits across front wheels + chassis
+      damagePartSlot(state, 'wheel_fl', baseDamage * 0.45, events);
+      damagePartSlot(state, 'wheel_fr', baseDamage * 0.45, events);
+      state.structuralIntegrity = Math.max(0, state.structuralIntegrity - 25);
+    }
+  } else if (deltaLat > 0.8) {
+    // 2. Left-Side Flank Clip -> Front-Left / Rear-Left
+    if (state.attachedParts.wheel_fl) {
+      damagePartSlot(state, 'wheel_fl', baseDamage, events);
+    } else if (state.attachedParts.wheel_rl) {
+      damagePartSlot(state, 'wheel_rl', baseDamage * 0.8, events);
+    } else {
+      state.structuralIntegrity = Math.max(0, state.structuralIntegrity - 20);
+    }
+  } else {
+    // 3. Right-Side Flank Clip -> Front-Right / Rear-Right
+    if (state.attachedParts.wheel_fr) {
+      damagePartSlot(state, 'wheel_fr', baseDamage, events);
+    } else if (state.attachedParts.wheel_rr) {
+      damagePartSlot(state, 'wheel_rr', baseDamage * 0.8, events);
+    } else {
+      state.structuralIntegrity = Math.max(0, state.structuralIntegrity - 20);
+    }
+  }
+}
+
+export function evaluateSoapboxWreckConditions(
+  state: SoapboxSimulationState,
+  _metrics: ComputedSoapboxMetrics,
+  criticalRolloverDeg: number
+): { isWrecked: boolean; reason: string } {
+  // 1. 3+ Wheels Lost (Catastrophic Mobility Failure)
+  const attachedWheels =
+    (state.attachedParts.wheel_fl ? 1 : 0) +
+    (state.attachedParts.wheel_fr ? 1 : 0) +
+    (state.attachedParts.wheel_rl ? 1 : 0) +
+    (state.attachedParts.wheel_rr ? 1 : 0);
+  if (attachedWheels <= 1) {
+    return { isWrecked: true, reason: 'Three or more wheels destroyed — catastrophic chassis drag!' };
+  }
+
+  // 2. Dual Front Wheel Axle Collapse
+  if (!state.attachedParts.wheel_fl && !state.attachedParts.wheel_fr) {
+    return { isWrecked: true, reason: 'Front axle collapsed — both front wheels torn off!' };
+  }
+
+  // 3. Dual Rear Wheel Axle Collapse
+  if (!state.attachedParts.wheel_rl && !state.attachedParts.wheel_rr) {
+    return { isWrecked: true, reason: 'Rear axle collapsed — both rear wheels lost!' };
+  }
+
+  // 4. Dual Same-Side Wheels Lost at Speed
+  const lostLeftSide = !state.attachedParts.wheel_fl && !state.attachedParts.wheel_rl;
+  const lostRightSide = !state.attachedParts.wheel_fr && !state.attachedParts.wheel_rr;
+  if ((lostLeftSide || lostRightSide) && state.speedFtS > 22) {
+    return { isWrecked: true, reason: 'High-speed roll trip — both wheels lost on one side!' };
+  }
+
+  // 5. Chassis Structural Exhaustion
+  if (state.structuralIntegrity <= 0) {
+    return { isWrecked: true, reason: 'Total hull collapse — structural integrity zero!' };
+  }
+
+  // 6. Critical Dynamic Rollover Exceeded
+  if (Math.abs(state.rollDeg) >= criticalRolloverDeg && state.airborneHeightFeet <= 0.5) {
+    return { isWrecked: true, reason: `Violent rollover crash at ${Math.round(Math.abs(state.rollDeg))}°!` };
+  }
+
+  return { isWrecked: false, reason: '' };
+}
+
+export function spawnWreckDebris(state: SoapboxSimulationState): void {
+  const slots: SoapboxDetachablePartSlot[] = [
     'wheel_fl',
     'wheel_fr',
     'wheel_rl',
@@ -652,38 +683,69 @@ function spawnRolloverDebris(state: SoapboxSimulationState): void {
     'bumper',
   ];
 
-  kinds.forEach((kind, idx) => {
-    const angle = (idx / kinds.length) * Math.PI * 2 + 0.4;
-    state.debris.push({
-      id: `sb_debris_${kind}`,
-      kind,
-      xFeet: road.xFeet + (idx % 2 === 0 ? 1.5 : -1.5),
-      yFeet: baseY + (kind === 'topper' ? 2.2 : 0.6),
-      zFeet: baseZ + Math.sin(angle) * 2.5,
-      vxFtS: state.speedFtS * 0.55 + Math.cos(angle) * 14,
-      vyFtS: 14 + (idx % 3) * 6,
-      vzFtS: state.lateralVelFtS * 0.5 + Math.sin(angle) * 18,
-      rx: 0,
-      ry: 0,
-      rz: 0,
-      vrx: (idx % 2 === 0 ? 1 : -1) * (5 + idx * 1.4),
-      vry: 4 - idx * 1.1,
-      vrz: (idx % 2 === 1 ? 1 : -1) * (6 + idx),
-    });
+  slots.forEach((slot) => {
+    if (state.attachedParts[slot]) {
+      detachSoapboxPart(state, slot, {
+        gateDropped: false,
+        pushShoveResult: null,
+        hayBaleHit: false,
+        waterSlickEntered: false,
+        kickerLaunched: false,
+        bottomedOut: false,
+        speedGateCleared: false,
+        driftChirp: false,
+        rolledOver: false,
+        finishedRun: false,
+        partDetached: null,
+        wrecked: false,
+      });
+    }
   });
 }
 
-function finalizeSoapboxJudgeScorecard(
+export function triggerSoapboxWreck(
+  state: SoapboxSimulationState,
+  reason: string,
+  metrics: ComputedSoapboxMetrics,
+  bestRecordFeet: number,
+  bestTimeSec: number | null,
+  events: SoapboxStepEvents
+): void {
+  state.isWrecked = true;
+  state.wreckReason = reason;
+  state.phase = 'finished';
+  state.phaseTime = 0;
+  state.sparkIntensity = 1.0;
+  events.wrecked = true;
+  events.finishedRun = true;
+
+  spawnWreckDebris(state);
+
+  setBanner(state, `💥 WRECKED: ${reason.toUpperCase()}`, 'danger', 4.5);
+
+  state.judgeScores = finalizeSoapboxJudgeScorecard(
+    state,
+    metrics,
+    bestRecordFeet,
+    bestTimeSec
+  );
+}
+
+export function spawnRolloverDebris(state: SoapboxSimulationState): void {
+  spawnWreckDebris(state);
+}
+
+export function finalizeSoapboxJudgeScorecard(
   state: SoapboxSimulationState,
   metrics: ComputedSoapboxMetrics,
   bestRecordFeet: number,
   bestTimeSec: number | null
 ): SoapboxJudgeScorecard {
-  // 1. Speed & Line Judge (1..10)
-  const distRatio = clamp(state.distanceFeet / SOAPBOX_COURSE_LENGTH_FEET, 0, 1);
+  const courseLength = state.courseLengthFeet || 1000;
+  const distRatio = clamp(state.distanceFeet / courseLength, 0, 1);
   let speedRaw = distRatio * 6.8;
+
   if (state.completedCourse) {
-    // Fast finish time bonus (sub-21s = elite, 25s = solid)
     const timeBonus = clamp((28 - state.elapsedRaceTimeSec) / 8.5, 0, 1) * 3.2;
     speedRaw = 7.0 + timeBonus;
   } else {
@@ -692,14 +754,27 @@ function finalizeSoapboxJudgeScorecard(
   if (state.hayBalesHit === 0 && state.distanceFeet > 400) {
     speedRaw += 0.6;
   }
-  const speedJudge = Math.round(clamp(speedRaw, 2, 10));
 
-  // 2. Creativity & Craft Flair Judge (1..10)
+  // Part loss damage penalties:
+  // -1.5 per lost wheel, -2.0 for lost topper
+  const attachedWheels =
+    (state.attachedParts.wheel_fl ? 1 : 0) +
+    (state.attachedParts.wheel_fr ? 1 : 0) +
+    (state.attachedParts.wheel_rl ? 1 : 0) +
+    (state.attachedParts.wheel_rr ? 1 : 0);
+  const lostWheels = 4 - attachedWheels;
+  const topperLost = !state.attachedParts.topper;
+  const damagePenalty = lostWheels * 1.5 + (topperLost ? 2.0 : 0);
+
+  let speedJudge = Math.round(clamp(speedRaw - lostWheels * 1.5, 1, 10));
+
+  // 2. Creativity Judge (1..10)
   const baseCreativity = 4.2 + (metrics.creativityScore / 100) * 5.2;
   const heavyBonus = metrics.totalMassLbs >= 340 ? 0.8 : 0;
-  const creativityJudge = Math.round(clamp(baseCreativity + heavyBonus, 3, 10));
+  const topperDeduction = topperLost ? 2.0 : 0;
+  let creativityJudge = Math.round(clamp(baseCreativity + heavyBonus - topperDeduction, 1, 10));
 
-  // 3. Showmanship, Drifts & Jumps Judge (1..10)
+  // 3. Showmanship Judge (1..10)
   const hypePts = (state.hypeMeter / 100) * 2.2;
   const shovePts =
     state.pushShoveQuality === 'perfect'
@@ -713,13 +788,12 @@ function finalizeSoapboxJudgeScorecard(
     0,
     2.6
   );
-  // Even a dramatic yard-sale rollover earns a spectator drama bonus!
-  const dramaBonus = state.isRolledOver ? 1.2 : 0;
-  const showmanshipJudge = Math.round(
-    clamp(2.5 + hypePts + shovePts + stylePts + jumpGatePts + dramaBonus, 3, 10)
+  const dramaBonus = state.isRolledOver || state.isWrecked ? 1.2 : 0;
+  let showmanshipJudge = Math.round(
+    clamp(2.5 + hypePts + shovePts + stylePts + jumpGatePts + dramaBonus, 1, 10)
   );
 
-  const totalScore = speedJudge + creativityJudge + showmanshipJudge;
+  const totalScore = Math.max(3, speedJudge + creativityJudge + showmanshipJudge);
   const starsEarned: 1 | 2 | 3 =
     totalScore >= 26 ? 3 : totalScore >= 20 ? 2 : 1;
 
@@ -728,39 +802,35 @@ function finalizeSoapboxJudgeScorecard(
     state.completedCourse &&
     (bestTimeSec === null || state.elapsedRaceTimeSec < bestTimeSec);
 
-  let runTitle = '🏁 Downhill Derby Contender!';
-  if (state.completedCourse && state.elapsedRaceTimeSec <= 20.5) {
-    runTitle = '👑 Hilltop Track Record Blitz!';
-  } else if (state.completedCourse && state.hayBalesHit === 0) {
-    runTitle = '🏆 Flawless Clean-Line Champion!';
-  } else if (state.completedCourse) {
-    runTitle = '🏁 1,000-Ft Finish Arch Conqueror!';
-  } else if (state.isRolledOver) {
-    runTitle = '💥 Two-Wheel Tilt & Yard-Sale Rollover!';
-  } else if (state.structuralIntegrity <= 0) {
-    runTitle = '🌾 Hay-Bale Demolition Derby!';
-  }
-
   return {
     speedJudge,
     creativityJudge,
     showmanshipJudge,
     totalScore,
     starsEarned,
-    runTitle,
+    runTitle: state.isWrecked
+      ? 'Spectacular Downhill Yard Sale'
+      : totalScore >= 26
+      ? 'Flawless Alpine Downhill Line'
+      : 'Downhill Derby Finisher',
     newDistanceRecord,
     newTimeRecord,
+    damagePenalty,
+    partsLostCount: state.partsDetachedCount,
+    wrecked: state.isWrecked,
+    courseId: state.courseId,
   };
 }
 
-/**
- * Steps the 120Hz Soapbox Derby physics simulation forward by `dt` seconds.
- */
+// ==============================================================================
+// 120HZ SIMULATION TICK
+// ==============================================================================
+
 export function stepSoapboxSimulation(
   state: SoapboxSimulationState,
   metrics: ComputedSoapboxMetrics,
   dt: number,
-  bestRecordFeet: number,
+  bestRecordFeet: number | null,
   bestTimeSec: number | null
 ): SoapboxStepEvents {
   const events: SoapboxStepEvents = {
@@ -774,9 +844,21 @@ export function stepSoapboxSimulation(
     driftChirp: false,
     rolledOver: false,
     finishedRun: false,
+    partDetached: null,
+    wrecked: false,
   };
 
-  if (!Number.isFinite(dt) || dt <= 0) {
+  const recFeet = bestRecordFeet ?? 0;
+
+  if (state.phase === 'finished') {
+    state.phaseTime += dt;
+    if (state.completedCourse && !state.isRolledOver && !state.isWrecked) {
+      state.speedFtS = Math.max(0, state.speedFtS - 28 * dt);
+      state.mph = state.speedFtS * 0.681818;
+      state.sFeet = Math.min(state.courseLengthFeet + 85, state.sFeet + state.speedFtS * dt);
+      state.rollDeg *= Math.max(0, 1 - dt * 6);
+      state.driftAngleDeg *= Math.max(0, 1 - dt * 6);
+    }
     return events;
   }
 
@@ -793,22 +875,51 @@ export function stepSoapboxSimulation(
     state.sparkIntensity = Math.max(0, state.sparkIntensity - dt * 2.8);
   }
 
-  // Step flying crash debris if any exist
+  // ----------------------------------------------------------------------------
+  // Step Frenet 3D Tumbling Debris Ballistics
+  // ----------------------------------------------------------------------------
   for (const d of state.debris) {
-    d.xFeet += d.vxFtS * dt;
-    d.yFeet += d.vyFtS * dt;
-    d.zFeet += d.vzFtS * dt;
-    d.vyFtS -= 32.174 * dt;
-    d.rx += d.vrx * dt;
-    d.ry += d.vry * dt;
-    d.rz += d.vrz * dt;
-    const roadAtDebris = getSoapboxRoadState(d.xFeet);
-    if (d.yFeet < roadAtDebris.yFeet + 0.45) {
-      d.yFeet = roadAtDebris.yFeet + 0.45;
-      d.vyFtS = Math.abs(d.vyFtS) * 0.42;
-      d.vxFtS *= 0.86;
-      d.vzFtS *= 0.86;
+    d.sFeet += d.velSFtS * dt;
+    d.lateralFeet += d.velLatFtS * dt;
+    d.heightFeet += d.velHeightFtS * dt;
+    d.velHeightFtS -= 32.174 * dt; // Gravity
+
+    d.rotation.x += d.rotVel.x * dt;
+    d.rotation.y += d.rotVel.y * dt;
+    d.rotation.z += d.rotVel.z * dt;
+    d.rx = d.rotation.x;
+    d.ry = d.rotation.y;
+    d.rz = d.rotation.z;
+    d.lifeSeconds += dt;
+
+    // Road surface bounce (restitution + friction)
+    const groundFloor = 0.35;
+    if (d.heightFeet <= groundFloor) {
+      d.heightFeet = groundFloor;
+      if (Math.abs(d.velHeightFtS) > 3.0) {
+        d.velHeightFtS = Math.abs(d.velHeightFtS) * 0.42; // Bouncing coefficient
+        d.velSFtS *= 0.84;                                // Road friction
+        d.velLatFtS *= 0.84;
+        d.rotVel.x *= 0.75;
+        d.rotVel.y *= 0.75;
+        d.rotVel.z *= 0.75;
+      } else {
+        d.velHeightFtS = 0;
+        d.velSFtS *= Math.max(0, 1 - dt * 2.5);          // Sliding deceleration
+        d.velLatFtS *= Math.max(0, 1 - dt * 2.5);
+      }
     }
+
+    // Curb reflection at track margins
+    if (Math.abs(d.lateralFeet) > 15.0) {
+      d.velLatFtS *= -0.3;
+    }
+
+    // Sync Cartesian coordinates
+    const roadAtD = getSoapboxRoadState(d.sFeet, state.courseId);
+    d.xFeet = roadAtD.xFeet;
+    d.yFeet = roadAtD.yFeet + d.heightFeet;
+    d.zFeet = roadAtD.zFeet + d.lateralFeet;
   }
 
   // Smooth front wheel steering angle visual response
@@ -832,7 +943,7 @@ export function stepSoapboxSimulation(
   // ============================================================================
   if (state.phase === 'start_ramp') {
     state.gateOpenProgress = Math.min(1, state.gateOpenProgress + dt * 6.5);
-    const road = getSoapboxRoadState(state.sFeet);
+    const road = getSoapboxRoadState(state.sFeet, state.courseId);
     state.roadSurface = road.surface;
     state.sectionName = road.sectionName;
 
@@ -840,7 +951,8 @@ export function stepSoapboxSimulation(
     const gFtS2 = 32.174;
     const slopeAccel = gFtS2 * Math.sin(road.slopeRad) * 1.12;
     const holdBoost = state.pushTuckActive ? 7.5 : 0;
-    state.speedFtS = clamp(state.speedFtS + (slopeAccel + holdBoost) * dt, 10, 68);
+    // Speed floor is 0 so unbraked vehicles accelerate naturally from rest (v=0)
+    state.speedFtS = clamp(state.speedFtS + (slopeAccel + holdBoost) * dt, 0, 68);
     state.mph = state.speedFtS * 0.681818;
     state.maxSpeedMph = Math.max(state.maxSpeedMph, state.mph);
 
@@ -860,7 +972,7 @@ export function stepSoapboxSimulation(
       if (state.pushShoveQuality === 'none') {
         if (state.pushTuckActive) {
           state.pushShoveQuality = 'good';
-          state.speedFtS = clamp(state.speedFtS + 5.5, 12, 68);
+          state.speedFtS = clamp(state.speedFtS + 5.5, 0, 68);
           state.mph = state.speedFtS * 0.681818;
           state.maxSpeedMph = Math.max(state.maxSpeedMph, state.mph);
           events.pushShoveResult = 'good';
@@ -876,12 +988,12 @@ export function stepSoapboxSimulation(
   }
 
   // ============================================================================
-  // PHASE 3: DOWNHILL RACING COURSE (0 .. 1,000 FT)
+  // PHASE 3: DOWNHILL RACING COURSE
   // ============================================================================
   if (state.phase === 'racing') {
     state.elapsedRaceTimeSec += dt;
 
-    const road = getSoapboxRoadState(state.sFeet);
+    const road = getSoapboxRoadState(state.sFeet, state.courseId);
     state.roadSurface = road.surface;
     state.sectionName = road.sectionName;
     state.roadCurvature = road.curvature;
@@ -915,7 +1027,6 @@ export function stepSoapboxSimulation(
       const heatRate = (1.18 - metrics.brakeHeatResistance * 0.92) * 34;
       state.brakeHeat = clamp(state.brakeHeat + heatRate * dt, 0, 100);
       if (metrics.brakePower >= 0.95) {
-        // Anchor or heavy brakes throw sparks
         state.sparkIntensity = Math.max(state.sparkIntensity, 0.45);
       }
     } else {
@@ -929,24 +1040,31 @@ export function stepSoapboxSimulation(
     const massGravityScale = 1 + clamp((metrics.totalMassLbs - 240) / 550, -0.06, 0.14);
     const gravityAccel = gFtS2 * Math.sin(road.slopeRad) * 1.48 * massGravityScale;
 
-    // Rolling resistance + cobblestone vibration penalty (mitigated by roughTerrainRating)
+    // Rolling resistance + cobblestone vibration penalty (+0.028 per lost wheel)
+    const attachedWheelsCount =
+      (state.attachedParts.wheel_fl ? 1 : 0) +
+      (state.attachedParts.wheel_fr ? 1 : 0) +
+      (state.attachedParts.wheel_rl ? 1 : 0) +
+      (state.attachedParts.wheel_rr ? 1 : 0);
+    const missingWheels = 4 - attachedWheelsCount;
+    const degradedRollingResistance = metrics.rollingResistance + missingWheels * 0.028;
+
     const cobblePenalty = state.onCobblestone
       ? (1 - metrics.roughTerrainRating * 0.88) * 0.082
       : 0;
-    const rollDecel = gFtS2 * (metrics.rollingResistance + cobblePenalty);
+    const rollDecel = gFtS2 * (degradedRollingResistance + cobblePenalty);
 
-    // Aerodynamic drag (reduced by 18% when holding Push / Aero Tuck!)
+    // Aerodynamic drag
     const effectiveCdA = metrics.aeroDragCdA * (state.pushTuckActive ? 0.82 : 1.0);
     const aeroDecel = 0.00145 * effectiveCdA * state.speedFtS * state.speedFtS;
 
-    // Active Push / Aero Tuck also gives a slight downhill pumping boost
+    // Active Push / Aero Tuck
     const tuckPumpAccel =
       state.pushTuckActive && !state.brakeInput && state.airborneHeightFeet <= 0.05
         ? 3.2
         : 0;
 
-    // Mechanical Brake Deceleration (reduced by 48% when brake fade is active above 75% heat,
-    // and moderated during active steering drift so handbrake-drifts carry speed through hairpins)
+    // Mechanical Brake Deceleration
     const fadeMultiplier = state.isBrakeFading ? 0.52 : 1.0;
     const driftBrakeMod =
       state.isDrifting && Math.abs(state.steerInput) > 0.25 ? 0.58 : 1.0;
@@ -966,47 +1084,73 @@ export function stepSoapboxSimulation(
       brakeDecel -
       driftScrubDecel;
 
-    state.speedFtS = clamp(state.speedFtS + netAccel * dt, 11, 92);
+    // REMOVED ARTIFICIAL SPEED CLAMP: Speed floor is 0 so unbraked vehicles accelerate from rest
+    state.speedFtS = clamp(state.speedFtS + netAccel * dt, 0, 92);
     state.mph = state.speedFtS * 0.681818;
     state.maxSpeedMph = Math.max(state.maxSpeedMph, state.mph);
 
     // 3. Steering, Road Curvature Centrifugal Push, Tire Grip & Power-Slide Drifting
     const speedRatio = clamp(state.speedFtS / 55, 0.25, 1.45);
-    const waterGripMultiplier = state.inWaterSlickTimer > 0 ? 0.4 : 1.0; // Water slick cuts lateral tire grip by 60%!
+    const waterGripMultiplier = state.inWaterSlickTimer > 0 ? 0.4 : 1.0;
     const cobbleGripMultiplier = state.onCobblestone
       ? 0.76 + metrics.roughTerrainRating * 0.24
       : 1.0;
     const downforceGripBonus = metrics.downforceFactor * speedRatio * 0.28;
+
+    // Rear lateral grip reduction (drift/oversteer) when rear wheels are lost
+    let rearGripModifier = 1.0;
+    if (!state.attachedParts.wheel_rl || !state.attachedParts.wheel_rr) {
+      rearGripModifier = 0.35; // 65% loss of rear axle traction
+    }
+
     const effectiveGrip =
       (metrics.lateralGripMultiplier + downforceGripBonus) *
       waterGripMultiplier *
-      cobbleGripMultiplier;
+      cobbleGripMultiplier *
+      rearGripModifier;
 
-    // Centrifugal outward acceleration from road curvature kappa(s) * v^2
-    // When road curves Right (curvature > 0), outward push is toward Left (-lateral)
+    // Centrifugal outward acceleration
     const centrifugalPushFtS2 =
       -road.curvature * state.speedFtS * state.speedFtS * 0.62;
 
-    // Player steering lateral acceleration across the lane
-    const steerAuthority = (29 + effectiveGrip * 15.5) * clamp(0.78 + speedRatio * 0.34, 0.78, 1.22);
+    // Steering authority (reduced by 45% if either front wheel is missing)
+    let steerAuthority = (29 + effectiveGrip * 15.5) * clamp(0.78 + speedRatio * 0.34, 0.78, 1.22);
+    if (!state.attachedParts.wheel_fl || !state.attachedParts.wheel_fr) {
+      steerAuthority *= 0.55;
+    }
+
     const cobbleLateralJitter = state.onCobblestone
       ? (1 - metrics.roughTerrainRating * 0.85) * Math.sin(state.sFeet * 2.1) * 3.2
       : 0;
     const steerAccelFtS2 = state.steerInput * steerAuthority + cobbleLateralJitter;
 
-    // Lateral tire damping (reduced during water slicks or power-slide drift)
+    // Asymmetric yaw pull from missing left vs right wheels
+    let steeringPullFtS2 = 0;
+    if (!state.attachedParts.wheel_fl && state.attachedParts.wheel_fr) {
+      steeringPullFtS2 = -14.0; // Left front missing -> pull left
+    } else if (!state.attachedParts.wheel_fr && state.attachedParts.wheel_fl) {
+      steeringPullFtS2 = 14.0;  // Right front missing -> pull right
+    }
+    if (!state.attachedParts.wheel_rl && state.attachedParts.wheel_rr) {
+      steeringPullFtS2 += -6.0;
+    } else if (!state.attachedParts.wheel_rr && state.attachedParts.wheel_rl) {
+      steeringPullFtS2 += 6.0;
+    }
+    state.steeringPullFtS2 = steeringPullFtS2;
+    state.pullYawRate = steeringPullFtS2 / 20.0;
+
+    // Lateral tire damping
     const lateralDamping = state.inWaterSlickTimer > 0 ? 2.1 : state.isDrifting ? 3.1 : 5.4;
     state.lateralVelFtS +=
-      (steerAccelFtS2 + centrifugalPushFtS2 - state.lateralVelFtS * lateralDamping) * dt;
+      (steerAccelFtS2 + centrifugalPushFtS2 + steeringPullFtS2 - state.lateralVelFtS * lateralDamping) * dt;
     state.lateralVelFtS = clamp(state.lateralVelFtS, -34, 34);
     state.lateralOffsetFeet += state.lateralVelFtS * dt;
 
-    // Power-Slide Drift initiation & sustain:
-    // Tapping/holding Brake while steering at speed, OR exceeding lateral tire grip in a tight turn / water slick
+    // Power-Slide Drift initiation
     const corneringLoad =
       Math.abs(centrifugalPushFtS2 - steerAccelFtS2 * 0.55) /
       Math.max(0.45, effectiveGrip * 18);
-    const driftThreshold = clamp(1.02 - metrics.driftAgility * 0.24, 0.68, 1.0);
+    const driftThreshold = clamp((1.02 - metrics.driftAgility * 0.24) * rearGripModifier, 0.35, 1.0);
     const wantsBrakeDrift =
       state.brakeInput &&
       Math.abs(state.steerInput) > 0.2 &&
@@ -1026,7 +1170,6 @@ export function stepSoapboxSimulation(
         corneringLoad > driftThreshold * 0.72 ||
         metrics.driftAgility >= 0.65);
 
-    const wasDrifting = state.isDrifting;
     state.isDrifting = wantsBrakeDrift || gripExceededDrift || sustainActiveDrift;
 
     if (state.isDrifting) {
@@ -1038,31 +1181,27 @@ export function stepSoapboxSimulation(
         driftSign *
         clamp(14 + corneringLoad * 9 + metrics.driftAgility * 8, 12, 32);
       state.driftAngleDeg += (targetSlip - state.driftAngleDeg) * Math.min(1, dt * 10);
-      state.driftStylePoints += dt * (24 + metrics.driftAgility * 18);
-      if (!wasDrifting) {
-        events.driftChirp = true;
-      }
+      state.driftStylePoints += dt * (18 + Math.abs(state.driftAngleDeg) * 0.65);
+      state.sparkIntensity = Math.max(state.sparkIntensity, 0.32);
     } else {
-      state.driftAngleDeg += (0 - state.driftAngleDeg) * Math.min(1, dt * 12);
+      state.driftAngleDeg *= Math.max(0, 1 - dt * 8);
     }
 
-    // Road Curb Bumpers at lateralOffsetFeet in [-13, +13]
+    // Road track barrier clamp
     if (Math.abs(state.lateralOffsetFeet) > 13.0) {
       const sign = Math.sign(state.lateralOffsetFeet);
       state.lateralOffsetFeet = sign * 13.0;
       state.lateralVelFtS = -sign * Math.abs(state.lateralVelFtS) * 0.45;
-      state.speedFtS = Math.max(14, state.speedFtS * 0.96);
+      state.speedFtS = Math.max(0, state.speedFtS * 0.96);
       state.mph = state.speedFtS * 0.681818;
       state.sparkIntensity = Math.max(state.sparkIntensity, 0.5);
     }
 
-    // 4. Chassis Body Roll Angle & Two-Wheel Tilt / Critical Rollover Physics
-    // Centrifugal force in turns + rapid steering creates roll torque proportional to h_CG / T_w
+    // 4. Chassis Body Roll Angle & Rollover Threshold Reduction
     const ssfInverse = 1 / Math.max(0.65, metrics.staticStabilityFactor);
     const netLateralG =
       (steerAccelFtS2 * 0.56 - centrifugalPushFtS2 * 0.68) / gFtS2;
     const stiffnessReduction = 1 / (1 + metrics.antiRollStiffness * 1.15);
-    // Sliding sideways in a drift relieves lateral tire trip bind
     const driftRollRelief = state.isDrifting ? 0.76 : 1.0;
     const targetRollDeg = clamp(
       -netLateralG * 27 * ssfInverse * stiffnessReduction * driftRollRelief,
@@ -1070,7 +1209,6 @@ export function stepSoapboxSimulation(
       50
     );
 
-    // Second-order spring-damper roll response with progressive counter-steer recovery
     const isCounterOrEasing =
       Math.abs(state.steerInput) < 0.15 ||
       Math.sign(targetRollDeg) !== Math.sign(state.rollDeg);
@@ -1080,8 +1218,6 @@ export function stepSoapboxSimulation(
       (targetRollDeg - state.rollDeg) * rollSpring - state.rollVelDegS * rollDamp;
     state.rollVelDegS += rollAccel * dt;
 
-    // When past the 18° Two-Wheel Tilt Warning, progressive bump-stop resistance limits outward roll rate
-    // so the player has ~0.75s of fair reaction time to counter-steer or ease off before criticalRolloverDeg!
     if (
       Math.abs(state.rollDeg) >= 17.5 &&
       Math.sign(state.rollVelDegS) === Math.sign(state.rollDeg)
@@ -1091,19 +1227,17 @@ export function stepSoapboxSimulation(
 
     state.rollDeg += state.rollVelDegS * dt;
 
-    // Cobblestone high-frequency suspension chatter
-    if (state.onCobblestone) {
-      const chatterAmp = (1 - metrics.roughTerrainRating * 0.78) * 0.38;
-      state.suspensionCompression = clamp(
-        0.18 + Math.abs(Math.sin(state.sFeet * 1.4)) * chatterAmp,
-        0,
-        0.95
-      );
+    // Dynamic Rollover Threshold Reduction when outer wheel is missing
+    let criticalRolloverDeg = metrics.criticalRolloverDeg;
+    if (state.rollDeg < 0 && (!state.attachedParts.wheel_fl || !state.attachedParts.wheel_rl)) {
+      criticalRolloverDeg *= 0.62;
+    } else if (state.rollDeg > 0 && (!state.attachedParts.wheel_fr || !state.attachedParts.wheel_rr)) {
+      criticalRolloverDeg *= 0.62;
     }
 
-    // Check Two-Wheel Tilt Warning (|rollDeg| > 18 deg)
+    // Check Two-Wheel Tilt Warning
     const prevWarning = state.rollWarning;
-    state.rollWarning = Math.abs(state.rollDeg) > 18;
+    state.rollWarning = Math.abs(state.rollDeg) > criticalRolloverDeg * 0.45;
     if (state.rollWarning && !prevWarning) {
       setBanner(
         state,
@@ -1113,35 +1247,22 @@ export function stepSoapboxSimulation(
       );
     }
 
-    // Check Critical Rollover Threshold (32°..45° based on rolloverStabilityIndex)
-    if (
-      Math.abs(state.rollDeg) >= metrics.criticalRolloverDeg &&
-      state.airborneHeightFeet <= 0.5
-    ) {
-      state.isRolledOver = true;
-      state.rollDeg = Math.sign(state.rollDeg) * 95;
-      state.sparkIntensity = 1.0;
-      state.phase = 'finished';
-      state.phaseTime = 0;
-      spawnRolloverDebris(state);
-      setBanner(
-        state,
-        `💥 ROLLED OVER AT ${Math.round(Math.abs(metrics.criticalRolloverDeg))}° IN ${state.sectionName.toUpperCase()}!`,
-        'danger',
-        4.0
+    // Check 5 Crash/Wreck Triggers
+    const wreckCheck = evaluateSoapboxWreckConditions(state, metrics, criticalRolloverDeg);
+    if (wreckCheck.isWrecked) {
+      state.distanceFeet = Math.min(
+        state.courseLengthFeet,
+        Math.max(0, Math.floor(state.sFeet))
       );
-      state.judgeScores = finalizeSoapboxJudgeScorecard(
-        state,
-        metrics,
-        bestRecordFeet,
-        bestTimeSec
-      );
-      events.rolledOver = true;
-      events.finishedRun = true;
+      if (Math.abs(state.rollDeg) >= criticalRolloverDeg) {
+        state.isRolledOver = true;
+        state.rollDeg = Math.sign(state.rollDeg) * 95;
+      }
+      triggerSoapboxWreck(state, wreckCheck.reason, metrics, recFeet, bestTimeSec, events);
       return events;
     }
 
-    // 5. Airborne Kicker Jumps & Suspension Landing Compression / Bottoming-Out
+    // 5. Airborne Kicker Jumps & Suspension Landing Compression / Shock Routing
     if (state.airborneHeightFeet > 0 || state.verticalVelFtS > 0) {
       state.airborneHeightFeet += state.verticalVelFtS * dt;
       state.verticalVelFtS -= gFtS2 * dt;
@@ -1152,18 +1273,18 @@ export function stepSoapboxSimulation(
         state.airborneHeightFeet = 0;
         state.verticalVelFtS = 0;
 
-        // Compute landing suspension compression (0..1.3) relative to suspensionTravelMeters
-        // Oak blocks (0.05m) bottom out (> 1.0), Leaf springs (0.16m) absorb cleanly (~0.75),
-        // and Pogo / Coilover shocks (0.28..0.34m) cushion plushly (< 0.60) with a landing speed pump!
         const rawCompression =
           (impactVel / 22.5) * (0.135 / Math.max(0.06, metrics.suspensionTravelMeters));
         state.suspensionCompression = clamp(rawCompression, 0.25, 1.3);
 
         if (state.suspensionCompression > 1.0) {
-          // CHASSIS BOTTOMED OUT! Sparks + speed loss + structural damage
+          // Bottomed out: damage topper via vertical inertia shock
+          const bottomOutShock = (state.suspensionCompression - 0.95) * 1.6;
+          damagePartSlot(state, 'topper', bottomOutShock, events);
+
           state.bottomedOutCount += 1;
           state.sparkIntensity = 1.0;
-          state.speedFtS = Math.max(15, state.speedFtS * 0.78);
+          state.speedFtS = Math.max(0, state.speedFtS * 0.78);
           state.mph = state.speedFtS * 0.681818;
           const damage = Math.round(18 * (100 / Math.max(45, metrics.structuralToughness)));
           state.structuralIntegrity = Math.max(0, state.structuralIntegrity - damage);
@@ -1177,25 +1298,17 @@ export function stepSoapboxSimulation(
 
           if (state.structuralIntegrity <= 0) {
             state.distanceFeet = Math.min(
-              SOAPBOX_COURSE_LENGTH_FEET,
+              state.courseLengthFeet,
               Math.max(0, Math.floor(state.sFeet))
             );
-            state.phase = 'finished';
-            state.phaseTime = 0;
-            spawnRolloverDebris(state);
-            setBanner(
+            triggerSoapboxWreck(
               state,
-              `💥 CHASSIS SHATTERED ON JUMP LANDING AT ${state.distanceFeet} FT!`,
-              'danger',
-              4.0
-            );
-            state.judgeScores = finalizeSoapboxJudgeScorecard(
-              state,
+              'Chassis shattered on violent jump landing!',
               metrics,
-              bestRecordFeet,
-              bestTimeSec
+              recFeet,
+              bestTimeSec,
+              events
             );
-            events.finishedRun = true;
             return events;
           }
         } else if (state.suspensionCompression < 0.62) {
@@ -1220,7 +1333,6 @@ export function stepSoapboxSimulation(
         }
       }
     } else {
-      // Relax suspension compression smoothly back to rest
       state.suspensionCompression = Math.max(
         0,
         state.suspensionCompression - dt * 2.6
@@ -1231,7 +1343,7 @@ export function stepSoapboxSimulation(
     const prevS = state.sFeet;
     state.sFeet += state.speedFtS * dt;
     state.distanceFeet = Math.min(
-      SOAPBOX_COURSE_LENGTH_FEET,
+      state.courseLengthFeet,
       Math.max(0, Math.floor(state.sFeet))
     );
 
@@ -1251,10 +1363,12 @@ export function stepSoapboxSimulation(
           state.hayBalesHit += 1;
           events.hayBaleHit = true;
 
-          // Cowcatcher Steel Hay-Plow reduces slowdown & damage by up to 60%!
+          // Directional obstacle collision damage routing
+          applyDirectionalObstacleDamage(state, metrics, obs, events);
+
           const protection = metrics.hayPlowProtection;
           const speedRetained = 0.62 + protection * 0.26;
-          state.speedFtS = Math.max(14, state.speedFtS * speedRetained);
+          state.speedFtS = Math.max(0, state.speedFtS * speedRetained);
           state.mph = state.speedFtS * 0.681818;
           const baseDmg = 24 * (1 - protection * 0.65);
           const scaledDmg = Math.round(
@@ -1262,7 +1376,6 @@ export function stepSoapboxSimulation(
           );
           state.structuralIntegrity = Math.max(0, state.structuralIntegrity - scaledDmg);
 
-          // Spawn golden flying straw burst event for 3D particle system
           state.hayBursts.push({
             id: Date.now() + state.hayBalesHit,
             sFeet: obs.sFeet,
@@ -1280,29 +1393,20 @@ export function stepSoapboxSimulation(
           );
 
           if (state.structuralIntegrity <= 0) {
-            state.phase = 'finished';
-            state.phaseTime = 0;
-            spawnRolloverDebris(state);
-            setBanner(
+            triggerSoapboxWreck(
               state,
-              `💥 SOAPBOX WRECKED IN HAY CHICANE AT ${state.distanceFeet} FT!`,
-              'danger',
-              4.0
-            );
-            state.judgeScores = finalizeSoapboxJudgeScorecard(
-              state,
+              `Smashed into hay barrier chicane at ${state.distanceFeet} ft!`,
               metrics,
-              bestRecordFeet,
-              bestTimeSec
+              recFeet,
+              bestTimeSec,
+              events
             );
-            events.finishedRun = true;
             return events;
           }
         }
       } else if (obs.type === 'water_slick') {
         if (latDist <= obs.halfWidthFeet + 1.2 && state.airborneHeightFeet < 0.5) {
           obs.triggered = true;
-          // Off-road knobby tires reduce soapy slick duration
           state.inWaterSlickTimer = 1.65 * (1 - metrics.roughTerrainRating * 0.45);
           state.rollVelDegS += (state.lateralOffsetFeet >= 0 ? 1 : -1) * 42;
           events.waterSlickEntered = true;
@@ -1347,43 +1451,29 @@ export function stepSoapboxSimulation(
       }
     }
 
-    // 7. Check Course Completion at 1,000-Ft Checkered Finish Arch!
-    if (state.sFeet >= SOAPBOX_COURSE_LENGTH_FEET) {
-      state.sFeet = SOAPBOX_COURSE_LENGTH_FEET;
-      state.distanceFeet = SOAPBOX_COURSE_LENGTH_FEET;
+    // 7. Check Course Completion at Checkered Finish Arch!
+    if (state.sFeet >= state.courseLengthFeet) {
+      state.sFeet = state.courseLengthFeet;
+      state.distanceFeet = state.courseLengthFeet;
       state.completedCourse = true;
       state.phase = 'finished';
       state.phaseTime = 0;
       setBanner(
         state,
-        `🏁 CROSSED THE 1,000-FT FINISH ARCH IN ${state.elapsedRaceTimeSec.toFixed(1)}s!`,
+        `🏁 CROSSED THE ${state.courseLengthFeet.toLocaleString()}-FT FINISH ARCH IN ${state.elapsedRaceTimeSec.toFixed(1)}s!`,
         'good',
         4.0
       );
       state.judgeScores = finalizeSoapboxJudgeScorecard(
         state,
         metrics,
-        bestRecordFeet,
+        recFeet,
         bestTimeSec
       );
       events.finishedRun = true;
     }
 
     return events;
-  }
-
-  // ============================================================================
-  // PHASE 4: FINISHED / POST-FINISH CELEBRATION ROLL-OUT
-  // ============================================================================
-  if (state.phase === 'finished') {
-    if (state.completedCourse && !state.isRolledOver) {
-      // Gentle celebratory coasting through the finish apron
-      state.speedFtS = Math.max(0, state.speedFtS - 28 * dt);
-      state.mph = state.speedFtS * 0.681818;
-      state.sFeet = Math.min(1085, state.sFeet + state.speedFtS * dt);
-      state.rollDeg *= Math.max(0, 1 - dt * 6);
-      state.driftAngleDeg *= Math.max(0, 1 - dt * 6);
-    }
   }
 
   return events;

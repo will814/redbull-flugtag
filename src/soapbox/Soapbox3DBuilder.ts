@@ -5,6 +5,7 @@ import {
   SoapboxLoadout,
   SoapboxPartCategory,
 } from './SoapboxPartCatalog';
+import { SoapboxDetachablePartSlot } from './SoapboxPhysicsEngine';
 
 export interface Soapbox3DGroups {
   root: THREE.Group;
@@ -25,6 +26,16 @@ export interface Soapbox3DGroups {
   socketMarkerList: THREE.Mesh[];
   trackWidthMeters: number;
   wheelRadiusMeters: number;
+
+  // Individual corner wheel nodes for instant visibility toggling
+  wheelCornerNodes: Record<'wheel_fl' | 'wheel_fr' | 'wheel_rl' | 'wheel_rr', THREE.Object3D> & {
+    fl: THREE.Object3D;
+    fr: THREE.Object3D;
+    rl: THREE.Object3D;
+    rr: THREE.Object3D;
+  };
+  bumperNode: THREE.Object3D | null;
+  topperNode: THREE.Object3D | null;
 }
 
 const MAT_CACHE = new Map<string, THREE.Material>();
@@ -120,6 +131,12 @@ export function disposeSoapboxObject3D(root: THREE.Object3D, disposeCached = fal
   }
 }
 
+export function buildSoapboxMesh(parent: THREE.Object3D, loadout: SoapboxLoadout): Soapbox3DGroups {
+  const craft = buildSoapbox3D(loadout);
+  parent.add(craft.root);
+  return craft;
+}
+
 export function buildSoapbox3D(loadout: SoapboxLoadout): Soapbox3DGroups {
   const root = new THREE.Group();
   // Sprung mass (chassis, driver, topper, upper brakes) rolls & compresses over suspension
@@ -182,6 +199,13 @@ export function buildSoapbox3D(loadout: SoapboxLoadout): Soapbox3DGroups {
   );
 
   // 3. 4 WHEELS & TIRE COMPOUNDS (Front pair mounted inside steerable knuckles!)
+  const wheelCornerNodesOut: Record<'wheel_fl' | 'wheel_fr' | 'wheel_rl' | 'wheel_rr', THREE.Object3D> & {
+    fl: THREE.Object3D;
+    fr: THREE.Object3D;
+    rl: THREE.Object3D;
+    rr: THREE.Object3D;
+  } = {} as any;
+
   buildFourWheelsMesh(
     wheelsGroup,
     wheelsPart.id,
@@ -189,7 +213,8 @@ export function buildSoapbox3D(loadout: SoapboxLoadout): Soapbox3DGroups {
     halfTrackZ,
     wheelRadius,
     frontSteerNodes,
-    wheelSpinners
+    wheelSpinners,
+    wheelCornerNodesOut
   );
 
   // 4. SUSPENSION SPRINGS & SHOCKS
@@ -201,10 +226,11 @@ export function buildSoapbox3D(loadout: SoapboxLoadout): Soapbox3DGroups {
   );
 
   // 5. MECHANICAL BRAKES & COWCATCHER BUMPERS
-  buildBrakesMesh(brakesGroup, brakesPart.id, theme.trimHex);
+  const bumperNode = buildBrakesMesh(brakesGroup, brakesPart.id, theme.trimHex);
 
   // 6. SHOWMANSHIP TOPPER / CO-PILOT DOG / GT WING
   buildTopperMesh(topperGroup, topperPart.id, theme.trimHex);
+  const topperNode = topperGroup;
 
   // 7. SOAPBOX DRIVER IN COCKPIT
   buildDriverMesh(driverGroup, theme.bodyHex, theme.accentHex);
@@ -259,6 +285,9 @@ export function buildSoapbox3D(loadout: SoapboxLoadout): Soapbox3DGroups {
     socketMarkerList,
     trackWidthMeters,
     wheelRadiusMeters: wheelRadius,
+    wheelCornerNodes: wheelCornerNodesOut,
+    bumperNode,
+    topperNode,
   };
 }
 
@@ -676,7 +705,13 @@ function buildFourWheelsMesh(
   halfTrackZ: number,
   wheelRadius: number,
   frontSteerNodes: THREE.Object3D[],
-  wheelSpinners: THREE.Object3D[]
+  wheelSpinners: THREE.Object3D[],
+  wheelCornerNodesOut: Record<'wheel_fl' | 'wheel_fr' | 'wheel_rl' | 'wheel_rr', THREE.Object3D> & {
+    fl: THREE.Object3D;
+    fr: THREE.Object3D;
+    rl: THREE.Object3D;
+    rr: THREE.Object3D;
+  }
 ): void {
   const isWagon = wheelsId === 'sb_wheels_wagon';
   const isSlicks = wheelsId === 'sb_wheels_slicks';
@@ -730,17 +765,29 @@ function buildFourWheelsMesh(
   const tireMat = makeSoapboxMat(tireColor, isCheese ? 0.45 : 0.68, 0.08);
   const rimMat = makeSoapboxMat(rimColor, 0.28, 0.55);
 
-  const wheelPositions: Array<{ x: number; z: number; isFront: boolean }> = [
-    { x: 0.82, z: halfTrackZ, isFront: true },
-    { x: 0.82, z: -halfTrackZ, isFront: true },
-    { x: -0.82, z: halfTrackZ, isFront: false },
-    { x: -0.82, z: -halfTrackZ, isFront: false },
+  const wheelPositions: Array<{
+    x: number;
+    z: number;
+    isFront: boolean;
+    slot: 'wheel_fl' | 'wheel_fr' | 'wheel_rl' | 'wheel_rr';
+    shortSlot: 'fl' | 'fr' | 'rl' | 'rr';
+  }> = [
+    { x: 0.82, z: -halfTrackZ, isFront: true, slot: 'wheel_fl', shortSlot: 'fl' },
+    { x: 0.82, z: halfTrackZ, isFront: true, slot: 'wheel_fr', shortSlot: 'fr' },
+    { x: -0.82, z: -halfTrackZ, isFront: false, slot: 'wheel_rl', shortSlot: 'rl' },
+    { x: -0.82, z: halfTrackZ, isFront: false, slot: 'wheel_rr', shortSlot: 'rr' },
   ];
 
-  wheelPositions.forEach(({ x, z, isFront }) => {
+  wheelPositions.forEach(({ x, z, isFront, slot, shortSlot }) => {
     // Steer Knuckle Pivot (rotates around Y on front axle!)
     const knucklePivot = new THREE.Group();
+    knucklePivot.name = `knuckle_${slot}`;
     knucklePivot.position.set(x, -0.34, z);
+
+    // Register corner wheel nodes for zero-allocation visibility toggling
+    wheelCornerNodesOut[slot] = knucklePivot;
+    wheelCornerNodesOut[shortSlot] = knucklePivot;
+
     if (isFront) {
       frontSteerNodes.push(knucklePivot);
     }
@@ -892,7 +939,11 @@ function buildBrakesMesh(
   brakesGroup: THREE.Group,
   id: string,
   trimHex: string
-): void {
+): THREE.Object3D {
+  const bumperGroup = new THREE.Group();
+  bumperGroup.name = 'bumper_assembly';
+  brakesGroup.add(bumperGroup);
+
   if (id === 'sb_brake_plow') {
     // Armored Locomotive Cowcatcher Steel Hay-Plow Wedge at the Front Nose!
     const plowWedge = new THREE.Mesh(
@@ -908,8 +959,8 @@ function buildBrakesMesh(
       makeSoapboxMat('#facc15', 0.25, 0.7)
     );
     steelBar.position.set(1.24, -0.18, 0);
-    brakesGroup.add(plowWedge, steelBar);
-    return;
+    bumperGroup.add(plowWedge, steelBar);
+    return bumperGroup;
   }
 
   if (id === 'sb_brake_anchor') {
@@ -925,8 +976,8 @@ function buildBrakesMesh(
     );
     fluke.rotation.z = Math.PI;
     fluke.position.set(-1.34, -0.14, 0);
-    brakesGroup.add(shank, fluke);
-    return;
+    bumperGroup.add(shank, fluke);
+    return bumperGroup;
   }
 
   if (id === 'sb_brake_shoe') {
@@ -942,9 +993,9 @@ function buildBrakesMesh(
         makeSoapboxMat('#f8fafc', 0.4)
       );
       sole.position.set(0.25, -0.44, z);
-      brakesGroup.add(shoe, sole);
+      bumperGroup.add(shoe, sole);
     });
-    return;
+    return bumperGroup;
   }
 
   // 2x4 Wood Tire Scrub Lever (or handbrake lever for disc brakes)
@@ -955,6 +1006,14 @@ function buildBrakesMesh(
   lever.position.set(-0.62, 0.22, 0.54);
   lever.rotation.z = 0.28;
   brakesGroup.add(lever);
+
+  // Front bumper protection bar
+  const bumperBar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.12, 1.3),
+    makeSoapboxMat('#475569', 0.4, 0.6)
+  );
+  bumperBar.position.set(1.42, -0.18, 0);
+  bumperGroup.add(bumperBar);
 
   if (id === 'sb_brake_wood') {
     // Hinged Pine Scrub Paddles ahead of the rear wheels
@@ -968,6 +1027,8 @@ function buildBrakesMesh(
       brakesGroup.add(scrubPad);
     });
   }
+
+  return bumperGroup;
 }
 
 function buildTopperMesh(
@@ -1455,5 +1516,118 @@ function createSocketMarkers(
     suspension: makeRing('suspension', 0xa855f7, [-0.75, -0.1, halfTrackZ * 0.75], unsprungGroup),
     brakes: makeRing('brakes', 0xef4444, [1.38, -0.05, 0], sprungGroup),
     topper: makeRing('topper', 0xf472b6, [-0.52, 0.82, 0], sprungGroup),
+  };
+}
+
+export function buildSoapboxDebrisMeshes(
+  loadout: SoapboxLoadout,
+  wheelRadiusMeters = 0.32
+): Record<SoapboxDetachablePartSlot, THREE.Object3D> {
+  const theme =
+    SOAPBOX_PAINT_THEMES.find((t) => t.id === loadout.paintTheme) ??
+    SOAPBOX_PAINT_THEMES[0];
+  const wheelsPart = getSoapboxPartById(loadout.wheels, 'wheels');
+  const brakesPart = getSoapboxPartById(loadout.brakes, 'brakes');
+  const topperPart = getSoapboxPartById(loadout.topper, 'topper');
+
+  const makeWheelDebris = (slot: string): THREE.Group => {
+    const g = new THREE.Group();
+    g.name = `debris_${slot}`;
+    const isWagon = wheelsPart.id === 'sb_wheels_wagon';
+    const isSlicks = wheelsPart.id === 'sb_wheels_slicks';
+    const isOffroad = wheelsPart.id === 'sb_wheels_offroad';
+    const isMonster = wheelsPart.id === 'sb_wheels_monster';
+    const isCheese = wheelsPart.id === 'sb_wheels_cheese';
+    const tireWidth = isMonster
+      ? 0.28
+      : isSlicks
+      ? 0.24
+      : isOffroad
+      ? 0.22
+      : isWagon
+      ? 0.08
+      : 0.19;
+
+    const tireColor = isCheese ? '#facc15' : '#0f172a';
+    const rimColor = isCheese
+      ? '#f97316'
+      : isWagon
+      ? '#dc2626'
+      : isMonster
+      ? '#22c55e'
+      : isSlicks
+      ? '#eab308'
+      : '#38bdf8';
+
+    const tireGeo = getCachedGeo(`sb_tire_${wheelRadiusMeters}_${tireWidth}`, () => {
+      const cy = new THREE.CylinderGeometry(wheelRadiusMeters, wheelRadiusMeters, tireWidth, 20);
+      cy.rotateX(Math.PI / 2);
+      return cy;
+    });
+    const rimGeo = getCachedGeo(`sb_rim_${wheelRadiusMeters}_${tireWidth}`, () => {
+      const cy = new THREE.CylinderGeometry(
+        wheelRadiusMeters * 0.54,
+        wheelRadiusMeters * 0.54,
+        tireWidth + 0.02,
+        14
+      );
+      cy.rotateX(Math.PI / 2);
+      return cy;
+    });
+    const spokeBarGeo = getCachedGeo(`sb_spoke_${wheelRadiusMeters}_${tireWidth}`, () =>
+      new THREE.BoxGeometry(wheelRadiusMeters * 1.45, 0.045, tireWidth + 0.03)
+    );
+
+    const tireMat = makeSoapboxMat(tireColor, isCheese ? 0.45 : 0.68, 0.08);
+    const rimMat = makeSoapboxMat(rimColor, 0.28, 0.55);
+
+    const tireMesh = new THREE.Mesh(tireGeo, tireMat);
+    const rimMesh = new THREE.Mesh(rimGeo, rimMat);
+    const spoke1 = new THREE.Mesh(spokeBarGeo, rimMat);
+    const spoke2 = new THREE.Mesh(spokeBarGeo, rimMat);
+    spoke2.rotation.z = Math.PI / 2;
+    g.add(tireMesh, rimMesh, spoke1, spoke2);
+    return g;
+  };
+
+  const makeBumperDebris = (): THREE.Group => {
+    const g = new THREE.Group();
+    g.name = 'debris_bumper';
+    if (brakesPart.id === 'sb_brake_plow') {
+      const plowWedge = new THREE.Mesh(
+        new THREE.ConeGeometry(0.52, 0.72, 4),
+        makeSoapboxMat('#ef4444', 0.3, 0.65)
+      );
+      plowWedge.rotation.z = -Math.PI / 2;
+      plowWedge.rotation.x = Math.PI / 4;
+      const steelBar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.14, 1.38),
+        makeSoapboxMat('#facc15', 0.25, 0.7)
+      );
+      g.add(plowWedge, steelBar);
+    } else {
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.14, 1.35),
+        makeSoapboxMat('#64748b', 0.4, 0.6)
+      );
+      g.add(bar);
+    }
+    return g;
+  };
+
+  const makeTopperDebris = (): THREE.Group => {
+    const g = new THREE.Group();
+    g.name = 'debris_topper';
+    buildTopperMesh(g, topperPart.id, theme.trimHex);
+    return g;
+  };
+
+  return {
+    wheel_fl: makeWheelDebris('wheel_fl'),
+    wheel_fr: makeWheelDebris('wheel_fr'),
+    wheel_rl: makeWheelDebris('wheel_rl'),
+    wheel_rr: makeWheelDebris('wheel_rr'),
+    bumper: makeBumperDebris(),
+    topper: makeTopperDebris(),
   };
 }

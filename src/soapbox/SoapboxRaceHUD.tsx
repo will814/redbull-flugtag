@@ -1,9 +1,13 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   SOAPBOX_COURSE_LENGTH_FEET,
   SOAPBOX_START_RAMP_FEET,
 } from './SoapboxPartCatalog';
 import { SoapboxSimulationState } from './SoapboxPhysicsEngine';
+import {
+  SoapboxCourseId,
+  getSoapboxCourse,
+} from './SoapboxCourses';
 import {
   Wrench,
   RotateCcw,
@@ -15,6 +19,7 @@ import {
 } from 'lucide-react';
 
 interface SoapboxRaceHUDProps {
+  selectedCourseId?: SoapboxCourseId;
   simState: SoapboxSimulationState;
   simStateRef: React.MutableRefObject<SoapboxSimulationState>;
   bestRecordFeet: number;
@@ -29,6 +34,7 @@ interface SoapboxRaceHUDProps {
 }
 
 export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
+  selectedCourseId,
   simState,
   simStateRef,
   bestRecordFeet,
@@ -41,6 +47,13 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
   onReturnToGarage,
   onRestartRace,
 }) => {
+  const activeCourse = useMemo(
+    () => getSoapboxCourse(selectedCourseId || 'alpine_panorama'),
+    [selectedCourseId]
+  );
+  const courseLength = simState.courseLengthFeet || activeCourse.lengthFeet || SOAPBOX_COURSE_LENGTH_FEET;
+  const intactPartsCount = Object.values(simState.attachedParts).filter(Boolean).length;
+
   const heldLeftRef = useRef<Set<string>>(new Set());
   const heldRightRef = useRef<Set<string>>(new Set());
   const heldPushKeysRef = useRef<Set<string>>(new Set());
@@ -90,13 +103,14 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
     const updateHudLoop = () => {
       const s = simStateRef.current;
       if (s) {
+        const totalLen = s.courseLengthFeet || 1000;
         if (distTextRef.current) {
-          distTextRef.current.textContent = `${s.distanceFeet} / ${SOAPBOX_COURSE_LENGTH_FEET} FT`;
+          distTextRef.current.textContent = `${s.distanceFeet} / ${totalLen.toLocaleString()} FT`;
         }
         if (progressFillRef.current) {
           const ratio = Math.max(
             0,
-            Math.min(1, s.distanceFeet / SOAPBOX_COURSE_LENGTH_FEET)
+            Math.min(1, s.distanceFeet / totalLen)
           );
           progressFillRef.current.style.transform = `scaleX(${ratio})`;
         }
@@ -271,16 +285,19 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
       {/* ==================================================================== */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         {/* Course Progress & Sector Banner */}
-        <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl bg-slate-950/90 border-2 border-amber-400/60 px-3 py-2 shadow-xl backdrop-blur-md min-w-64 sm:min-w-80">
+        <div className="pointer-events-auto flex flex-col gap-1.5 rounded-2xl bg-slate-950/90 border-2 border-amber-400/60 px-3 py-2 shadow-xl backdrop-blur-md min-w-64 sm:min-w-88">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-black uppercase tracking-wider text-amber-300">
-              🏔️ {simState.sectionName}
-            </span>
+            <div className="flex items-center gap-1.5 overflow-hidden">
+              <span className="text-sm">{activeCourse.emoji}</span>
+              <span className="text-[11px] font-black uppercase tracking-wider text-amber-300 truncate">
+                {activeCourse.name} • {simState.sectionName}
+              </span>
+            </div>
             <span
               ref={distTextRef}
-              className="font-display text-sm sm:text-base font-black text-white"
+              className="font-display text-sm sm:text-base font-black text-white shrink-0"
             >
-              {simState.distanceFeet} / {SOAPBOX_COURSE_LENGTH_FEET} FT
+              {simState.distanceFeet} / {courseLength.toLocaleString()} FT
             </span>
           </div>
 
@@ -291,7 +308,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
               style={{
                 transform: `scaleX(${Math.max(
                   0,
-                  Math.min(1, simState.distanceFeet / SOAPBOX_COURSE_LENGTH_FEET)
+                  Math.min(1, simState.distanceFeet / courseLength)
                 )})`,
               }}
             />
@@ -302,12 +319,72 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
               🏆 Best: <strong className="text-yellow-300">{bestRecordFeet} ft</strong>
               {bestTimeSec !== null ? ` (${bestTimeSec.toFixed(1)}s)` : ''}
             </span>
-            <span>
-              🛠️ Hull:{' '}
-              <strong ref={hullTextRef} className="text-emerald-300">
+            <div className="flex items-center gap-1.5">
+              <span>🛠️ Hull:</span>
+              <strong
+                ref={hullTextRef}
+                className={`font-black ${
+                  simState.structuralIntegrity > 65
+                    ? 'text-emerald-400'
+                    : simState.structuralIntegrity > 30
+                    ? 'text-amber-400'
+                    : 'text-rose-400 animate-pulse'
+                }`}
+              >
                 {simState.structuralIntegrity}%
               </strong>
+              {/* 5-segment mini structural bar */}
+              <div className="flex gap-0.5">
+                {[20, 40, 60, 80, 100].map((threshold) => (
+                  <div
+                    key={threshold}
+                    className={`h-2 w-2 rounded-xs transition-colors ${
+                      simState.structuralIntegrity >= threshold
+                        ? simState.structuralIntegrity > 65
+                          ? 'bg-emerald-400'
+                          : simState.structuralIntegrity > 30
+                          ? 'bg-amber-400'
+                          : 'bg-rose-500'
+                        : 'bg-slate-700/60'
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 6-Slot Live Parts Status Dock */}
+          <div className="flex items-center justify-between border-t border-white/10 pt-1 text-[10px] font-bold">
+            <span className="text-slate-400">
+              Parts: <strong className="text-white">{intactPartsCount}/6 Intact</strong>
             </span>
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  { slot: 'wheel_fl', label: 'FL' },
+                  { slot: 'wheel_fr', label: 'FR' },
+                  { slot: 'wheel_rl', label: 'RL' },
+                  { slot: 'wheel_rr', label: 'RR' },
+                  { slot: 'bumper', label: 'BMP' },
+                  { slot: 'topper', label: 'TOP' },
+                ] as const
+              ).map(({ slot, label }) => {
+                const intact = simState.attachedParts[slot];
+                return (
+                  <span
+                    key={slot}
+                    className={`rounded px-1 py-0.5 text-[9px] font-black transition-colors ${
+                      intact
+                        ? 'bg-emerald-500/25 border border-emerald-400/60 text-emerald-300'
+                        : 'bg-rose-950/80 border border-rose-500/60 text-rose-400 line-through opacity-70'
+                    }`}
+                    title={`${slot}: ${intact ? 'Intact' : 'DETACHED'}`}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -381,6 +458,33 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
       {/* CENTER STATUS BANNER + SKIT / STARTER CHUTE SHOVE WINDOW PROMPT      */}
       {/* ==================================================================== */}
       <div className="my-auto flex flex-col items-center gap-2">
+        {/* Asymmetric Steering Pull Warning Pill */}
+        {simState.pullYawRate !== 0 && !simState.isWrecked && (
+          <div
+            className={`rounded-full border px-3 py-1 text-xs font-black shadow-lg backdrop-blur-md flex items-center gap-1.5 animate-pulse ${
+              Math.abs(simState.pullYawRate) > 0.15
+                ? 'bg-rose-950/90 border-rose-400 text-rose-200'
+                : 'bg-amber-950/90 border-amber-400 text-amber-200'
+            }`}
+          >
+            <span>⚠️</span>
+            <span>
+              {simState.pullYawRate < -0.05
+                ? 'PULLING LEFT ⯇ (COMPENSATE STEER)'
+                : simState.pullYawRate > 0.05
+                ? 'PULLING RIGHT ⯈ (COMPENSATE STEER)'
+                : 'YAW UNBALANCED'}
+            </span>
+          </div>
+        )}
+
+        {/* Wreck Diagnostic Pill */}
+        {simState.isWrecked && (
+          <div className="rounded-2xl border-2 border-rose-500 bg-rose-950/95 px-4 py-2 text-sm font-black text-rose-200 shadow-2xl animate-bounce">
+            💥 WRECKED: {simState.wreckReason || 'CRAFT DESTROYED'}
+          </div>
+        )}
+
         {simState.statusBanner && (
           <div
             className={`rounded-2xl border-2 px-4 py-1.5 text-xs sm:text-sm font-black shadow-2xl backdrop-blur-md transition ${
