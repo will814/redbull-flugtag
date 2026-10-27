@@ -3,6 +3,7 @@ import { GameModeId, LandingPage } from './ui/LandingPage';
 import { FlugtagGame } from './flugtag/FlugtagGame';
 import { SoapboxGame } from './soapbox/SoapboxGame';
 import { CoasterGame } from './coaster/CoasterGame';
+import { TandemGame } from './tandem/TandemGame';
 import { soundEngine } from './audio/SoundEngine';
 
 const STORAGE_KEY_STARS = 'flugtag_stars_v1';
@@ -11,6 +12,8 @@ const STORAGE_KEY_SOAPBOX_BEST_DIST = 'soapbox_best_dist_v1';
 const STORAGE_KEY_SOAPBOX_BEST_TIME = 'soapbox_best_time_v1';
 const STORAGE_KEY_COASTER_BEST_DIST = 'coaster_best_dist_v1';
 const STORAGE_KEY_COASTER_BEST_THRILL = 'coaster_best_thrill_v1';
+const STORAGE_KEY_TANDEM_BEST_DIST = 'tandem_best_dist_v1';
+const STORAGE_KEY_TANDEM_BEST_TIME = 'tandem_best_time_v1';
 const STORAGE_KEY_LEGACY_BY_COMP = 'flugtag_best_dist_by_comp_v1';
 
 interface LegacyBestByComp {
@@ -72,6 +75,7 @@ function parseGameModeFromHash(): GameModeId {
   if (cleaned === 'flugtag') return 'flugtag';
   if (cleaned === 'soapbox') return 'soapbox';
   if (cleaned === 'coaster' || cleaned === 'rollercoaster') return 'coaster';
+  if (cleaned === 'tandem' || cleaned === 'stalenros' || cleaned === 'tandembike') return 'tandem';
   return 'landing';
 }
 
@@ -98,6 +102,13 @@ export function App() {
   const [coasterBestThrill, setCoasterBestThrill] = useState<number>(() =>
     Math.max(0, readNumberStorage(STORAGE_KEY_COASTER_BEST_THRILL, 0))
   );
+  const [tandemBestDist, setTandemBestDist] = useState<number>(() =>
+    Math.max(0, Math.round(readNumberStorage(STORAGE_KEY_TANDEM_BEST_DIST, 0)))
+  );
+  const [tandemBestTime, setTandemBestTime] = useState<number | null>(() => {
+    const val = readNumberStorage(STORAGE_KEY_TANDEM_BEST_TIME, 0);
+    return val > 0 ? val : null;
+  });
 
   // Sync URL hash with activeGame & support browser back/forward navigation
   useEffect(() => {
@@ -132,7 +143,7 @@ export function App() {
     });
   }, []);
 
-  const handleSelectGame = useCallback((game: 'flugtag' | 'soapbox' | 'coaster') => {
+  const handleSelectGame = useCallback((game: 'flugtag' | 'soapbox' | 'coaster' | 'tandem') => {
     soundEngine.playSnapPop();
     setActiveGame(game);
   }, []);
@@ -242,6 +253,33 @@ export function App() {
     }
   }, []);
 
+  const handleUpdateTandemRecord = useCallback((feet: number, timeSec: number | null) => {
+    if (Number.isFinite(feet)) {
+      const roundedFeet = Math.round(feet);
+      setTandemBestDist((prev) => {
+        if (roundedFeet <= prev) return prev;
+        try {
+          localStorage.setItem(STORAGE_KEY_TANDEM_BEST_DIST, String(roundedFeet));
+        } catch {
+          // ignore
+        }
+        return roundedFeet;
+      });
+    }
+
+    if (timeSec !== null && Number.isFinite(timeSec) && timeSec > 0) {
+      setTandemBestTime((prev) => {
+        if (prev !== null && timeSec >= prev) return prev;
+        try {
+          localStorage.setItem(STORAGE_KEY_TANDEM_BEST_TIME, String(timeSec));
+        } catch {
+          // ignore
+        }
+        return timeSec;
+      });
+    }
+  }, []);
+
   return (
     <div className="relative h-dvh w-dvw overflow-hidden bg-slate-950 select-none">
       {activeGame === 'landing' && (
@@ -253,6 +291,8 @@ export function App() {
           soapboxBestTime={soapboxBestTime}
           coasterBestDist={coasterBestDist}
           coasterBestThrill={coasterBestThrill}
+          tandemBestDist={tandemBestDist}
+          tandemBestTime={tandemBestTime}
           muted={muted}
           onToggleMute={handleToggleMute}
         />
@@ -290,6 +330,19 @@ export function App() {
           bestDistanceFeet={coasterBestDist}
           bestThrillScore={coasterBestThrill}
           onUpdateRecord={handleUpdateCoasterRecord}
+          muted={muted}
+          onToggleMute={handleToggleMute}
+          onReturnToHub={handleReturnToHub}
+        />
+      )}
+
+      {activeGame === 'tandem' && (
+        <TandemGame
+          totalStars={totalStars}
+          onAddStars={handleAddStars}
+          bestDistanceFeet={tandemBestDist}
+          bestTimeSec={tandemBestTime}
+          onUpdateRecord={handleUpdateTandemRecord}
           muted={muted}
           onToggleMute={handleToggleMute}
           onReturnToHub={handleReturnToHub}

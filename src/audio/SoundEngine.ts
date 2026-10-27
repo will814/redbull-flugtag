@@ -9,6 +9,8 @@ class FlugtagSoundEngine {
   private lastSnapTime: number = -1;
   private lastTireScreechTime: number = -1;
   private lastBrakeHumTime: number = -1;
+  private lastSeesawThudTime: number = -1;
+  private lastCheerTime: number = -1;
 
   public get muted(): boolean {
     return this._muted;
@@ -20,6 +22,16 @@ class FlugtagSoundEngine {
       this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
       this.masterGain.gain.setTargetAtTime(val ? 0 : 1, this.ctx.currentTime, 0.015);
     }
+  }
+
+  /** Explicit helper method for programmatic mute control */
+  public setMuted(val: boolean): void {
+    this.muted = val;
+  }
+
+  /** Explicit helper method to inspect mute state */
+  public isMuted(): boolean {
+    return this.muted;
   }
 
   private ensureContext(): { ctx: AudioContext; out: AudioNode } | null {
@@ -331,7 +343,183 @@ class FlugtagSoundEngine {
     this.lastBrakeHumTime = now;
     this.scheduleTone(ctx, out, 'sine', 420, 260, now, 0.14, 0.11);
   }
+
+  /**
+   * Low-frequency wooden bridge pivot/impact sound for over-water seesaw obstacles.
+   * Features a low pitch sweep (120Hz -> 45Hz), rich sub-bass distortion/body,
+   * a resonant wooden biquad bandpass filter, and an impact knock transient.
+   */
+  public playSeesawThud(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    if (now - this.lastSeesawThudTime < 0.12) return;
+    this.lastSeesawThudTime = now;
+
+    const duration = 0.32;
+
+    // Resonant wooden body filter (biquad bandpass around 210Hz -> 110Hz with wooden resonance Q)
+    const woodFilter = ctx.createBiquadFilter();
+    woodFilter.type = 'bandpass';
+    woodFilter.frequency.setValueAtTime(210, now);
+    woodFilter.frequency.exponentialRampToValueAtTime(110, now + duration);
+    woodFilter.Q.setValueAtTime(2.8, now);
+
+    // Primary impact gain envelope
+    const thudGain = ctx.createGain();
+    thudGain.gain.setValueAtTime(0.0001, now);
+    thudGain.gain.linearRampToValueAtTime(0.35, now + 0.008);
+    thudGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    // Low-frequency pitch sweep oscillator: 120Hz -> 45Hz
+    const oscMain = ctx.createOscillator();
+    oscMain.type = 'triangle';
+    oscMain.frequency.setValueAtTime(120, now);
+    oscMain.frequency.exponentialRampToValueAtTime(45, now + duration * 0.85);
+
+    // Sub-bass distortion / body oscillator (rich sub-bass weight: 85Hz -> 36Hz)
+    const oscSub = ctx.createOscillator();
+    oscSub.type = 'sawtooth';
+    oscSub.frequency.setValueAtTime(85, now);
+    oscSub.frequency.exponentialRampToValueAtTime(36, now + duration);
+
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0.18, now);
+
+    // High transient knock (wooden slap/contact click: 340Hz -> 80Hz)
+    const oscKnock = ctx.createOscillator();
+    oscKnock.type = 'sine';
+    oscKnock.frequency.setValueAtTime(340, now);
+    oscKnock.frequency.exponentialRampToValueAtTime(80, now + 0.04);
+    const knockGain = ctx.createGain();
+    knockGain.gain.setValueAtTime(0.0001, now);
+    knockGain.gain.linearRampToValueAtTime(0.22, now + 0.004);
+    knockGain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+
+    // Connect audio routing graph
+    oscMain.connect(woodFilter);
+    oscSub.connect(subGain);
+    subGain.connect(woodFilter);
+    woodFilter.connect(thudGain);
+    thudGain.connect(out);
+
+    oscKnock.connect(knockGain);
+    knockGain.connect(out);
+
+    // Node lifecycle cleanup
+    let endedCount = 0;
+    const cleanup = () => {
+      endedCount++;
+      if (endedCount >= 3) {
+        oscMain.disconnect();
+        oscSub.disconnect();
+        oscKnock.disconnect();
+        subGain.disconnect();
+        woodFilter.disconnect();
+        thudGain.disconnect();
+        knockGain.disconnect();
+      }
+    };
+    oscMain.onended = cleanup;
+    oscSub.onended = cleanup;
+    oscKnock.onended = cleanup;
+
+    oscMain.start(now);
+    oscMain.stop(now + duration + 0.01);
+    oscSub.start(now);
+    oscSub.stop(now + duration + 0.01);
+    oscKnock.start(now);
+    oscKnock.stop(now + 0.05);
+  }
+
+  /**
+   * Stadium crowd cheer synthesizer using white noise buffer through dual resonant
+   * bandpass filters (sweeping 800Hz -> 1400Hz) with natural volume envelope
+   * (attack 0.3s, sustain 1.2s, decay 1.5s).
+   */
+  public playCrowdCheer(): void {
+    const bus = this.ensureContext();
+    if (!bus) return;
+    const { ctx, out } = bus;
+    const now = ctx.currentTime;
+    if (now - this.lastCheerTime < 0.5) return;
+    this.lastCheerTime = now;
+
+    // Ensure white noise buffer is ready
+    if (!this.splashNoiseBuffer) {
+      const bufferSize = Math.floor(ctx.sampleRate * 0.25);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      this.splashNoiseBuffer = buffer;
+    }
+
+    const attack = 0.3;
+    const sustain = 1.2;
+    const decay = 1.5;
+    const totalDuration = attack + sustain + decay; // 3.0s
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.splashNoiseBuffer;
+    noise.loop = true;
+
+    // Dual resonant bandpass filters for vocal formant simulation (sweeping 800Hz -> 1400Hz)
+    const bpFilter1 = ctx.createBiquadFilter();
+    bpFilter1.type = 'bandpass';
+    bpFilter1.frequency.setValueAtTime(800, now);
+    bpFilter1.frequency.exponentialRampToValueAtTime(1400, now + attack + sustain * 0.5);
+    bpFilter1.frequency.exponentialRampToValueAtTime(750, now + totalDuration);
+    bpFilter1.Q.setValueAtTime(2.8, now);
+
+    const bpFilter2 = ctx.createBiquadFilter();
+    bpFilter2.type = 'bandpass';
+    bpFilter2.frequency.setValueAtTime(1050, now);
+    bpFilter2.frequency.exponentialRampToValueAtTime(1650, now + attack + sustain * 0.6);
+    bpFilter2.frequency.exponentialRampToValueAtTime(900, now + totalDuration);
+    bpFilter2.Q.setValueAtTime(2.4, now);
+
+    // Summing & Volume Envelope Gain Node (attack 0.3s, sustain 1.2s, decay 1.5s)
+    const cheerGain = ctx.createGain();
+    cheerGain.gain.setValueAtTime(0.0001, now);
+    // Attack phase: 0.3s
+    cheerGain.gain.linearRampToValueAtTime(0.28, now + attack);
+    // Sustain phase: 1.2s
+    cheerGain.gain.setValueAtTime(0.28, now + attack + sustain);
+    // Decay phase: 1.5s
+    cheerGain.gain.exponentialRampToValueAtTime(0.0008, now + totalDuration);
+
+    // Filter gains to balance dual formant resonance
+    const filterGain1 = ctx.createGain();
+    filterGain1.gain.value = 0.65;
+    const filterGain2 = ctx.createGain();
+    filterGain2.gain.value = 0.45;
+
+    noise.connect(bpFilter1);
+    noise.connect(bpFilter2);
+    bpFilter1.connect(filterGain1);
+    bpFilter2.connect(filterGain2);
+    filterGain1.connect(cheerGain);
+    filterGain2.connect(cheerGain);
+    cheerGain.connect(out);
+
+    noise.onended = () => {
+      noise.disconnect();
+      bpFilter1.disconnect();
+      bpFilter2.disconnect();
+      filterGain1.disconnect();
+      filterGain2.disconnect();
+      cheerGain.disconnect();
+    };
+
+    noise.start(now);
+    noise.stop(now + totalDuration + 0.05);
+  }
 }
 
 export const soundEngine = new FlugtagSoundEngine();
+export { FlugtagSoundEngine as SoundEngine };
+export default soundEngine;
 

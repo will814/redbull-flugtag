@@ -17,6 +17,7 @@ export default defineConfig({
           if (id.includes('node_modules/')) return 'vendor';
           if (id.includes('/src/soapbox/')) return 'game-soapbox';
           if (id.includes('/src/coaster/')) return 'game-coaster';
+          if (id.includes('/src/tandem/')) return 'game-tandem';
           if (
             id.includes('/src/flugtag/') ||
             id.includes('/src/builder/') ||

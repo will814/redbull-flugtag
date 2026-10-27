@@ -1,22 +1,22 @@
-# 🐂✈️🏎️🎢 Red Bull DIY Extreme Arcade 3D — 3-Game Engineering Sandbox
+# 🐂✈️🏎️🎢🚲 Red Bull DIY Extreme Arcade 3D — 4-Game Engineering Sandbox
 
-A 3-in-1 3D engineering builder and physics simulation arcade inspired by **Red Bull Flugtag**, **Red Bull Soap Box Derby**, and **Red Bull Extreme Rollercoaster**. Built with React 19, Three.js, and Tailwind CSS v4 with responsive 2-thumb controls across phones (including the **Motorola Razr Foldable**), tablets, and Chromebooks.
+A 4-in-1 3D engineering builder and physics simulation arcade inspired by **Red Bull Flugtag**, **Red Bull Soap Box Derby**, **Red Bull Extreme Rollercoaster**, and **Red Bull Tandem Bike Challenge**. Built with React 19, Three.js, and Tailwind CSS v4 with responsive 2-thumb controls across phones (including the **Motorola Razr Foldable**), tablets, and Chromebooks.
 
 - **🌐 Live Game (Firebase App Hosting):** [https://redbull-flugtag--leprechaun-trap-eec0e.us-east4.hosted.app](https://redbull-flugtag--leprechaun-trap-eec0e.us-east4.hosted.app)
 - **📦 GitHub Repository:** [https://github.com/will814/redbull-flugtag](https://github.com/will814/redbull-flugtag)
 
 ---
 
-## 🏟️ 3-Game Standalone Architecture
+## 🏟️ 4-Game Standalone Architecture
 
 Each competition is architected as a completely isolated, purpose-built 3D engineering sandbox with its own workshop builder, interactive physics dyno rig, 6 specialized vehicle component sockets, custom launch platform, and 3-Judge scorecard, unified by a shared star-unlock progression economy.
 
 ### 0. Landing Page Arcade Hub (`src/ui/LandingPage.tsx`)
-- **Interactive 3-Event Selector:** Displays live personal-best records (`FT`, race times, thrill scores), shared Judge Stars (`⭐`), and engineering specs for each competition:
+- **Interactive 4-Event Selector:** Displays live personal-best records (`FT`, race times, thrill scores), shared Judge Stars (`⭐`), and engineering specs for each competition:
   - **Launch Platform & Lab Dyno**
   - **6 Vehicle Component Slots**
   - **Signature Course Obstacles & Physics**
-- **Instant Keyboard & Hash Navigation:** Press `1`, `2`, or `3` on the Landing Page to jump directly into **Flugtag**, **Soap Box Derby**, or **Extreme Rollercoaster** (or navigate via `#flugtag`, `#soapbox`, `#coaster`). Press `Esc` inside any workshop or click **`◀ Arcade Hub`** to return to the hub at any time.
+- **Instant Keyboard & Hash Navigation:** Press `1`, `2`, `3`, or `4` on the Landing Page to jump directly into **Flugtag**, **Soap Box Derby**, **Extreme Rollercoaster**, or **Red Bull Tandem Bike Challenge** (or navigate via `#flugtag`, `#soapbox`, `#coaster`, `#tandem`). Press `Esc` inside any workshop or click **`◀ Arcade Hub`** to return to the hub at any time.
 
 ---
 
@@ -77,11 +77,42 @@ Each competition is architected as a completely isolated, purpose-built 3D engin
 
 ---
 
-## 🎮 Controls Across All 3 Environments
+### 4. 🚲 Game 4: Red Bull Tandem Bike Challenge (`src/tandem/`)
+- **Real-World Event Inspiration:** Modeled directly after the iconic Dutch water pier obstacle showdowns (*Red Bull Stalen Ros* / *Spin Off* / *Vél'Eau*). Two-person teams—a steering **Captain** in front and a power-pedaling **Stoker** in back—design outrageous custom tandem bicycles to navigate a treacherous, narrow obstacle pier suspended directly over canal waters.
+- **Launch Platform:** **Launch Dock & Cadence Sync Deck** where the Captain and Stoker execute a pre-run crowd hype countdown, locking in initial pedaling synchrony (`85 RPM` dock boost) before dropping onto the beam.
+- **6 Tandem Component Categories (`src/tandem/TandemPartCatalog.ts`):**
+  - **Tandem Frames (`frame`):** Double-Diamond Steel Cruiser, Hydroformed Sport Alloy Tandem, Monocoque Carbon Aero Tandem, Heavy Hauler Truss Frame, Titanium Hydro-Truss Tandem, and Red Bull F1 Monocoque Spaceframe.
+  - **Dual Drivetrains (`drivetrain`):** Dual-Chain Direct Sync, Lightweight Overdrive Cog, 21-Speed Index Derailleur, Sealed Dual Planetary Gearbox, Electronic Cadence Torque Multiplier, and Red Bull Ceramic Sprint Drive.
+  - **Wheelset & Tires (`wheels`):** 26" Spoked Alloy Wheelset, 29" Sand & Float Paddle Tires, 700c Deep-V Aero Rims, Tri-Spoke Carbon Aero Blades, Magnesium Hydro-Blade Wheels, and Red Bull Ultra-Low Rolling Track Slicks.
+  - **Steering & Handlebars (`steering`):** Twin Linked Cruiser Ape Bars, Drop-Bar Bullhorn Pursuit Bars, Wide MTB Low-Rise Trail Bars, High-Rise Chopper Ape Hangers, Low-Slung Dual Aero Clip-Ons, and Red Bull Dynamic Linked Bars.
+  - **Stabilizers & Outriggers (`stabilizer`):** Dual Spring Training Outriggers, Bare Beam Balance (Pro Zero-Outrigger Mode), Twin Foam Pool Noodle Floats, Active Carbon Hydro-Skis, High-RPM Gyroscopic Flywheel, Centrifugal Pendulum Keel, and Red Bull Ground-Effect Aero Canards.
+  - **Mascot Toppers (`topper`):** **Shadow** (Golden Retriever Co-Pilot 🦮, unlocked at 0 stars), **Boomer** (Blue Great Dane Mascot 🐶, unlocked at 0 stars), Raging Bull Horns, Dual Aerodynamic Red Bull Wings, Carbon Dolphin Aero Fin, Giant Pier Finish Bell, and Red Bull Stratos Supersonic Capsule.
+- **Workshop Dyno — Balance & Cadence Dyno Rig (`TandemWorkshopHUD.tsx`):**
+  - **Center-of-Gravity & Lateral Stability Analyzer:** Interactive dyno rolls the tandem laterally to reveal the exact **Rollover Threshold Angle (`28°` baseline)** and calculates total vehicle mass (`massKg`).
+  - **Dual-Rider Cadence Dyno:** Spins drive rollers to measure Captain + Stoker synchronous wattage output (`cadencePowerW`) and verify sprint acceleration capability.
+  - **Outrigger Stance Gauge:** Displays effective stabilization width (`outriggerWidthFt`) and roll damping index.
+- **120Hz Over-Water Obstacle Track & Physics (`src/tandem/TandemPhysicsEngine.ts`):**
+  - **7 Progressive Track Sectors (`0 – 200 ft`):**
+    1. **Dock Launch (`0 – 15 ft`):** Rhythmic crowd hype and dock cadence release into open track.
+    2. **Narrow Balance Beam (`15 – 70 ft`):** 3.0-ft wide wooden beam over water requiring micro-steering balance adjustments; lateral offset $|z| > 1.5\text{ ft}$ or roll angle exceeding critical limits plunges the crew into the canal.
+    3. **Rhythm Rollers (`70 – 100 ft`):** Sinusoidal roller whoops testing pitch dampening and pedaling rhythm.
+    4. **Tilting Seesaw Bridge (`100 – 140 ft`):** Dynamic teeter-totter bridge with a pivotal fulcrum at `120 ft`. Climbing uphill requires active cadence sprint power; passing the fulcrum dynamically pivots the bridge downward for descent.
+    5. **Water Cannon Hazard Alley (`140 – 160 ft`):** High-pressure lateral water jets delivering sudden lateral impulse forces requiring prompt counter-steering and lean roll.
+    6. **Ramp Gap Jump (`160 – 185 ft`):** Elevated ballistic launch ramp spanning a 25-ft open water chasm. Demands minimum entry sprint speed ($\ge 14\text{ MPH}$) and level touchdown attitude ($< 18^\circ$ roll).
+    7. **Golden Finish Bell (`185 – 200 ft`):** Final pier platform with collision-triggered golden bell ringing celebration.
+  - **3-Judge Animated Scorecard:**
+    - **Creativity (0–10 Pts):** Evaluates part synergies, paint theme, and Mascot Toppers (Shadow 🦮 and Boomer 🐶 award maximum +35 pts bonus).
+    - **Showmanship / Crew Sync (0–10 Pts):** Evaluates dock launch timing, rhythm continuity, and balance preservation.
+    - **Distance & Finish Pace (0–10 Pts):** Evaluates course distance completed and sprint pace.
+    - **Shared Star Progression:** $\ge 26\text{ pts} \rightarrow \text{3 Stars }⭐⭐⭐$, $\ge 20\text{ pts} \rightarrow \text{2 Stars }⭐⭐$, else $\text{1 Star }⭐$, credited immediately to `flugtag_stars_v1`.
+
+---
+
+## 🎮 Controls Across All 4 Environments
 
 | Mode / Action | Touch (Razr Foldable / Tablet) | Chromebook / Keyboard |
 | :--- | :--- | :--- |
-| **Arcade Hub — Quick-Launch Game 1 / 2 / 3** | Tap Event Card | `1`, `2`, `3` |
+| **Arcade Hub — Quick-Launch Game 1 / 2 / 3 / 4** | Tap Event Card | `1`, `2`, `3`, `4` |
 | **Return to Arcade Hub from Workshop** | Tap **`◀ Arcade Hub`** | `Escape` |
 | **Flugtag — Hype / Sprint Push / Drop Trolley** | Right Thumb Action Button | `Spacebar` |
 | **Flugtag — Pitch Nose Up / Nose Down** | Left Thumb **`NOSE UP`** / **`NOSE DOWN`** | `ArrowUp`/`W` • `ArrowDown`/`S` |
@@ -89,6 +120,12 @@ Each competition is architected as a completely isolated, purpose-built 3D engin
 | **Soap Box Derby — Pit Push / Drift Brake** | Right Thumb **`PUSH`** / **`BRAKE / DRIFT`** | `Spacebar` / `ArrowDown` / `S` |
 | **Rollercoaster — Lean / Pitch Trim** | Left Thumb **`LEAN L`** / **`R`** | `ArrowLeft`/`A` • `ArrowRight`/`D` |
 | **Rollercoaster — LIM Charge / Boost / Eddy Brake** | Right Thumb **`LIM BOOST`** / **`BRAKE`** | `Spacebar` / `ArrowUp` / `ArrowDown` |
+| **Tandem — Steer Left / Right** | Left Thumb **`STEER L`** / **`STEER R`** | `ArrowLeft`/`A` • `ArrowRight`/`D` |
+| **Tandem — Active Lean Roll Left / Right** | Left Thumb **`⯇ LEAN`** / **`LEAN ⯈`** | `Q` • `E` |
+| **Tandem — Pedal Cadence / Dock Hype Launch** | Right Thumb **`🚴 PEDAL CADENCE`** | `ArrowUp`/`W` |
+| **Tandem — Sprint Power Burst** | Right Thumb **`⚡ SPRINT`** | `Spacebar` / `Shift` |
+| **Tandem — Coaster Brake** | Right Thumb **`🛑 BRAKE`** | `ArrowDown`/`S` |
+| **Tandem — Quick Restart / Abort Run** | Tap HUD Buttons | `R` (Restart) • `Esc`/`B` (Workshop) |
 
 ---
 
@@ -97,12 +134,12 @@ Each competition is architected as a completely isolated, purpose-built 3D engin
 ```text
 redbull-flugtag/
 ├── src/
-│   ├── App.tsx                        # Top-level router, shared stars, records & legacy localStorage migration
+│   ├── App.tsx                        # Top-level router (4 games), shared stars, records & hash navigation
 │   ├── main.tsx                       # React entry point
 │   ├── index.css                      # Tailwind CSS v4 + responsive HUD utilities
 │   ├── audio/
-│   │   └── SoundEngine.ts             # Zero-dependency Web Audio API procedural sound effects
-│   ├── flugtag/
+│   │   └── SoundEngine.ts             # Web Audio API procedural sound effects (cadence, seesaw, bell, cheer)
+│   ├── flugtag/                       # Game 1: Red Bull Flugtag
 │   │   └── FlugtagGame.tsx            # Standalone Game 1 controller (Hangar + 30-ft Pier Flight)
 │   ├── builder/
 │   │   └── PartCatalog.ts             # Flugtag aircraft parts, stats, presets & dog toppers (Shadow & Boomer)
@@ -124,8 +161,18 @@ redbull-flugtag/
 │   │   ├── Coaster3DBuilder.ts        # Procedural 3D coaster cars, upstop bogies, restraints & Track Dyno rig
 │   │   ├── CoasterCanvas3D.tsx        # 3D Engineering Bay + 2,000-ft tubular steel coaster park & lagoon splashdown
 │   │   └── CoasterGame.tsx            # Standalone Game 3 controller, Bay HUD, Ride HUD & 3-Judge Scorecard
+│   ├── tandem/                        # Game 4: Red Bull Tandem Bike Challenge
+│   │   ├── types.ts                   # Types, loadout contracts, telemetry, and obstacle interfaces
+│   │   ├── TandemPartCatalog.ts       # 6 categories (38 parts), Shadow & Boomer mascots, presets & themes
+│   │   ├── TandemPhysicsEngine.ts     # 120Hz fixed-timestep physics, seesaw bridge, water cannon & gap jump
+│   │   ├── TandemBike3DBuilder.ts     # Procedural 3D tandem bike meshes, Captain & Stoker crew, and mascots
+│   │   ├── TandemCanvas3D.tsx         # Three.js 3D workshop bay, dyno rig, canal water & obstacle scene
+│   │   ├── TandemWorkshopHUD.tsx      # Workshop UI: 6 part categories, presets, paint themes, dyno toggle
+│   │   ├── TandemCourseHUD.tsx        # In-run HUD: inclinometer bubble, beam lane meter, dual-thumb touch controls
+│   │   ├── TandemScorecardModal.tsx   # 3-Judge scorecard (Creativity, Showmanship, Distance) & stars modal
+│   │   └── TandemGame.tsx             # Standalone Game 4 state coordinator, sound triggers, and hub integration
 │   └── ui/
-│       ├── LandingPage.tsx            # Red Bull DIY Extreme Arcade Hub (3-game selector & records)
+│       ├── LandingPage.tsx            # Red Bull DIY Extreme Arcade Hub (4-game selector & records)
 │       ├── HangarHUD.tsx              # Flugtag Hangar builder UI + My Craft Garage modal
 │       ├── FlightHUD.tsx              # Flugtag 2-Thumb Flight HUD + Live Pitch Level Guide Gauge
 │       └── JudgingScorecardModal.tsx  # Flugtag 3-Judge animated scorecard & star unlock modal

@@ -1,22 +1,24 @@
 import React, { useEffect } from 'react';
 import { Volume2, VolumeX, Trophy, Sparkles, Play, Flame, Compass, Wrench, Gauge } from 'lucide-react';
 
-export type GameModeId = 'landing' | 'flugtag' | 'soapbox' | 'coaster';
+export type GameModeId = 'landing' | 'flugtag' | 'soapbox' | 'coaster' | 'tandem';
 
 export interface LandingPageProps {
-  onSelectGame: (game: 'flugtag' | 'soapbox' | 'coaster') => void;
+  onSelectGame: (game: 'flugtag' | 'soapbox' | 'coaster' | 'tandem') => void;
   totalStars: number;
   flugtagBestDist: number;
   soapboxBestDist: number;
   soapboxBestTime: number | null;
   coasterBestDist: number;
   coasterBestThrill: number;
+  tandemBestDist?: number;
+  tandemBestTime?: number | null;
   muted: boolean;
   onToggleMute: () => void;
 }
 
 interface GameCardDefinition {
-  id: 'flugtag' | 'soapbox' | 'coaster';
+  id: 'flugtag' | 'soapbox' | 'coaster' | 'tandem';
   keyHint: string;
   badge: string;
   emoji: string;
@@ -118,6 +120,38 @@ const GAME_CARDS: GameCardDefinition[] = [
     ctaGradient: 'from-pink-400 via-amber-300 to-yellow-400 text-slate-950',
     pillBg: 'bg-fuchsia-500/20 border-fuchsia-400/40 text-fuchsia-200',
   },
+  {
+    id: 'tandem',
+    keyHint: '4',
+    badge: 'EVENT 04 • OVER-WATER SPRINT',
+    emoji: '🚲',
+    secondaryEmojis: ['🦮', '🐶', '🌊'],
+    title: 'Red Bull Tandem Challenge',
+    subtitle: 'Stalen Ros Over-Water Pier Sprint',
+    tagline:
+      'Engineer an outrageous two-person tandem bicycle in the Workshop, balance lateral roll & pedal cadence on the Dyno Rig, and sprint across a 200-ft obstacle pier over water to ring the finish bell!',
+    launchPlatform: 'Launch Dock Sync Deck (+12 Ft over canal)',
+    testRig: 'Balance Beam & Cadence Dyno Rig',
+    vehicleComponents: [
+      'Tandem Frame',
+      'Dual Drivetrain',
+      'Wheelset / Tires',
+      'Steering Bars',
+      'Stabilizer Outriggers',
+      'Crew Topper',
+    ],
+    obstacles: [
+      'Tilting Seesaw Bridge',
+      'Rhythm Rollers & Whoops',
+      'Water Cannon Hazard',
+      'Ramp Gap Jump & Bell',
+    ],
+    ctaLabel: 'LAUNCH TANDEM CHALLENGE',
+    accentBorder: 'border-emerald-400/70 hover:border-yellow-300',
+    headerGradient: 'from-emerald-600 via-teal-700 to-cyan-950',
+    ctaGradient: 'from-emerald-400 via-teal-300 to-cyan-400 text-slate-950',
+    pillBg: 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200',
+  },
 ];
 
 export const LandingPage: React.FC<LandingPageProps> = ({
@@ -128,6 +162,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   soapboxBestTime,
   coasterBestDist,
   coasterBestThrill,
+  tandemBestDist,
+  tandemBestTime,
   muted,
   onToggleMute,
 }) => {
@@ -157,6 +193,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       } else if (e.key === '3') {
         e.preventDefault();
         onSelectGame('coaster');
+      } else if (e.key === '4') {
+        e.preventDefault();
+        onSelectGame('tandem');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -189,6 +228,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       ) : (
         <div className="flex items-center gap-1 rounded-xl bg-white/10 border border-white/15 px-2.5 py-1 text-xs font-extrabold text-slate-200">
           <span>🏁 Goal: 1,000 FT Finish Arch</span>
+        </div>
+      );
+    }
+
+    if (id === 'tandem') {
+      const dist = tandemBestDist ?? 0;
+      const time = tandemBestTime ?? null;
+      return dist > 0 || (time !== null && time > 0) ? (
+        <div className="flex items-center gap-1.5 rounded-xl bg-emerald-500/25 border border-emerald-300/50 px-2.5 py-1 text-xs font-black text-emerald-200">
+          <Trophy className="h-3.5 w-3.5 shrink-0 text-yellow-300" aria-hidden="true" />
+          <span>
+            Best Sprint: {Math.round(dist)} FT
+            {time !== null && time > 0 ? ` • ${time.toFixed(1)}s` : ''}
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 rounded-xl bg-white/10 border border-white/15 px-2.5 py-1 text-xs font-extrabold text-slate-200">
+          <span>🔔 Goal: 200 FT Finish Bell</span>
         </div>
       );
     }
@@ -233,7 +290,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   RED BULL DIY EXTREME ARCADE
                 </h1>
                 <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-amber-400/20 border border-amber-300/50 px-2.5 py-0.5 text-[11px] font-black text-amber-300">
-                  <Sparkles className="h-3 w-3" aria-hidden="true" /> 3 STANDALONE 3D SANDBOXES
+                  <Sparkles className="h-3 w-3" aria-hidden="true" /> 4 STANDALONE 3D SANDBOXES
                 </span>
               </div>
               <p className="text-[11px] sm:text-xs font-bold text-slate-300">
@@ -245,7 +302,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="flex items-center gap-2">
             <div
               className="flex items-center gap-1.5 rounded-2xl bg-amber-400/20 border-2 border-amber-400/70 px-3 py-1.5 shadow"
-              title="Shared Judge Stars — Unlocks parts across Flugtag, Soap Box Derby, and Extreme Rollercoaster!"
+              title="Shared Judge Stars — Unlocks parts across Flugtag, Soap Box Derby, Extreme Rollercoaster, and Tandem Challenge!"
             >
               <span className="text-base sm:text-lg" aria-hidden="true">⭐</span>
               <div className="leading-tight">
@@ -275,11 +332,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
         </header>
 
-        {/* 3 GAME MODE CARDS GRID */}
-        <main className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4 my-auto">
+        {/* 4 GAME MODE CARDS GRID */}
+        <main className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 my-auto">
           {GAME_CARDS.map((card) => (
             <div
               key={card.id}
+              data-game-id={card.id}
               onClick={() => onSelectGame(card.id)}
               role="button"
               tabIndex={0}
@@ -414,7 +472,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               PRO TIP
             </span>
             <span>
-              Stars earned from Judge Scorecards in any event unlock wild new parts across all 3 workshops!
+              Stars earned from Judge Scorecards in any event unlock wild new parts across all 4 workshops!
             </span>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-slate-400">
@@ -427,6 +485,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </kbd>
             <kbd className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-black text-amber-300 border border-white/15">
               3
+            </kbd>
+            <kbd className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-black text-amber-300 border border-white/15">
+              4
             </kbd>
             <span>to launch or</span>
             <kbd className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-black text-amber-300 border border-white/15">
