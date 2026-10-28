@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_TANDEM_COURSE_ID,
   getTandemCourseById,
+  getUpcomingCourseWarning,
   type TandemCourseId,
 } from './TandemCourses.ts';
 import { soundEngine } from '../audio/SoundEngine.ts';
@@ -212,6 +213,8 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
   const dockHypeFillRef = useRef<HTMLDivElement | null>(null);
   const dockHypePctRef = useRef<HTMLSpanElement | null>(null);
   const dockCountdownTextRef = useRef<HTMLSpanElement | null>(null);
+  const hazardBannerRef = useRef<HTMLDivElement | null>(null);
+  const hazardTextRef = useRef<HTMLSpanElement | null>(null);
 
   // Synchronize controls with authoritative clamping
   const syncAuthoritativeControls = () => {
@@ -362,8 +365,8 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
         }
 
         // Warning state classification
-        const isCriticalTip = rollAbsDeg >= thetaCritDeg * 0.85;
-        const isWarningTip = rollAbsDeg >= thetaCritDeg * 0.50 && !isCriticalTip;
+        const isCriticalTip = s.phase === 'riding' && rollAbsDeg >= thetaCritDeg * 0.85;
+        const isWarningTip = s.phase === 'riding' && rollAbsDeg >= thetaCritDeg * 0.50 && !isCriticalTip;
         if (rollWarningBadgeRef.current) {
           if (isCriticalTip) {
             rollWarningBadgeRef.current.style.display = 'flex';
@@ -413,15 +416,35 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           }
         }
 
-        // K. Sector Announcement Toast Trigger
-        const currentSector = getSectorForDistance(s.distanceFt || 0, courseId);
-        if (currentSector.id !== lastSectorIdRef.current) {
-          lastSectorIdRef.current = currentSector.id;
-          setActiveToast(currentSector);
-          if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
-          toastTimeoutRef.current = window.setTimeout(() => {
-            setActiveToast(null);
-          }, 2200);
+        // K. Live Curve & Obstacle Lookahead Banner
+        if (hazardBannerRef.current && hazardTextRef.current) {
+          if (s.phase === 'riding') {
+            const warn = getUpcomingCourseWarning(s.distanceFt || 0, courseId, 52);
+            if (warn) {
+              hazardBannerRef.current.style.display = 'flex';
+              const distBadge = warn.distanceAheadFt > 2 ? ` (${warn.distanceAheadFt} FT)` : ' (NOW!)';
+              hazardTextRef.current.textContent = `${warn.emoji} ${warn.text}${distBadge}`;
+            } else {
+              hazardBannerRef.current.style.display = 'none';
+            }
+          } else {
+            hazardBannerRef.current.style.display = 'none';
+          }
+        }
+
+        // L. Sector Announcement Toast Trigger
+        if (s.phase === 'hype') {
+          lastSectorIdRef.current = 'dock';
+        } else {
+          const currentSector = getSectorForDistance(s.distanceFt || 0, courseId);
+          if (currentSector.id !== lastSectorIdRef.current) {
+            lastSectorIdRef.current = currentSector.id;
+            setActiveToast(currentSector);
+            if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
+            toastTimeoutRef.current = window.setTimeout(() => {
+              setActiveToast(null);
+            }, 2200);
+          }
         }
       }
 
@@ -711,6 +734,16 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
           >
             <Flame className="h-3 w-3 animate-bounce" />
             <span>SPRINT BOOST</span>
+          </div>
+
+          {/* Live Curve & Obstacle Lookahead Pill */}
+          <div
+            ref={hazardBannerRef}
+            data-testid="course-hazard-lookahead"
+            style={{ display: 'none' }}
+            className="pointer-events-none mt-1 items-center gap-1.5 rounded-full bg-slate-950/90 border border-cyan-400/70 px-3 py-0.5 text-[10px] font-black text-cyan-200 shadow-lg backdrop-blur-md"
+          >
+            <span ref={hazardTextRef}>↱ CURVE AHEAD</span>
           </div>
 
           {/* Non-Obstructive Top-Center Sector Callout Toast */}

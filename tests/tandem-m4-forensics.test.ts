@@ -12,7 +12,13 @@ import {
   computeCriticalRollThreshold,
   getTrackElevationAtDistance,
   updateSeesawBridgeDynamics,
+  getCourseCenterline,
+  getUpcomingCourseWarning,
+  getCourseObstacles,
+  evaluatePendulumLateralOffsetFt,
+  applyCourseCurveAndObstacleForces,
 } from '../src/tandem/TandemPhysicsEngine.ts';
+import { TANDEM_COURSES } from '../src/tandem/TandemCourses.ts';
 
 import {
   TandemCanvas3D,
@@ -273,6 +279,104 @@ describe('Milestone 4 Forensic Integrity Audit Suite', () => {
     it('exports TandemScorecardModal component with valid React component signature', () => {
       expect(typeof TandemScorecardModal).toBe('object'); // React.memo wraps into object with $$typeof
       expect(typeof calculateTandemStars).toBe('function');
+    });
+  });
+
+  describe('Check 6: Course Curves, Obstacles & Behind-the-Riders Chase View', () => {
+    it('defines smooth lateral curves and multi-type obstacles across all 4 courses', () => {
+      for (const course of TANDEM_COURSES) {
+        expect(course.curves.length).toBeGreaterThanOrEqual(4);
+        expect(course.obstacles.length).toBeGreaterThanOrEqual(6);
+
+        // Start dock and finish bell stay centered at zFt = 0
+        expect(getCourseCenterline(0, course.id).zFt).toBeCloseTo(0, 5);
+        expect(getCourseCenterline(course.lengthFt, course.id).zFt).toBeCloseTo(0, 5);
+
+        // Sample wave lobe of first curve segment to verify non-zero lateral deflection and curvature
+        const firstCurve = course.curves[0];
+        const lobeU = firstCurve.halfWaves === 1 ? 0.5 : 0.32;
+        const sampleS = firstCurve.startFt + (firstCurve.endFt - firstCurve.startFt) * lobeU;
+        const cl = getCourseCenterline(sampleS, course.id);
+        expect(Math.abs(cl.zFt)).toBeGreaterThan(2.0);
+        expect(Math.abs(cl.curvatureRadFt)).toBeGreaterThan(0);
+      }
+    });
+
+    it('constructs 3D obstacle meshes (swingingPendulums and windFlags) in buildCourseEnvironment', () => {
+      for (const course of TANDEM_COURSES) {
+        const scene = buildCourseEnvironment(course.id);
+        expect(scene.swingingPendulums.length).toBeGreaterThanOrEqual(1);
+        expect(scene.windFlags.length).toBeGreaterThanOrEqual(1);
+        disposeTandemSceneObjects(scene.group);
+      }
+    });
+
+    it('applies centrifugal curve forces and obstacle interactions when course challenges are active', () => {
+      const state = createInitialTandemState('stalen_ros_canal');
+      state.enableCourseChallenges = true;
+      state.phase = 'riding';
+      state.distanceFt = 185; // Entry into Windmill Roller Left Sweep (166..264 ft, amplitudeFt = -8.5)
+      state.speedMph = 18;
+      state.lateralOffsetFt = 0;
+
+      const controls: TandemControls = {
+        steer: 0,
+        pedalCadence: true,
+        sprint: false,
+        brake: false,
+        leanRoll: 0,
+      };
+
+      applyCourseCurveAndObstacleForces(state, metrics.stats, controls, 0.1);
+      expect(state.curveDirection).toBe('left');
+      // Left curve entry (curvature < 0) pushes unsteered rider outward (+Z / right)
+      expect(state.lateralOffsetFt).toBeGreaterThan(0);
+
+      // Test bollard collision jolt at 74 ft (lateralCenterFt: -0.78)
+      state.distanceFt = 74;
+      state.lateralOffsetFt = -0.78;
+      const speedBeforeBollard = state.speedMph;
+      const events = {
+        splashOccurred: false,
+        bellRung: false,
+        seesawTilted: false,
+        hazardHit: false,
+        gapJumped: false,
+        obstacleHit: false,
+        boostHit: false,
+      };
+      applyCourseCurveAndObstacleForces(state, metrics.stats, controls, 0.05, events);
+      expect(state.speedMph).toBeLessThan(speedBeforeBollard);
+      expect(state.obstacleHits).toBeGreaterThanOrEqual(1);
+      expect(events.obstacleHit).toBe(true);
+
+      // Test foam slick traction zone at 112 ft
+      state.distanceFt = 112;
+      state.lateralOffsetFt = 0.1;
+      applyCourseCurveAndObstacleForces(state, metrics.stats, controls, 0.05);
+      expect(state.inFoamSlick).toBe(true);
+
+      // Test boost pad acceleration at 298 ft (lateralCenterFt: 0.25)
+      state.distanceFt = 298;
+      state.lateralOffsetFt = 0.25;
+      const speedBeforeBoost = state.speedMph;
+      const boostEvents = {
+        splashOccurred: false,
+        bellRung: false,
+        seesawTilted: false,
+        hazardHit: false,
+        gapJumped: false,
+        obstacleHit: false,
+        boostHit: false,
+      };
+      applyCourseCurveAndObstacleForces(state, metrics.stats, controls, 0.05, boostEvents);
+      expect(state.speedMph).toBeGreaterThan(speedBeforeBoost);
+      expect(state.boostPadsHit).toBeGreaterThanOrEqual(1);
+      expect(boostEvents.boostHit).toBe(true);
+
+      // Test lookahead warning helper
+      const warn = getUpcomingCourseWarning(30, 'stalen_ros_canal', 55);
+      expect(warn).not.toBeNull();
     });
   });
 });

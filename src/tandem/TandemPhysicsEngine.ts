@@ -21,8 +21,21 @@ import type {
 import {
   DEFAULT_TANDEM_COURSE_ID,
   getTandemCourseById,
+  getCourseCenterline,
+  getUpcomingCourseWarning,
   type TandemCourseId,
+  type TandemCourseObstacleDef,
+  type TandemCurveSegmentDef,
+  type TandemCenterlinePoint,
 } from './TandemCourses.ts';
+
+export {
+  getCourseCenterline,
+  getUpcomingCourseWarning,
+  type TandemCourseObstacleDef,
+  type TandemCurveSegmentDef,
+  type TandemCenterlinePoint,
+};
 
 // ============================================================================
 // 1. AUTHORITATIVE PHYSICAL CONSTANTS & CONFIGURATION
@@ -112,12 +125,20 @@ export function getCourseGeometry(courseId?: TandemCourseId): TandemObstacleDef[
   }));
 }
 
+export function getCourseObstacles(courseId?: string): TandemCourseObstacleDef[] {
+  return getTandemCourseById(courseId).obstacles;
+}
+
+export const getTrackCenterlineAtDistance = getCourseCenterline;
+
 export interface TandemSimEvents {
   splashOccurred: boolean;
   bellRung: boolean;
   seesawTilted: boolean;
   hazardHit: boolean;
   gapJumped: boolean;
+  obstacleHit?: boolean;
+  boostHit?: boolean;
 }
 
 // ============================================================================
@@ -142,6 +163,14 @@ export function createInitialTandemState(courseId: TandemCourseId = DEFAULT_TAND
     hasFinished: false,
     courseId: course.id,
     courseLengthFt: course.lengthFt,
+    enableCourseChallenges: false,
+    curveHeadingRad: 0,
+    curvatureRadFt: 0,
+    curveDirection: 'straight',
+    inFoamSlick: false,
+    activeHazardWarning: null,
+    obstacleHits: 0,
+    boostPadsHit: 0,
 
     // Aliases & Internal Auxiliaries for test compatibility and 120Hz loop
     accumulatorSec: 0,
@@ -155,6 +184,8 @@ export function createInitialTandemState(courseId: TandemCourseId = DEFAULT_TAND
     verticalHeightFt: 8.0,
     verticalVelFps: 0,
     lateralVelocityFps: 0,
+    triggeredObstacles: {},
+    hypeCountdownSec: 3.0,
   } as TandemSimState & { [key: string]: any };
 }
 
@@ -162,6 +193,7 @@ export const createTandemSimState = createInitialTandemState;
 
 export function resetTandemState(state: TandemSimState, courseId?: TandemCourseId): void {
   const course = getTandemCourseById(courseId || (state.courseId as TandemCourseId));
+  const keepChallenges = Boolean(state.enableCourseChallenges);
   state.phase = 'hype';
   state.distanceFt = 0;
   state.speedMph = 0;
@@ -177,6 +209,14 @@ export function resetTandemState(state: TandemSimState, courseId?: TandemCourseI
   state.hasFinished = false;
   state.courseId = course.id;
   state.courseLengthFt = course.lengthFt;
+  state.enableCourseChallenges = keepChallenges;
+  state.curveHeadingRad = 0;
+  state.curvatureRadFt = 0;
+  state.curveDirection = 'straight';
+  state.inFoamSlick = false;
+  state.activeHazardWarning = null;
+  state.obstacleHits = 0;
+  state.boostPadsHit = 0;
 
   (state as any).accumulatorSec = 0;
   (state as any).distanceFeet = 0;
@@ -189,6 +229,8 @@ export function resetTandemState(state: TandemSimState, courseId?: TandemCourseI
   (state as any).verticalHeightFt = 8.0;
   (state as any).verticalVelFps = 0;
   (state as any).lateralVelocityFps = 0;
+  (state as any).triggeredObstacles = {};
+  (state as any).hypeCountdownSec = 3.0;
 }
 
 export function triggerDockSyncLaunch(state: TandemSimState, intensity = 0.8): void {
@@ -300,6 +342,168 @@ export function applyWaterCannonBlast(
   (state as any).rollDeg = (state.rollAngleRad * 180) / Math.PI;
 }
 
+/**
+ * Evaluates the lateral center offset (in feet relative to pier centerline) of an animated
+ * swinging buoy pendulum obstacle at `timeElapsedSec`.
+ */
+export function evaluatePendulumLateralOffsetFt(
+  obs: TandemCourseObstacleDef,
+  timeElapsedSec: number
+): number {
+  const freq = obs.swingFreqRadS ?? 2.4;
+  const phase = obs.swingPhaseRad ?? 0;
+  return Math.sin(timeElapsedSec * freq + phase) * 1.05;
+}
+
+/**
+ * Evaluates and applies lateral curve centrifugal forces and on-deck obstacle interactions
+ * (slalom bollards, sea-foam slicks, swinging buoy pendulums, crosswind squalls, and turbo pads).
+ */
+export function applyCourseCurveAndObstacleForces(
+  state: TandemSimState,
+  stats: Partial<TandemStats> | undefined,
+  controls: TandemControls,
+  dt: number,
+  events?: TandemSimEvents,
+  forceApply = true
+): void {
+  const course = getTandemCourseById(state.courseId);
+  const cl = getCourseCenterline(state.distanceFt, course.id);
+  const warning = getUpcomingCourseWarning(state.distanceFt, course.id, 55);
+
+  state.curveHeadingRad = cl.headingRad;
+  state.curvatureRadFt = cl.curvatureRadFt;
+  state.curveDirection = cl.turnDirection;
+  state.activeHazardWarning = warning ? `${warning.emoji} ${warning.text}` : null;
+
+  let inFoam = false;
+  for (const obs of course.obstacles) {
+    if (
+      obs.type === 'foam_slick' &&
+      Math.abs(state.distanceFt - obs.distanceFt) <= obs.lengthFt * 0.5
+    ) {
+      inFoam = true;
+      break;
+    }
+  }
+  state.inFoamSlick = inFoam;
+
+  if (!forceApply && !state.enableCourseChallenges) {
+    return;
+  }
+
+  const vFps = (state.speedMph || 0) * (5280 / 3600);
+  const stability = stats?.lateralStability ?? 50;
+  const outriggerW = Math.max(0, stats?.outriggerWidthFt ?? 2.0);
+  const stabFactor =
+    stability > 10
+      ? Math.max(0.55, 1.0 - stability / 220)
+      : Math.max(0.55, 1.0 - stability * 0.15);
+
+  // 1. Centrifugal curve drift & outward roll torque when traversing curved pier sections
+  if (Math.abs(cl.curvatureRadFt) > 1e-5 && !(state as any).isAirborne) {
+    // Curving right (curvature > 0) pulls rider toward port (-Z) unless steering right (+steer)
+    const rawCentDriftFps = -cl.curvatureRadFt * (vFps * vFps) * 0.16 * stabFactor;
+    const centDriftFps = Math.max(-3.2, Math.min(3.2, rawCentDriftFps));
+    state.lateralOffsetFt = (state.lateralOffsetFt || 0) + centDriftFps * dt;
+    (state as any).lateralOffsetFeet = state.lateralOffsetFt;
+
+    const rawCentRollAcc =
+      (-cl.curvatureRadFt * (vFps * vFps) * 0.28 * stabFactor) /
+      (1.0 + outriggerW * 0.35);
+    const centCurveRollAcc = Math.max(-4.5, Math.min(4.5, rawCentRollAcc));
+    const prevRollVel = (state as any).rollVelRadS || 0;
+    (state as any).rollVelRadS = prevRollVel + centCurveRollAcc * dt;
+  }
+
+  // 2. On-deck obstacle interactions
+  if (!(state as any).triggeredObstacles) {
+    (state as any).triggeredObstacles = {};
+  }
+  const triggered = (state as any).triggeredObstacles as Record<string, boolean>;
+
+  for (const obs of course.obstacles) {
+    const halfSpan = Math.max(1.5, obs.lengthFt * 0.5);
+    if (Math.abs(state.distanceFt - obs.distanceFt) > halfSpan) {
+      continue;
+    }
+
+    if (obs.type === 'foam_slick') {
+      // Slippery sea-foam reduces lateral damping and induces sinusoidal slip oscillation
+      const slipWave = Math.sin(state.distanceFt * 0.55 + state.timeElapsedSec * 7.0);
+      const slipLat = slipWave * 0.95 * obs.intensity * stabFactor * dt;
+      const slipRoll = slipWave * 0.55 * obs.intensity * stabFactor * dt;
+      state.lateralOffsetFt += slipLat;
+      (state as any).lateralOffsetFeet = state.lateralOffsetFt;
+      state.rollAngleRad += slipRoll;
+      (state as any).rollDeg = (state.rollAngleRad * 180) / Math.PI;
+      if (Math.abs(controls.steer || 0) > 0.5) {
+        // Over-steering on foam causes extra tail slide
+        state.rollAngleRad += (controls.steer || 0) * 0.45 * obs.intensity * dt;
+        (state as any).rollDeg = (state.rollAngleRad * 180) / Math.PI;
+      }
+    } else if (obs.type === 'wind_gust') {
+      const gustSign = Math.sin(obs.distanceFt) >= 0 ? 1 : -1;
+      const gustLat = gustSign * 0.85 * obs.intensity * stabFactor * dt;
+      const gustRoll = gustSign * 0.42 * obs.intensity * stabFactor * dt;
+      state.lateralOffsetFt += gustLat;
+      (state as any).lateralOffsetFeet = state.lateralOffsetFt;
+      state.rollAngleRad += gustRoll;
+      (state as any).rollDeg = (state.rollAngleRad * 180) / Math.PI;
+    } else if (obs.type === 'chicane_bollard' && !triggered[obs.id]) {
+      const latDist = Math.abs(state.lateralOffsetFt - obs.lateralCenterFt);
+      if (latDist < obs.halfWidthFt + 0.28) {
+        triggered[obs.id] = true;
+        const pushDir = state.lateralOffsetFt >= obs.lateralCenterFt ? 1 : -1;
+        state.speedMph = Math.max(4.0, state.speedMph * 0.62);
+        (state as any).mph = state.speedMph;
+        state.lateralOffsetFt += pushDir * 0.32 * obs.intensity * stabFactor;
+        (state as any).lateralOffsetFeet = state.lateralOffsetFt;
+        state.rollAngleRad += pushDir * 0.19 * obs.intensity * stabFactor;
+        (state as any).rollDeg = (state.rollAngleRad * 180) / Math.PI;
+        state.obstacleHits = (state.obstacleHits || 0) + 1;
+        if (events) {
+          events.hazardHit = true;
+          events.obstacleHit = true;
+        }
+      }
+    } else if (obs.type === 'swing_pendulum' && !triggered[obs.id]) {
+      const pendLatFt = evaluatePendulumLateralOffsetFt(obs, state.timeElapsedSec || 0);
+      const latDist = Math.abs(state.lateralOffsetFt - pendLatFt);
+      if (latDist < obs.halfWidthFt + 0.30) {
+        triggered[obs.id] = true;
+        const pushDir = state.lateralOffsetFt >= pendLatFt ? 1 : -1;
+        state.speedMph = Math.max(4.5, state.speedMph * 0.68);
+        (state as any).mph = state.speedMph;
+        state.lateralOffsetFt += pushDir * 0.36 * obs.intensity * stabFactor;
+        (state as any).lateralOffsetFeet = state.lateralOffsetFt;
+        state.rollAngleRad += pushDir * 0.21 * obs.intensity * stabFactor;
+        (state as any).rollDeg = (state.rollAngleRad * 180) / Math.PI;
+        state.obstacleHits = (state.obstacleHits || 0) + 1;
+        if (events) {
+          events.hazardHit = true;
+          events.obstacleHit = true;
+        }
+      }
+    } else if (obs.type === 'boost_pad' && !triggered[obs.id]) {
+      const latDist = Math.abs(state.lateralOffsetFt - obs.lateralCenterFt);
+      if (latDist < obs.halfWidthFt + 0.35) {
+        triggered[obs.id] = true;
+        state.speedMph = Math.min(29.5, state.speedMph + 3.2 * obs.intensity);
+        (state as any).mph = state.speedMph;
+        (state as any).sprintStamina = Math.min(
+          1.0,
+          ((state as any).sprintStamina ?? 1.0) + 0.4
+        );
+        state.boostPadsHit = (state.boostPadsHit || 0) + 1;
+        if (events) {
+          events.boostHit = true;
+        }
+      }
+    }
+  }
+}
+
 // ============================================================================
 // 5. 120Hz FIXED-TIMESTEP SIMULATION CORE
 // ============================================================================
@@ -319,6 +523,8 @@ export function stepTandemPhysics(
     seesawTilted: false,
     hazardHit: false,
     gapJumped: false,
+    obstacleHit: false,
+    boostHit: false,
   };
 
   if (dt <= 0 || !Number.isFinite(dt) || Number.isNaN(dt)) {
@@ -473,12 +679,16 @@ export function stepTandemPhysics(
   state.speedMph = vMps / 0.44704;
   (state as any).mph = state.speedMph;
 
-  const vFps = state.speedMph * (5280 / 3600);
+  let vFps = state.speedMph * (5280 / 3600);
   const deltaDistFt = vFps * dtClamped;
   state.distanceFt += deltaDistFt;
   (state as any).distanceFeet = state.distanceFt;
 
-  // --- 4. OBSTACLE INTERACTION CHECKS ---
+  // --- 4. OBSTACLE & CURVE INTERACTION CHECKS ---
+
+  // Evaluate curve centerline & on-deck obstacles (active forces when enableCourseChallenges is true)
+  applyCourseCurveAndObstacleForces(state, stats, controls, dtClamped, events, false);
+  vFps = state.speedMph * (5280 / 3600);
 
   // A. Seesaw reverse rollback off entry edge
   if (state.distanceFt < seesawStartS && state.distanceFt + deltaDistFt < seesawStartS && deltaDistFt < 0) {
@@ -491,7 +701,8 @@ export function stepTandemPhysics(
       (state as any).isAirborne = true;
       (state as any).verticalHeightFt = 9.45;
       const powerToWeight = (stats.cadencePowerW || 400) / massKg;
-      const isUnderpoweredCruiser = powerToWeight < 2.0 && (state.hypeEnergy || 0) < 90;
+      const isUnderpoweredCruiser =
+        !state.enableCourseChallenges && powerToWeight < 2.0 && (state.hypeEnergy || 0) < 90;
       (state as any).verticalVelFps = isUnderpoweredCruiser
         ? vFps * Math.sin((8 * Math.PI) / 180) - 2.5
         : vFps * Math.sin((22 * Math.PI) / 180) + 5.2;
@@ -554,15 +765,19 @@ export function stepTandemPhysics(
   const centRollAcc = centAcc / 3.0;
 
   const leanInput = Math.max(-1.0, Math.min(1.0, controls.leanRoll || 0));
-  const leanTorque = -leanInput * 8.0;
+  const leanTorque = leanInput * 8.0;
 
   const outriggerW = Math.max(0, stats.outriggerWidthFt ?? 2.0);
   const outriggerTorque = -35.0 * state.rollAngleRad * (1.0 + outriggerW / 2.0);
 
-  const dampingVal =
+  const baseDampingVal =
     stats.rollDamping > 10
       ? stats.rollDamping / 50
       : stats.rollDamping || 0.8;
+  const dampingVal =
+    state.enableCourseChallenges && state.inFoamSlick
+      ? baseDampingVal * 0.55
+      : baseDampingVal;
   const dampTorque = -rollVel * (6.0 * dampingVal);
 
   const gravTorque = 9.81 * Math.sin(state.rollAngleRad);

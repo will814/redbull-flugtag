@@ -277,8 +277,16 @@ export const TandemGame: React.FC<TandemGameProps> = ({
   const [dynoSwayAuto, setDynoSwayAuto] = useState<boolean>(false);
 
   // Authoritative Simulation State & Controls Refs
-  const simStateRef = useRef<TandemSimState>(createInitialTandemState(selectedCourseId));
-  const [hudSimState, setHudSimState] = useState<TandemSimState>(() => createInitialTandemState(selectedCourseId));
+  const simStateRef = useRef<TandemSimState>((() => {
+    const st = createInitialTandemState(selectedCourseId);
+    st.enableCourseChallenges = true;
+    return st;
+  })());
+  const [hudSimState, setHudSimState] = useState<TandemSimState>(() => {
+    const st = createInitialTandemState(selectedCourseId);
+    st.enableCourseChallenges = true;
+    return st;
+  });
   const [scorecard, setScorecard] = useState<TandemScorecard | null>(null);
   const [newlyUnlockedParts, setNewlyUnlockedParts] = useState<TandemPart[]>([]);
 
@@ -539,6 +547,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
     lastTimeRef.current = performance.now();
 
     const initialState = createInitialTandemState(courseIdRef.current);
+    initialState.enableCourseChallenges = true;
     (initialState as any).hypeCountdownSec = HYPE_COUNTDOWN_DURATION_SEC;
     simStateRef.current = initialState;
     setHudSimState({ ...initialState });
@@ -561,6 +570,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
       transitionTimerRef.current = null;
     }
     resetTandemState(simStateRef.current, courseIdRef.current);
+    simStateRef.current.enableCourseChallenges = true;
     controlsRef.current = {
       steer: 0,
       pedalCadence: false,
@@ -629,7 +639,16 @@ export const TandemGame: React.FC<TandemGameProps> = ({
       // 2. ACTIVE RIDING PHASE (120Hz Physics Stepping)
       else if (s.phase === 'riding') {
         const prevDistFt = s.distanceFt;
+        const prevObstacleHits = s.obstacleHits || 0;
+        const prevBoostHits = s.boostPadsHit || 0;
         updateTandemSimulationWithAccumulator(s, stats, controls, dtClamped);
+
+        if ((s.obstacleHits || 0) > prevObstacleHits) {
+          playSafeAudio('playSeesawThud');
+        }
+        if ((s.boostPadsHit || 0) > prevBoostHits) {
+          playSafeAudio('playPushBoost');
+        }
 
         // Sound Engine Cadence Click
         if (controls.pedalCadence && s.speedMph > 0 && now - lastCadenceAudioTimeRef.current > 150) {

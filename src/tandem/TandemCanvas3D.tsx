@@ -40,12 +40,15 @@ import {
   computeCriticalRollThreshold,
   getTrackElevationAtDistance,
   updateSeesawBridgeDynamics,
+  evaluatePendulumLateralOffsetFt,
 } from './TandemPhysicsEngine.ts';
 import {
   DEFAULT_TANDEM_COURSE_ID,
   getTandemCourseById,
+  getCourseCenterline,
   type TandemCourseDef,
   type TandemCourseId,
+  type TandemCourseObstacleDef,
 } from './TandemCourses.ts';
 import { soundEngine } from '../audio/SoundEngine.ts';
 
@@ -305,6 +308,8 @@ export interface CourseEnvScene {
   foamRings: THREE.Mesh[];
   confettiGroup: THREE.Group;
   confettiParticles: { mesh: THREE.Mesh; vel: THREE.Vector3; rotVel: THREE.Vector3 }[];
+  swingingPendulums: { buoyPivot: THREE.Group; obs: TandemCourseObstacleDef }[];
+  windFlags: THREE.Mesh[];
 }
 
 export function buildCourseEnvironment(
@@ -353,6 +358,7 @@ export function buildCourseEnvironment(
     color: courseDef.theme.beamDeckHex,
     roughness: 0.55,
     metalness: 0.12,
+    side: THREE.DoubleSide,
   });
   const pilingMat = new THREE.MeshStandardMaterial({
     color: '#451a03',
@@ -369,42 +375,146 @@ export function buildCourseEnvironment(
     roughness: 0.35,
     metalness: 0.45,
   });
-  const edgeStripeMat = new THREE.MeshBasicMaterial({ color: '#ef4444' });
+  const edgeStripeMat = new THREE.MeshBasicMaterial({
+    color: '#ef4444',
+    side: THREE.DoubleSide,
+  });
 
   const pilingGeo = new THREE.CylinderGeometry(0.12, 0.14, 4.4, 10);
   const pilingPositions: Array<[number, number, number]> = [];
+
+  // Helper to build a solid 3D extruded ribbon along the curving centerline [startFt, endFt]
+  const buildCurvedRibbonGeo = (
+    startFt: number,
+    endFt: number,
+    widthM: number,
+    yTopFn: (sFt: number) => number,
+    thickM: number,
+    zOffsetM = 0
+  ): THREE.BufferGeometry => {
+    const spanFt = Math.max(1, endFt - startFt);
+    const numSteps = Math.max(16, Math.round(spanFt * 0.55));
+    const halfW = widthM * 0.5;
+    const positions: number[] = [];
+    const indices: number[] = [];
+
+    for (let i = 0; i <= numSteps; i++) {
+      const frac = i / numSteps;
+      const sFt = startFt + frac * spanFt;
+      const xM = sFt * FT_TO_M;
+      const centerZM = getCourseCenterline(sFt, courseDef.id).zFt * FT_TO_M + zOffsetM;
+      const yTopM = yTopFn(sFt);
+      const yBotM = yTopM - thickM;
+
+      positions.push(xM, yTopM, centerZM - halfW); // 0: Top-Left
+      positions.push(xM, yTopM, centerZM + halfW); // 1: Top-Right
+      positions.push(xM, yBotM, centerZM - halfW); // 2: Bot-Left
+      positions.push(xM, yBotM, centerZM + halfW); // 3: Bot-Right
+    }
+
+    for (let i = 0; i < numSteps; i++) {
+      const b0 = i * 4;
+      const b1 = (i + 1) * 4;
+      // Top surface
+      indices.push(b0 + 0, b0 + 1, b1 + 0);
+      indices.push(b0 + 1, b1 + 1, b1 + 0);
+      // Bottom surface
+      indices.push(b0 + 2, b1 + 2, b0 + 3);
+      indices.push(b0 + 3, b1 + 2, b1 + 3);
+      // Left wall
+      indices.push(b0 + 0, b1 + 0, b0 + 2);
+      indices.push(b1 + 0, b1 + 2, b0 + 2);
+      // Right wall
+      indices.push(b0 + 1, b0 + 3, b1 + 1);
+      indices.push(b1 + 1, b0 + 3, b1 + 3);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  };
 
   // Helper to place a solid beam segment from startFt to endFt at elevation 8.0 ft
   const addBeamSegmentFt = (startFt: number, endFt: number, widthM = 0.9144, mat = beamMat) => {
     const segLenM = (endFt - startFt) * FT_TO_M;
     if (segLenM <= 0.01) return;
-    const midXM = ((startFt + endFt) * 0.5) * FT_TO_M;
     const deckHeightM = 0.20;
-    const segMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(segLenM, deckHeightM, widthM),
-      mat
-    );
-    segMesh.position.set(midXM, pierElevationM - deckHeightM * 0.5, 0);
-    segMesh.receiveShadow = true;
-    segMesh.castShadow = false;
-    group.add(segMesh);
 
-    // High-visibility safety edge stripes along narrow beams
-    if (widthM <= 1.2) {
-      const stripeGeo = new THREE.BoxGeometry(segLenM, 0.015, 0.045);
-      const stripeL = new THREE.Mesh(stripeGeo, edgeStripeMat);
-      stripeL.position.set(midXM, pierElevationM + 0.005, -widthM * 0.5 + 0.03);
-      const stripeR = new THREE.Mesh(stripeGeo, edgeStripeMat);
-      stripeR.position.set(midXM, pierElevationM + 0.005, widthM * 0.5 - 0.03);
-      group.add(stripeL, stripeR);
+    const hasCurveOverlap = courseDef.curves.some(
+      (c) => c.endFt > startFt && c.startFt < endFt
+    );
+
+    if (!hasCurveOverlap) {
+      const midXM = ((startFt + endFt) * 0.5) * FT_TO_M;
+      const segMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(segLenM, deckHeightM, widthM),
+        mat
+      );
+      segMesh.position.set(midXM, pierElevationM - deckHeightM * 0.5, 0);
+      segMesh.receiveShadow = true;
+      segMesh.castShadow = false;
+      group.add(segMesh);
+
+      if (widthM <= 1.2) {
+        const stripeGeo = new THREE.BoxGeometry(segLenM, 0.015, 0.045);
+        const stripeL = new THREE.Mesh(stripeGeo, edgeStripeMat);
+        stripeL.position.set(midXM, pierElevationM + 0.005, -widthM * 0.5 + 0.03);
+        const stripeR = new THREE.Mesh(stripeGeo, edgeStripeMat);
+        stripeR.position.set(midXM, pierElevationM + 0.005, widthM * 0.5 - 0.03);
+        group.add(stripeL, stripeR);
+      }
+    } else {
+      const curvedGeo = buildCurvedRibbonGeo(
+        startFt,
+        endFt,
+        widthM,
+        () => pierElevationM,
+        deckHeightM,
+        0
+      );
+      const segMesh = new THREE.Mesh(curvedGeo, mat);
+      segMesh.receiveShadow = true;
+      segMesh.castShadow = false;
+      group.add(segMesh);
+
+      if (widthM <= 1.2) {
+        const stripeLGeo = buildCurvedRibbonGeo(
+          startFt,
+          endFt,
+          0.045,
+          () => pierElevationM + 0.012,
+          0.015,
+          -widthM * 0.5 + 0.03
+        );
+        const stripeRGeo = buildCurvedRibbonGeo(
+          startFt,
+          endFt,
+          0.045,
+          () => pierElevationM + 0.012,
+          0.015,
+          widthM * 0.5 - 0.03
+        );
+        group.add(
+          new THREE.Mesh(stripeLGeo, edgeStripeMat),
+          new THREE.Mesh(stripeRGeo, edgeStripeMat)
+        );
+      }
     }
 
-    // Support pilings every 7.5m along the segment (tucked cleanly under bottom of deck down to seabed)
+    // Support pilings every 7.5m along the segment following the curving centerline
     const startM = startFt * FT_TO_M;
     const endM = endFt * FT_TO_M;
     for (let px = startM + 2.0; px <= endM - 1.0; px += 7.5) {
+      const sFt = px / FT_TO_M;
+      const centerZM = getCourseCenterline(sFt, courseDef.id).zFt * FT_TO_M;
       for (const side of [-1, 1]) {
-        pilingPositions.push([px, pierElevationM - deckHeightM - 2.20, side * (widthM * 0.42)]);
+        pilingPositions.push([
+          px,
+          pierElevationM - deckHeightM - 2.20,
+          centerZM + side * (widthM * 0.42),
+        ]);
       }
     }
   };
@@ -423,58 +533,23 @@ export function buildCourseEnvironment(
   archTop.position.set(1.2, pierElevationM + 3.8, 0);
   group.add(archL, archR, archTop);
 
-  // 3. Sector 2: Narrow Entry Balance Beam (dockEndFt to rollersStartFt, seamless transition!)
+  // 3. Sector 2: Narrow Entry Balance Beam (dockEndFt to rollersStartFt, seamless curved ribbon!)
   addBeamSegmentFt(dockEndFt, courseDef.rollersStartFt, 0.9144, beamMat);
 
-  // 4. Sector 3: Solid 3D Extruded Rhythm Rollers (rollersStartFt to rollersEndFt)
+  // 4. Sector 3: Solid 3D Extruded Rhythm Rollers (rollersStartFt to rollersEndFt, curved & undulating)
   const rollerStartM = courseDef.rollersStartFt * FT_TO_M;
   const rollerEndM = courseDef.rollersEndFt * FT_TO_M;
-  const rollerLenFt = courseDef.rollersEndFt - courseDef.rollersStartFt;
-  const rollerSegments = Math.max(48, Math.round(rollerLenFt * 0.8));
   const rollerWidthM = 0.9144;
-  const rollerHalfW = rollerWidthM * 0.5;
   const rollerThickM = 0.22;
 
-  const rollerPositions: number[] = [];
-  const rollerIndices: number[] = [];
-
-  // For each sample i along X, create 4 vertices:
-  // 0: Top-Left (-halfW, yTop), 1: Top-Right (+halfW, yTop),
-  // 2: Bottom-Left (-halfW, yBot), 3: Bottom-Right (+halfW, yBot)
-  for (let i = 0; i <= rollerSegments; i++) {
-    const frac = i / rollerSegments;
-    const sFt = courseDef.rollersStartFt + frac * rollerLenFt;
-    const xM = sFt * FT_TO_M;
-    const yTopM = getTrackElevationAtDistance(sFt, courseDef.id) * FT_TO_M;
-    const yBotM = yTopM - rollerThickM;
-
-    rollerPositions.push(xM, yTopM, -rollerHalfW); // 4*i + 0
-    rollerPositions.push(xM, yTopM, rollerHalfW);  // 4*i + 1
-    rollerPositions.push(xM, yBotM, -rollerHalfW); // 4*i + 2
-    rollerPositions.push(xM, yBotM, rollerHalfW);  // 4*i + 3
-  }
-
-  for (let i = 0; i < rollerSegments; i++) {
-    const b0 = i * 4;
-    const b1 = (i + 1) * 4;
-    // Top riding surface
-    rollerIndices.push(b0 + 0, b0 + 1, b1 + 0);
-    rollerIndices.push(b0 + 1, b1 + 1, b1 + 0);
-    // Bottom surface
-    rollerIndices.push(b0 + 2, b1 + 2, b0 + 3);
-    rollerIndices.push(b0 + 3, b1 + 2, b1 + 3);
-    // Left side wall (-Z)
-    rollerIndices.push(b0 + 0, b1 + 0, b0 + 2);
-    rollerIndices.push(b1 + 0, b1 + 2, b0 + 2);
-    // Right side wall (+Z)
-    rollerIndices.push(b0 + 1, b0 + 3, b1 + 1);
-    rollerIndices.push(b1 + 1, b0 + 3, b1 + 3);
-  }
-
-  const rollerGeo = new THREE.BufferGeometry();
-  rollerGeo.setAttribute('position', new THREE.Float32BufferAttribute(rollerPositions, 3));
-  rollerGeo.setIndex(rollerIndices);
-  rollerGeo.computeVertexNormals();
+  const rollerGeo = buildCurvedRibbonGeo(
+    courseDef.rollersStartFt,
+    courseDef.rollersEndFt,
+    rollerWidthM,
+    (sFt) => getTrackElevationAtDistance(sFt, courseDef.id) * FT_TO_M,
+    rollerThickM,
+    0
+  );
 
   const rollerMat = new THREE.MeshStandardMaterial({
     color: '#f59e0b',
@@ -487,11 +562,13 @@ export function buildCourseEnvironment(
   rollerMesh.castShadow = true;
   group.add(rollerMesh);
 
-  // Support pilings under Rhythm Rollers (dynamically matched to wave underside at each px)
+  // Support pilings under Rhythm Rollers (dynamically matched to wave underside & curve centerline)
   for (let px = rollerStartM + 3.0; px <= rollerEndM - 1.5; px += 6.5) {
-    const localRollerY = getTrackElevationAtDistance(px / FT_TO_M, courseDef.id) * FT_TO_M;
+    const sFt = px / FT_TO_M;
+    const localRollerY = getTrackElevationAtDistance(sFt, courseDef.id) * FT_TO_M;
+    const centerZM = getCourseCenterline(sFt, courseDef.id).zFt * FT_TO_M;
     for (const side of [-1, 1]) {
-      pilingPositions.push([px, localRollerY - rollerThickM - 2.20, side * 0.36]);
+      pilingPositions.push([px, localRollerY - rollerThickM - 2.20, centerZM + side * 0.36]);
     }
   }
 
@@ -554,7 +631,7 @@ export function buildCourseEnvironment(
   // Fixed beam from seesawEndFt to takeoffRampStartFt (covers post-seesaw and Sector 5 Water Cannon Gauntlet)
   addBeamSegmentFt(courseDef.seesawEndFt, courseDef.takeoffRampStartFt, 0.9144, beamMat);
 
-  // 6. Sector 5: Water Cannon Hazard Batteries
+  // 6. Sector 5: Water Cannon Hazard Batteries (aligned with curved centerline!)
   const waterCannonJets: THREE.Mesh[] = [];
   const extraWaterCannonJets: THREE.Mesh[] = [];
   const cannonNozzleGeo = new THREE.CylinderGeometry(0.14, 0.20, 0.70, 12);
@@ -569,13 +646,14 @@ export function buildCourseEnvironment(
 
   courseDef.waterCannonStationsFt.forEach((stationFt, stationIdx) => {
     const cannonXM = stationFt * FT_TO_M;
+    const cannonCenterZM = getCourseCenterline(stationFt, courseDef.id).zFt * FT_TO_M;
     for (const side of [-1, 1]) {
       const pedestal = new THREE.Mesh(cannonPedestalGeo, fulcrumSteelMat);
-      pedestal.position.set(cannonXM, 0.0, side * 2.85);
+      pedestal.position.set(cannonXM, 0.0, cannonCenterZM + side * 2.85);
       const turret = new THREE.Mesh(cannonTurretGeo, fulcrumSteelMat);
-      turret.position.set(cannonXM, 2.18, side * 2.85);
+      turret.position.set(cannonXM, 2.18, cannonCenterZM + side * 2.85);
       const nozzle = new THREE.Mesh(cannonNozzleGeo, cannonNozzleMat);
-      nozzle.position.set(cannonXM, 2.24, side * 2.68);
+      nozzle.position.set(cannonXM, 2.24, cannonCenterZM + side * 2.68);
       nozzle.rotation.x = -side * 1.45;
       group.add(pedestal, turret, nozzle);
 
@@ -585,7 +663,7 @@ export function buildCourseEnvironment(
         opacity: 0.65,
       });
       const jet = new THREE.Mesh(jetGeo, jetMat);
-      jet.position.set(cannonXM, 2.42, side * 1.12);
+      jet.position.set(cannonXM, 2.42, cannonCenterZM + side * 1.12);
       jet.rotation.x = -side * 1.45;
       group.add(jet);
       if (stationIdx === 0) {
@@ -595,6 +673,192 @@ export function buildCourseEnvironment(
       }
     }
   });
+
+  // 6B. Curve Chevron Warning Signs & 3D Course Obstacles
+  const chevronSignGeo = new THREE.BoxGeometry(0.08, 0.42, 0.48);
+  const chevronPostGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.15, 8);
+  const chevronYellowMat = new THREE.MeshStandardMaterial({
+    color: '#facc15',
+    roughness: 0.3,
+    metalness: 0.2,
+    emissive: '#ca8a04',
+    emissiveIntensity: 0.25,
+  });
+
+  for (const curve of courseDef.curves) {
+    const span = curve.endFt - curve.startFt;
+    for (const u of [0.22, 0.5, 0.78]) {
+      const sFt = curve.startFt + u * span;
+      const cl = getCourseCenterline(sFt, courseDef.id);
+      if (Math.abs(cl.zFt) < 1.0 && Math.abs(cl.dzDs) < 0.02) continue;
+      const outerSide = cl.zFt >= 0 ? 1 : -1;
+      const signXM = sFt * FT_TO_M;
+      const signYM = getTrackElevationAtDistance(sFt, courseDef.id) * FT_TO_M;
+      const signZM = cl.zFt * FT_TO_M + outerSide * 0.72;
+
+      const post = new THREE.Mesh(chevronPostGeo, fulcrumSteelMat);
+      post.position.set(signXM, signYM + 0.42, signZM);
+      const board = new THREE.Mesh(chevronSignGeo, chevronYellowMat);
+      board.position.set(signXM, signYM + 0.88, signZM);
+      board.rotation.y = -cl.headingRad;
+      group.add(post, board);
+    }
+  }
+
+  const swingingPendulums: { buoyPivot: THREE.Group; obs: TandemCourseObstacleDef }[] = [];
+  const windFlags: THREE.Mesh[] = [];
+
+  const bollardPostGeo = new THREE.CylinderGeometry(0.075, 0.09, 0.78, 12);
+  const bollardBaseGeo = new THREE.BoxGeometry(0.32, 0.16, 0.28);
+  const bollardBeaconGeo = new THREE.SphereGeometry(0.085, 10, 10);
+  const beaconMat = new THREE.MeshBasicMaterial({ color: '#facc15' });
+  const whiteStripeMat = new THREE.MeshStandardMaterial({
+    color: '#f8fafc',
+    roughness: 0.35,
+    metalness: 0.15,
+  });
+  const foamSlickMat = new THREE.MeshStandardMaterial({
+    color: '#67e8f9',
+    emissive: '#0891b2',
+    emissiveIntensity: 0.35,
+    roughness: 0.12,
+    metalness: 0.25,
+    transparent: true,
+    opacity: 0.78,
+    side: THREE.DoubleSide,
+  });
+  const bubbleGeo = new THREE.SphereGeometry(0.06, 8, 8);
+  const boostPadMat = new THREE.MeshBasicMaterial({
+    color: '#00f5d4',
+    side: THREE.DoubleSide,
+  });
+  const windFlagGeo = new THREE.ConeGeometry(0.18, 0.75, 10);
+  windFlagGeo.rotateZ(-Math.PI / 2);
+  const windFlagMat = new THREE.MeshStandardMaterial({
+    color: '#f97316',
+    roughness: 0.4,
+    emissive: '#ea580c',
+    emissiveIntensity: 0.2,
+  });
+
+  for (const obs of courseDef.obstacles) {
+    const obsXM = obs.distanceFt * FT_TO_M;
+    const cl = getCourseCenterline(obs.distanceFt, courseDef.id);
+    const centerZM = cl.zFt * FT_TO_M;
+    const deckYM = getTrackElevationAtDistance(obs.distanceFt, courseDef.id) * FT_TO_M;
+
+    if (obs.type === 'chicane_bollard') {
+      const bollardGroup = new THREE.Group();
+      const latZM = centerZM + obs.lateralCenterFt * FT_TO_M;
+      bollardGroup.position.set(obsXM, deckYM, latZM);
+      bollardGroup.rotation.y = -cl.headingRad;
+
+      const base = new THREE.Mesh(bollardBaseGeo, redBullRedMat);
+      base.position.set(0, 0.08, 0);
+      const post = new THREE.Mesh(bollardPostGeo, redBullRedMat);
+      post.position.set(0, 0.42, 0);
+      const band = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.082, 0.085, 0.22, 12),
+        whiteStripeMat
+      );
+      band.position.set(0, 0.46, 0);
+      const beacon = new THREE.Mesh(bollardBeaconGeo, beaconMat);
+      beacon.position.set(0, 0.85, 0);
+
+      bollardGroup.add(base, post, band, beacon);
+      group.add(bollardGroup);
+    } else if (obs.type === 'foam_slick') {
+      const sStart = obs.distanceFt - obs.lengthFt * 0.5;
+      const sEnd = obs.distanceFt + obs.lengthFt * 0.5;
+      const slickGeo = buildCurvedRibbonGeo(
+        sStart,
+        sEnd,
+        0.78,
+        (sFt) => getTrackElevationAtDistance(sFt, courseDef.id) * FT_TO_M + 0.016,
+        0.012,
+        0
+      );
+      const slickMesh = new THREE.Mesh(slickGeo, foamSlickMat);
+      group.add(slickMesh);
+
+      for (let b = 0; b < 6; b++) {
+        const bsFt = sStart + ((b + 0.5) / 6) * obs.lengthFt;
+        const bCl = getCourseCenterline(bsFt, courseDef.id);
+        const bubble = new THREE.Mesh(bubbleGeo, whiteStripeMat);
+        const side = b % 2 === 0 ? -1 : 1;
+        bubble.position.set(
+          bsFt * FT_TO_M,
+          getTrackElevationAtDistance(bsFt, courseDef.id) * FT_TO_M + 0.04,
+          bCl.zFt * FT_TO_M + side * 0.32
+        );
+        group.add(bubble);
+      }
+    } else if (obs.type === 'swing_pendulum') {
+      const gantryGroup = new THREE.Group();
+      gantryGroup.position.set(obsXM, deckYM, centerZM);
+      gantryGroup.rotation.y = -cl.headingRad;
+
+      const legGeo = new THREE.CylinderGeometry(0.07, 0.09, 3.2, 10);
+      const legL = new THREE.Mesh(legGeo, fulcrumSteelMat);
+      legL.position.set(0, 1.5, -0.78);
+      const legR = new THREE.Mesh(legGeo, fulcrumSteelMat);
+      legR.position.set(0, 1.5, 0.78);
+      const topBar = new THREE.Mesh(
+        new THREE.BoxGeometry(0.18, 0.18, 1.75),
+        redBullBlueMat
+      );
+      topBar.position.set(0, 3.05, 0);
+      gantryGroup.add(legL, legR, topBar);
+
+      const buoyPivot = new THREE.Group();
+      buoyPivot.position.set(0, 3.0, 0);
+
+      const cable = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.02, 0.02, 2.2, 8),
+        fulcrumSteelMat
+      );
+      cable.position.set(0, -1.1, 0);
+      const buoyBall = new THREE.Mesh(
+        new THREE.SphereGeometry(0.24, 14, 14),
+        redBullRedMat
+      );
+      buoyBall.position.set(0, -2.22, 0);
+      const buoyRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.24, 0.045, 8, 16).rotateX(Math.PI / 2),
+        beaconMat
+      );
+      buoyRing.position.set(0, -2.22, 0);
+
+      buoyPivot.add(cable, buoyBall, buoyRing);
+      gantryGroup.add(buoyPivot);
+      group.add(gantryGroup);
+      swingingPendulums.push({ buoyPivot, obs });
+    } else if (obs.type === 'wind_gust') {
+      for (const side of [-1, 1]) {
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.045, 0.055, 2.4, 8),
+          fulcrumSteelMat
+        );
+        pole.position.set(obsXM, deckYM + 1.0, centerZM + side * 0.85);
+        const sock = new THREE.Mesh(windFlagGeo, windFlagMat);
+        sock.position.set(obsXM, deckYM + 2.1, centerZM + side * 0.85);
+        group.add(pole, sock);
+        windFlags.push(sock);
+      }
+    } else if (obs.type === 'boost_pad') {
+      const padGroup = new THREE.Group();
+      const latZM = centerZM + obs.lateralCenterFt * FT_TO_M;
+      padGroup.position.set(obsXM, deckYM + 0.015, latZM);
+      padGroup.rotation.y = -cl.headingRad;
+
+      const padStrip = new THREE.Mesh(
+        new THREE.BoxGeometry(obs.lengthFt * FT_TO_M, 0.016, obs.halfWidthFt * 2 * FT_TO_M),
+        boostPadMat
+      );
+      padGroup.add(padStrip);
+      group.add(padGroup);
+    }
+  }
 
   // 7. Sector 6: Continuous Takeoff Kicker Ramp & Gap Jump
   // Build a solid 3D wedge ramp from takeoffRampStartFt (8.0 ft) to gapStartFt (9.45 ft) matching getTrackElevationAtDistance!
@@ -691,12 +955,13 @@ export function buildCourseEnvironment(
   const markerFlagGeo = new THREE.BoxGeometry(0.55, 0.32, 0.04);
   for (let distFt = 100; distFt < courseDef.lengthFt; distFt += 100) {
     const mx = distFt * FT_TO_M;
+    const centerZM = getCourseCenterline(distFt, courseDef.id).zFt * FT_TO_M;
     const buoy = new THREE.Mesh(buoyGeo, redBullBlueMat);
-    buoy.position.set(mx, 0.06, -3.2);
+    buoy.position.set(mx, 0.06, centerZM - 3.2);
     const pole = new THREE.Mesh(markerPoleGeo, fulcrumSteelMat);
-    pole.position.set(mx, 1.3, -3.2);
+    pole.position.set(mx, 1.3, centerZM - 3.2);
     const flag = new THREE.Mesh(markerFlagGeo, distFt % 200 === 0 ? redBullRedMat : beamMat);
-    flag.position.set(mx + 0.25, 2.35, -3.2);
+    flag.position.set(mx + 0.25, 2.35, centerZM - 3.2);
     group.add(buoy, pole, flag);
   }
 
@@ -821,6 +1086,8 @@ export function buildCourseEnvironment(
     foamRings,
     confettiGroup,
     confettiParticles,
+    swingingPendulums,
+    windFlags,
   };
 }
 
@@ -965,6 +1232,12 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
     orbitStateRef.current.targetTheta = 0.55;
     orbitStateRef.current.targetPhi = 1.18;
     orbitStateRef.current.targetRadius = 3.5;
+  }, []);
+
+  const handleBehindRidersCamera = useCallback(() => {
+    orbitStateRef.current.targetTheta = -Math.PI / 2;
+    orbitStateRef.current.targetPhi = 1.15;
+    orbitStateRef.current.targetRadius = 3.4;
   }, []);
 
   // ==========================================================================
@@ -1180,6 +1453,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
     let lastSceneCourseId: TandemCourseId | null = null;
     let lastSnapBikeX = Number.NaN;
     let lastSnapBikeY = Number.NaN;
+    let shouldSnapCourseCamera = true;
 
     const waterSinX = new Float32Array(97);
     const tempWorkshopLook = new THREE.Vector3(0, 0.58, 0);
@@ -1241,6 +1515,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
             ambientLightRef.current.intensity = 0.78;
           }
         } else {
+          shouldSnapCourseCamera = true;
           const theme = course.courseDef.theme;
           bgColor.set(theme.skyHorizonHex);
           sceneFog.color.set(theme.fogHex);
@@ -1293,7 +1568,11 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         if (craft.root.parent !== bay.dynoPivotGroup) {
           bay.dynoPivotGroup.add(craft.root);
           craft.root.position.set(0, 0, 0);
+          craft.root.rotation.order = 'XYZ';
           craft.root.rotation.set(0, 0, 0);
+          if (craft.frontSteerNode) {
+            craft.frontSteerNode.rotation.y = 0;
+          }
         }
 
         // Smooth Spherical Orbit Camera Interpolation
@@ -1403,6 +1682,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
         if (craft.root.parent !== course.group) {
           course.group.add(craft.root);
+          shouldSnapCourseCamera = true;
         }
 
         const cDef = course.courseDef;
@@ -1414,6 +1694,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         const phase = s?.phase ?? 'hype';
         const isAirborne = Boolean((s as any)?.isAirborne);
         const verticalFt = (s as any)?.verticalHeightFt ?? getTrackElevationAtDistance(distFt, cDef.id);
+        const simTimeSec = s?.timeElapsedSec ?? elapsedSec;
 
         // 1. Animate Canal Water Surface Waves via separable 1D sinX (97 cols) + cosZ (49 rows) = 146 trig calls instead of 9,506!
         const waterPosAttr = course.waterMesh.geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -1432,7 +1713,9 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         }
         waterPosAttr.needsUpdate = true;
 
-        // 2. Compute Bike 3D World Coordinates along Active Course
+        // 2. Compute Bike 3D World Coordinates along Curving Course Centerline
+        const cl = getCourseCenterline(distFt, cDef.id);
+        const centerZM = cl.zFt * FT_TO_M;
         const bikeX = distFt * FT_TO_M;
         const currentSeesawAngle =
           s?.seesawAngles?.['seesaw_bridge_1'] ??
@@ -1445,7 +1728,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
             course.seesawPivotYM +
             (distFt - cDef.seesawFulcrumFt) * FT_TO_M * Math.sin(currentSeesawAngle);
         }
-        const bikeZ = latFt * FT_TO_M;
+        const bikeZ = centerZM + latFt * FT_TO_M;
 
         craft.root.position.set(bikeX, bikeY, bikeZ);
 
@@ -1469,8 +1752,10 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         }
 
         const latVelFps = (s as any)?.lateralVelocityFps || 0;
+        const steerYaw = THREE.MathUtils.clamp(latVelFps * 0.04, -0.22, 0.22);
+        craft.root.rotation.order = 'YXZ';
+        craft.root.rotation.y = -cl.headingRad - steerYaw;
         craft.root.rotation.x = rollRad;
-        craft.root.rotation.y = -THREE.MathUtils.clamp(latVelFps * 0.04, -0.18, 0.18);
         craft.root.rotation.z = pitchRad;
         if (craft.frontSteerNode) {
           craft.frontSteerNode.rotation.y = -THREE.MathUtils.clamp(latVelFps * 0.08, -0.28, 0.28);
@@ -1478,6 +1763,18 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
         // Dynamic Seesaw Bridge Reaction
         course.seesawPivotGroup.rotation.z = currentSeesawAngle;
+
+        // Animate Swinging Harbor Buoy Pendulum Obstacles & Wind Flags
+        for (let i = 0; i < course.swingingPendulums.length; i++) {
+          const p = course.swingingPendulums[i];
+          const pendLatFt = evaluatePendulumLateralOffsetFt(p.obs, simTimeSec);
+          const pendLatM = pendLatFt * FT_TO_M;
+          p.buoyPivot.rotation.x = -Math.asin(THREE.MathUtils.clamp(pendLatM / 2.22, -0.65, 0.65));
+        }
+        for (let i = 0; i < course.windFlags.length; i++) {
+          const flag = course.windFlags[i];
+          flag.rotation.y = Math.sin(elapsedSec * 9.0 + i) * 0.22;
+        }
 
         // Water Cannon Hazard Particle Streams
         const isNearAnyCannon = cDef.waterCannonStationsFt.some((st) => Math.abs(distFt - st) <= 5.0);
@@ -1567,15 +1864,34 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         // Update Bike IK & Wheel Rotation from live simState
         updateTandemAnimation(craft, s || null, dt);
 
-        // Dynamic Chase Camera & Sun Shadow Follow
-        const speedZoom = Math.min(2.2, speedMph * 0.06);
+        // Behind-the-Riders Third-Person Chase Camera & Sun Shadow Follow
+        const speedZoom = Math.min(1.8, speedMph * 0.05);
+        const camBackM = 4.35 + speedZoom * 0.75;
+        const camHeightM = Math.max(2.55, bikeY + 1.82 + speedZoom * 0.18);
+        const tangentAngle = cl.headingRad * 0.85;
+        const tx = Math.cos(tangentAngle);
+        const tz = Math.sin(tangentAngle);
+
         tempCamTargetPos.set(
-          bikeX - 4.8 - speedZoom,
-          Math.max(2.6, bikeY + 2.15 + speedZoom * 0.25),
-          bikeZ * 0.65 + 4.4 + speedZoom * 0.45
+          bikeX - tx * camBackM,
+          camHeightM,
+          centerZM + (bikeZ - centerZM) * 0.85 - tz * camBackM
         );
-        camera.position.lerp(tempCamTargetPos, Math.min(1, dt * 8.5));
-        tempCourseLook.set(bikeX + 2.4, Math.max(1.2, bikeY + 0.55), bikeZ * 0.5);
+
+        if (shouldSnapCourseCamera || (phase === 'hype' && distFt < 0.5)) {
+          camera.position.copy(tempCamTargetPos);
+          shouldSnapCourseCamera = false;
+        } else {
+          camera.position.lerp(tempCamTargetPos, Math.min(1, dt * 11.5));
+        }
+
+        const lookAheadFt = 26 + Math.min(18, speedMph * 0.65);
+        const aheadCl = getCourseCenterline(distFt + lookAheadFt, cDef.id);
+        const aheadXM = (distFt + lookAheadFt) * FT_TO_M;
+        const aheadZM = aheadCl.zFt * FT_TO_M + (bikeZ - centerZM) * 0.35;
+        const aheadYM = Math.max(1.2, bikeY + 0.68);
+
+        tempCourseLook.set(aheadXM, aheadYM, aheadZM);
         camera.lookAt(tempCourseLook);
 
         if (dirLightRef.current) {
@@ -1584,8 +1900,8 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
           if (snapBikeX !== lastSnapBikeX || snapBikeY !== lastSnapBikeY) {
             lastSnapBikeX = snapBikeX;
             lastSnapBikeY = snapBikeY;
-            dirLightRef.current.position.set(snapBikeX + 8, 18, 10);
-            dirLightRef.current.target.position.set(snapBikeX, snapBikeY, 0);
+            dirLightRef.current.position.set(snapBikeX + 8, 18, centerZM + 10);
+            dirLightRef.current.target.position.set(snapBikeX, snapBikeY, centerZM);
             dirLightRef.current.target.updateMatrixWorld();
           }
         }
@@ -1753,7 +2069,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
             pointerEvents: 'auto',
           }}
         >
-          {/* Top Action Pill: Dyno Toggle + Camera Reset */}
+          {/* Top Action Pill: Dyno Toggle + Camera Presets */}
           <div
             style={{
               display: 'flex',
@@ -1793,6 +2109,25 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
                 <span>{isDynoActive ? 'EXIT DYNO RIG' : 'TEST ON BALANCE DYNO'}</span>
               </button>
             )}
+
+            <button
+              type="button"
+              data-testid="behind-riders-camera-btn"
+              onClick={handleBehindRidersCamera}
+              title="Behind Riders Chase Camera View"
+              style={{
+                background: 'rgba(30, 41, 59, 0.8)',
+                color: '#38bdf8',
+                border: '1px solid rgba(56, 189, 248, 0.35)',
+                borderRadius: 999,
+                padding: '5px 11px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              🎯 BEHIND RIDERS
+            </button>
 
             <button
               type="button"

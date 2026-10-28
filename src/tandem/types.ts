@@ -216,6 +216,24 @@ export interface TandemSimState {
   accumulatorSec?: number;
   courseId?: string;
   courseLengthFt?: number;
+  /** Whether interactive course curve centrifugal forces & obstacle collisions are active */
+  enableCourseChallenges?: boolean;
+  /** Current track centerline tangent heading in radians */
+  curveHeadingRad?: number;
+  /** Current track signed curvature in rad/ft (+ = right turn, - = left turn) */
+  curvatureRadFt?: number;
+  /** Current turn direction indicator for HUD */
+  curveDirection?: 'left' | 'right' | 'straight';
+  /** True when tires are currently on a slippery foam/algae slick patch */
+  inFoamSlick?: boolean;
+  /** Active or upcoming course obstacle / curve warning message for HUD */
+  activeHazardWarning?: string | null;
+  /** Number of on-deck obstacles hit during current run */
+  obstacleHits?: number;
+  /** Number of turbo boost pads hit during current run */
+  boostPadsHit?: number;
+  /** Map of obstacle IDs already triggered during current run */
+  triggeredObstacles?: Record<string, boolean>;
 }
 
 export interface TandemScorecard {
