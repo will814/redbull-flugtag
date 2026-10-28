@@ -751,6 +751,7 @@ export const TandemGame: React.FC<TandemGameProps> = ({
           dynoActive={dynoActive}
           dynoTiltAngleDeg={dynoTiltAngleDeg}
           dynoSwayAuto={dynoSwayAuto}
+          paused={mode === 'scorecard'}
           simStateRef={simStateRef}
           bestDistanceFeet={effectiveBestDist}
           bestTimeSec={effectiveBestTime}

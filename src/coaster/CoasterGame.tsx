@@ -364,8 +364,8 @@ export const CoasterGame: React.FC<CoasterGameProps> = ({
   return (
     <div className="relative w-full h-screen overflow-hidden bg-slate-950">
       <CoasterCanvas3D
-        key={mode === 'ride' ? `ride_${rideRunId}` : 'builder'}
         mode={mode}
+        rideRunId={rideRunId}
         loadout={loadout}
         metrics={metrics}
         activeCategory={activeCategory}

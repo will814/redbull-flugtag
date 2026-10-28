@@ -69,6 +69,7 @@ export interface TandemCanvas3DProps {
   bestTimeSec?: number | null;
   onToggleDyno?: (active: boolean) => void;
   courseId?: TandemCourseId;
+  paused?: boolean;
 }
 
 const FT_TO_M = 0.3048;
@@ -87,6 +88,9 @@ export function disposeTandemSceneObjects(
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (mesh.isMesh) {
+      if ((mesh as THREE.InstancedMesh).isInstancedMesh) {
+        (mesh as THREE.InstancedMesh).dispose();
+      }
       if (mesh.geometry && (disposeCached || !mesh.geometry.userData?.cached)) {
         mesh.geometry.dispose();
       }
@@ -124,27 +128,23 @@ function buildWorkshopBayEnvironment(): WorkshopBayScene {
 
   // 1. Timber Pier Floor Planks
   const floorGeo = new THREE.BoxGeometry(10.0, 0.2, 8.0);
-  const floorMat = new THREE.MeshStandardMaterial({
+  const floorMat = new THREE.MeshLambertMaterial({
     color: '#1e293b',
-    roughness: 0.75,
-    metalness: 0.15,
   });
   const floorMesh = new THREE.Mesh(floorGeo, floorMat);
   floorMesh.position.set(0, -0.22, 0);
-  floorMesh.receiveShadow = true;
+  floorMesh.receiveShadow = false;
   group.add(floorMesh);
 
   // Decorative wooden deck slats
   const slatGeo = new THREE.BoxGeometry(0.32, 0.02, 6.4);
-  const slatMat = new THREE.MeshStandardMaterial({
+  const slatMat = new THREE.MeshLambertMaterial({
     color: '#334155',
-    roughness: 0.8,
-    metalness: 0.1,
   });
   for (let x = -4.2; x <= 4.2; x += 0.42) {
     const slat = new THREE.Mesh(slatGeo, slatMat);
     slat.position.set(x, -0.11, 0);
-    slat.receiveShadow = true;
+    slat.receiveShadow = false;
     group.add(slat);
   }
 
@@ -332,7 +332,7 @@ export function buildCourseEnvironment(
   });
   const waterMesh = new THREE.Mesh(waterGeo, waterMat);
   waterMesh.position.set(centerXM, 0, 0);
-  waterMesh.receiveShadow = true;
+  waterMesh.receiveShadow = false;
   group.add(waterMesh);
 
   // Deep ocean seabed plane underneath waterMesh so water never shows black void through transparency
@@ -372,6 +372,7 @@ export function buildCourseEnvironment(
   const edgeStripeMat = new THREE.MeshBasicMaterial({ color: '#ef4444' });
 
   const pilingGeo = new THREE.CylinderGeometry(0.12, 0.14, 4.4, 10);
+  const pilingPositions: Array<[number, number, number]> = [];
 
   // Helper to place a solid beam segment from startFt to endFt at elevation 8.0 ft
   const addBeamSegmentFt = (startFt: number, endFt: number, widthM = 0.9144, mat = beamMat) => {
@@ -385,7 +386,7 @@ export function buildCourseEnvironment(
     );
     segMesh.position.set(midXM, pierElevationM - deckHeightM * 0.5, 0);
     segMesh.receiveShadow = true;
-    segMesh.castShadow = true;
+    segMesh.castShadow = false;
     group.add(segMesh);
 
     // High-visibility safety edge stripes along narrow beams
@@ -403,9 +404,7 @@ export function buildCourseEnvironment(
     const endM = endFt * FT_TO_M;
     for (let px = startM + 2.0; px <= endM - 1.0; px += 7.5) {
       for (const side of [-1, 1]) {
-        const piling = new THREE.Mesh(pilingGeo, pilingMat);
-        piling.position.set(px, pierElevationM - deckHeightM - 2.20, side * (widthM * 0.42));
-        group.add(piling);
+        pilingPositions.push([px, pierElevationM - deckHeightM - 2.20, side * (widthM * 0.42)]);
       }
     }
   };
@@ -492,9 +491,7 @@ export function buildCourseEnvironment(
   for (let px = rollerStartM + 3.0; px <= rollerEndM - 1.5; px += 6.5) {
     const localRollerY = getTrackElevationAtDistance(px / FT_TO_M, courseDef.id) * FT_TO_M;
     for (const side of [-1, 1]) {
-      const piling = new THREE.Mesh(pilingGeo, pilingMat);
-      piling.position.set(px, localRollerY - rollerThickM - 2.20, side * 0.36);
-      group.add(piling);
+      pilingPositions.push([px, localRollerY - rollerThickM - 2.20, side * 0.36]);
     }
   }
 
@@ -650,9 +647,7 @@ export function buildCourseEnvironment(
   // Structural support pilings under the Takeoff Ramp lip
   for (const px of [rampStartM + 0.6, rampEndM - 0.35]) {
     for (const side of [-1, 1]) {
-      const piling = new THREE.Mesh(pilingGeo, pilingMat);
-      piling.position.set(px, rampYStartM - rampThickM - 2.20, side * (rampHalfWM * 0.78));
-      group.add(piling);
+      pilingPositions.push([px, rampYStartM - rampThickM - 2.20, side * (rampHalfWM * 0.78)]);
     }
   }
 
@@ -678,6 +673,18 @@ export function buildCourseEnvironment(
 
   // 8. Sector 7: Wide Finish Bell Platform (from finishDeckStartFt to finishBellFt + 12, zero Z-fighting!)
   addBeamSegmentFt(courseDef.finishDeckStartFt, courseDef.finishBellFt + 12, 2.44, redBullBlueMat);
+
+  if (pilingPositions.length > 0) {
+    const pilingInst = new THREE.InstancedMesh(pilingGeo, pilingMat, pilingPositions.length);
+    const pilingMat4 = new THREE.Matrix4();
+    for (let i = 0; i < pilingPositions.length; i++) {
+      const [px, py, pz] = pilingPositions[i];
+      pilingMat4.makeTranslation(px, py, pz);
+      pilingInst.setMatrixAt(i, pilingMat4);
+    }
+    pilingInst.instanceMatrix.needsUpdate = true;
+    group.add(pilingInst);
+  }
 
   // Distance Marker Buoys & Canal Flags every 100 FT along the pier
   const markerPoleGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.6, 8);
@@ -835,6 +842,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
   dynoSwayAuto: propDynoSwayAuto,
   onToggleDyno,
   courseId = DEFAULT_TANDEM_COURSE_ID,
+  paused = false,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -874,6 +882,18 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
   const courseIdRef = useRef<TandemCourseId>(courseId);
   courseIdRef.current = courseId;
+
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const loopControlRef = useRef<{ pause: () => void; resume: () => void } | null>(null);
+
+  useEffect(() => {
+    if (paused) {
+      loopControlRef.current?.pause();
+    } else {
+      loopControlRef.current?.resume();
+    }
+  }, [paused]);
 
   const isDynoRef = useRef(isDynoActive);
   isDynoRef.current = isDynoActive;
@@ -970,7 +990,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.12;
 
@@ -979,8 +999,10 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
     // Scene & Fog
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#0f172a');
-    scene.fog = new THREE.FogExp2('#0f172a', 0.015);
+    const bgColor = new THREE.Color('#0f172a');
+    const sceneFog = new THREE.FogExp2('#0f172a', 0.015);
+    scene.background = bgColor;
+    scene.fog = sceneFog;
     sceneRef.current = scene;
 
     // Camera
@@ -999,8 +1021,8 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
     const dirLight = new THREE.DirectionalLight('#fffbeb', 1.85);
     dirLight.position.set(8, 16, 10);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 1024;
-    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.mapSize.width = 512;
+    dirLight.shadow.mapSize.height = 512;
     dirLight.shadow.camera.near = 0.5;
     dirLight.shadow.camera.far = 65;
     const d = 9;
@@ -1009,6 +1031,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
     dirLight.shadow.camera.top = d;
     dirLight.shadow.camera.bottom = -d;
     scene.add(dirLight);
+    scene.add(dirLight.target);
     dirLightRef.current = dirLight;
 
     // Build Environments
@@ -1046,6 +1069,14 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
       orbitStateRef.current.lastY = e.clientY;
     };
 
+    let currentHoveredSocket: TandemCategory | null = null;
+    const setHoveredSocketIfChanged = (next: TandemCategory | null) => {
+      if (currentHoveredSocket !== next) {
+        currentHoveredSocket = next;
+        setHoveredSocket(next);
+      }
+    };
+
     const onPointerMove = (e: PointerEvent) => {
       if (modeRef.current !== 'workshop') return;
 
@@ -1063,6 +1094,11 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         return;
       }
 
+      if (e.target !== renderer.domElement) {
+        setHoveredSocketIfChanged(null);
+        return;
+      }
+
       if (bikeGroupsRef.current && !isDynoRef.current) {
         const coords = getCanvasRelativeCoords(e.clientX, e.clientY);
         pointerNdc.set(coords.x, coords.y);
@@ -1070,15 +1106,21 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         const hits = raycaster.intersectObjects(bikeGroupsRef.current.socketMarkerList, false);
         if (hits.length > 0) {
           const cat = hits[0].object.userData?.category as TandemCategory | undefined;
-          setHoveredSocket(cat || null);
-          renderer.domElement.style.cursor = 'pointer';
+          setHoveredSocketIfChanged(cat || null);
+          if (renderer.domElement.style.cursor !== 'pointer') {
+            renderer.domElement.style.cursor = 'pointer';
+          }
         } else {
-          setHoveredSocket(null);
-          renderer.domElement.style.cursor = 'grab';
+          setHoveredSocketIfChanged(null);
+          if (renderer.domElement.style.cursor !== 'grab') {
+            renderer.domElement.style.cursor = 'grab';
+          }
         }
       } else {
-        setHoveredSocket(null);
-        renderer.domElement.style.cursor = 'grab';
+        setHoveredSocketIfChanged(null);
+        if (renderer.domElement.style.cursor !== 'grab') {
+          renderer.domElement.style.cursor = 'grab';
+        }
       }
     };
 
@@ -1090,7 +1132,7 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
       );
       orbitStateRef.current.isDragging = false;
 
-      if (moveDist < 6 && bikeGroupsRef.current && !isDynoRef.current) {
+      if (moveDist < 6 && bikeGroupsRef.current && !isDynoRef.current && e.target === renderer.domElement) {
         const coords = getCanvasRelativeCoords(e.clientX, e.clientY);
         pointerNdc.set(coords.x, coords.y);
         raycaster.setFromCamera(pointerNdc, camera);
@@ -1136,8 +1178,20 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
     let elapsedSec = 0;
     let lastSceneMode: 'workshop' | 'course' | null = null;
     let lastSceneCourseId: TandemCourseId | null = null;
+    let lastSnapBikeX = Number.NaN;
+    let lastSnapBikeY = Number.NaN;
+
+    const waterSinX = new Float32Array(97);
+    const tempWorkshopLook = new THREE.Vector3(0, 0.58, 0);
+    const tempCamTargetPos = new THREE.Vector3();
+    const tempCourseLook = new THREE.Vector3();
+    const tempComColor = new THREE.Color();
 
     const animate = (nowMs: number) => {
+      if (pausedRef.current) {
+        animFrameId = 0;
+        return;
+      }
       animFrameId = requestAnimationFrame(animate);
       const dt = Math.min(0.05, Math.max(0.001, (nowMs - lastTimeMs) / 1000));
       lastTimeMs = nowMs;
@@ -1171,19 +1225,26 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         lastSceneMode = currentMode;
         lastSceneCourseId = currentCourseId;
         if (currentMode === 'workshop') {
-          scene.background = new THREE.Color('#0f172a');
-          scene.fog = new THREE.FogExp2('#0f172a', 0.015);
+          bgColor.set('#0f172a');
+          sceneFog.color.set('#0f172a');
+          sceneFog.density = 0.015;
           if (dirLightRef.current) {
             dirLightRef.current.color.set('#fffbeb');
             dirLightRef.current.intensity = 1.85;
+            dirLightRef.current.position.set(8, 16, 10);
+            dirLightRef.current.target.position.set(0, 0, 0);
+            dirLightRef.current.target.updateMatrixWorld();
+            lastSnapBikeX = Number.NaN;
+            lastSnapBikeY = Number.NaN;
           }
           if (ambientLightRef.current) {
             ambientLightRef.current.intensity = 0.78;
           }
         } else {
           const theme = course.courseDef.theme;
-          scene.background = new THREE.Color(theme.skyHorizonHex);
-          scene.fog = new THREE.FogExp2(theme.fogHex, theme.fogDensity);
+          bgColor.set(theme.skyHorizonHex);
+          sceneFog.color.set(theme.fogHex);
+          sceneFog.density = theme.fogDensity;
           if (dirLightRef.current) {
             dirLightRef.current.color.set(theme.sunColorHex);
             dirLightRef.current.intensity = theme.sunIntensity;
@@ -1241,11 +1302,10 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         orb.phi += (orb.targetPhi - orb.phi) * Math.min(1, dt * 10);
         orb.radius += (orb.targetRadius - orb.radius) * Math.min(1, dt * 10);
 
-        const targetLook = new THREE.Vector3(0, 0.58, 0);
-        camera.position.x = targetLook.x + orb.radius * Math.sin(orb.phi) * Math.sin(orb.theta);
-        camera.position.y = targetLook.y + orb.radius * Math.cos(orb.phi);
-        camera.position.z = targetLook.z + orb.radius * Math.sin(orb.phi) * Math.cos(orb.theta);
-        camera.lookAt(targetLook);
+        camera.position.x = tempWorkshopLook.x + orb.radius * Math.sin(orb.phi) * Math.sin(orb.theta);
+        camera.position.y = tempWorkshopLook.y + orb.radius * Math.cos(orb.phi);
+        camera.position.z = tempWorkshopLook.z + orb.radius * Math.sin(orb.phi) * Math.cos(orb.theta);
+        camera.lookAt(tempWorkshopLook);
 
         const isDyno = isDynoRef.current;
         const hasManualTilt = Math.abs(dynoTiltDegRef.current) > 0.05;
@@ -1289,7 +1349,8 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
           const comColor = isExceeding ? 0xef4444 : isWarning ? 0xf97316 : 0x22c55e;
           (bay.comSphere.material as THREE.MeshBasicMaterial).color.setHex(comColor);
-          bay.comArrow.setColor(new THREE.Color(comColor));
+          tempComColor.setHex(comColor);
+          bay.comArrow.setColor(tempComColor);
 
           // Bilateral reset + active side outrigger contact ring illumination
           const outriggerW = curMetrics.stats.outriggerWidthFt;
@@ -1354,15 +1415,20 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
         const isAirborne = Boolean((s as any)?.isAirborne);
         const verticalFt = (s as any)?.verticalHeightFt ?? getTrackElevationAtDistance(distFt, cDef.id);
 
-        // 1. Animate Canal Water Surface Waves (modifies Y coordinate arr[i*3 + 1], preserving Z arr[i*3 + 2]!)
+        // 1. Animate Canal Water Surface Waves via separable 1D sinX (97 cols) + cosZ (49 rows) = 146 trig calls instead of 9,506!
         const waterPosAttr = course.waterMesh.geometry.getAttribute('position') as THREE.BufferAttribute;
         const arr = waterPosAttr.array as Float32Array;
-        for (let i = 0; i < waterPosAttr.count; i++) {
-          const vx = arr[i * 3];
-          const vz = arr[i * 3 + 2];
-          arr[i * 3 + 1] =
-            Math.sin(vx * 0.22 + elapsedSec * 2.4) * 0.08 +
-            Math.cos(vz * 0.28 + elapsedSec * 1.9) * 0.06;
+        const phaseX = elapsedSec * 2.4;
+        const phaseZ = elapsedSec * 1.9;
+        for (let ix = 0; ix < 97; ix++) {
+          waterSinX[ix] = Math.sin(arr[ix * 3] * 0.22 + phaseX) * 0.08;
+        }
+        for (let iz = 0; iz < 49; iz++) {
+          const rowBase = iz * 97;
+          const cosZ = Math.cos(arr[rowBase * 3 + 2] * 0.28 + phaseZ) * 0.06;
+          for (let ix = 0; ix < 97; ix++) {
+            arr[(rowBase + ix) * 3 + 1] = waterSinX[ix] + cosZ;
+          }
         }
         waterPosAttr.needsUpdate = true;
 
@@ -1415,12 +1481,18 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
         // Water Cannon Hazard Particle Streams
         const isNearAnyCannon = cDef.waterCannonStationsFt.some((st) => Math.abs(distFt - st) <= 5.0);
-        const allJets = [...course.waterCannonJets, ...course.extraWaterCannonJets];
-        allJets.forEach((jet) => {
-          const pulse = isNearAnyCannon ? 1.0 + Math.sin(elapsedSec * 24) * 0.25 : 0.82;
-          jet.scale.set(pulse, 1, pulse);
-          (jet.material as THREE.MeshBasicMaterial).opacity = isNearAnyCannon ? 0.92 : 0.62;
-        });
+        const jetPulse = isNearAnyCannon ? 1.0 + Math.sin(elapsedSec * 24) * 0.25 : 0.82;
+        const jetOpacity = isNearAnyCannon ? 0.92 : 0.62;
+        for (let i = 0; i < course.waterCannonJets.length; i++) {
+          const jet = course.waterCannonJets[i];
+          jet.scale.set(jetPulse, 1, jetPulse);
+          (jet.material as THREE.MeshBasicMaterial).opacity = jetOpacity;
+        }
+        for (let i = 0; i < course.extraWaterCannonJets.length; i++) {
+          const jet = course.extraWaterCannonJets[i];
+          jet.scale.set(jetPulse, 1, jetPulse);
+          (jet.material as THREE.MeshBasicMaterial).opacity = jetOpacity;
+        }
 
         // Golden Canal Finish Bell & Celebration
         const finishBellFt = s?.courseLengthFt || cDef.finishBellFt;
@@ -1497,34 +1569,62 @@ export const TandemCanvas3D: React.FC<TandemCanvas3DProps> = ({
 
         // Dynamic Chase Camera & Sun Shadow Follow
         const speedZoom = Math.min(2.2, speedMph * 0.06);
-        const camTargetPos = new THREE.Vector3(
+        tempCamTargetPos.set(
           bikeX - 4.8 - speedZoom,
           Math.max(2.6, bikeY + 2.15 + speedZoom * 0.25),
           bikeZ * 0.65 + 4.4 + speedZoom * 0.45
         );
-        camera.position.lerp(camTargetPos, Math.min(1, dt * 8.5));
-        camera.lookAt(new THREE.Vector3(bikeX + 2.4, Math.max(1.2, bikeY + 0.55), bikeZ * 0.5));
+        camera.position.lerp(tempCamTargetPos, Math.min(1, dt * 8.5));
+        tempCourseLook.set(bikeX + 2.4, Math.max(1.2, bikeY + 0.55), bikeZ * 0.5);
+        camera.lookAt(tempCourseLook);
 
         if (dirLightRef.current) {
-          dirLightRef.current.position.set(bikeX + 8, 18, 10);
-          dirLightRef.current.target.position.set(bikeX, bikeY, 0);
-          dirLightRef.current.target.updateMatrixWorld();
+          const snapBikeX = Math.round(bikeX * 2) * 0.5;
+          const snapBikeY = Math.round(bikeY * 2) * 0.5;
+          if (snapBikeX !== lastSnapBikeX || snapBikeY !== lastSnapBikeY) {
+            lastSnapBikeX = snapBikeX;
+            lastSnapBikeY = snapBikeY;
+            dirLightRef.current.position.set(snapBikeX + 8, 18, 10);
+            dirLightRef.current.target.position.set(snapBikeX, snapBikeY, 0);
+            dirLightRef.current.target.updateMatrixWorld();
+          }
         }
       }
 
       renderer.render(scene, camera);
     };
 
-    animFrameId = requestAnimationFrame(animate);
+    loopControlRef.current = {
+      pause: () => {
+        if (animFrameId !== 0) {
+          cancelAnimationFrame(animFrameId);
+          animFrameId = 0;
+        }
+      },
+      resume: () => {
+        if (animFrameId === 0 && !pausedRef.current) {
+          lastTimeMs = performance.now();
+          animFrameId = requestAnimationFrame(animate);
+        }
+      },
+    };
+
+    if (!pausedRef.current) {
+      animFrameId = requestAnimationFrame(animate);
+    }
 
     return () => {
-      cancelAnimationFrame(animFrameId);
+      loopControlRef.current = null;
+      if (animFrameId !== 0) {
+        cancelAnimationFrame(animFrameId);
+      }
       domEl.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       domEl.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', onResize);
 
+      dirLight.shadow.map?.dispose();
       disposeTandemSceneObjects(scene, false);
       renderer.dispose();
     };

@@ -94,6 +94,9 @@ export function disposeSoapboxObject3D(root: THREE.Object3D, disposeCached = fal
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if ((mesh as THREE.InstancedMesh).isInstancedMesh) {
+      (mesh as THREE.InstancedMesh).dispose();
+    }
     if (
       mesh.geometry &&
       !mesh.geometry.userData?.cached &&
@@ -263,7 +266,7 @@ export function buildSoapbox3D(loadout: SoapboxLoadout): Soapbox3DGroups {
     }
     const r = mesh.geometry.boundingSphere?.radius ?? 0.5;
     mesh.castShadow = r >= 0.16;
-    mesh.receiveShadow = r >= 0.4;
+    mesh.receiveShadow = false;
   });
 
   return {

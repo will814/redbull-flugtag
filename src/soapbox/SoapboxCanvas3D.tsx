@@ -204,9 +204,15 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
     curbVertexCount += 4;
   };
 
+  const roadSamples = new Array<ReturnType<typeof getSoapboxRoadState>>(steps + 1);
   for (let i = 0; i <= steps; i++) {
     const s = sMin + (i / steps) * (sMax - sMin);
-    const road = getSoapboxRoadState(s, course.id);
+    roadSamples[i] = getSoapboxRoadState(s, course.id);
+  }
+
+  for (let i = 0; i <= steps; i++) {
+    const s = sMin + (i / steps) * (sMax - sMin);
+    const road = roadSamples[i];
 
     const hillWaveL = Math.sin(s * 0.018 + 0.7) * 9.0 + Math.cos(s * 0.043) * 4.5;
     const hillWaveR = Math.cos(s * 0.016 - 0.4) * 9.5 + Math.sin(s * 0.039) * 4.5;
@@ -263,8 +269,7 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
         roadIndices.push(rRowA + c + 1, rRowB + c + 1, rRowB + c);
       }
 
-      const sNext = sMin + ((i + 1) / steps) * (sMax - sMin);
-      const roadNext = getSoapboxRoadState(sNext, course.id);
+      const roadNext = roadSamples[i + 1];
       const isPrimaryCurb = Math.floor((s + 100) / 8) % 2 === 0;
       const curbCol = isPrimaryCurb ? cCurbPrimary : cCurbSecondary;
 
@@ -326,14 +331,11 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
   terrainGeo.computeVertexNormals();
   const terrainMesh = new THREE.Mesh(
     terrainGeo,
-    new THREE.MeshStandardMaterial({
+    new THREE.MeshLambertMaterial({
       vertexColors: true,
-      roughness: 0.88,
-      metalness: 0.02,
-      side: THREE.DoubleSide,
     })
   );
-  terrainMesh.receiveShadow = true;
+  terrainMesh.receiveShadow = false;
   group.add(terrainMesh);
 
   const roadGeo = new THREE.BufferGeometry();
@@ -347,7 +349,6 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
       vertexColors: true,
       roughness: 0.72,
       metalness: 0.08,
-      side: THREE.DoubleSide,
     })
   );
   roadMesh.receiveShadow = true;
@@ -364,7 +365,6 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
       vertexColors: true,
       roughness: 0.45,
       metalness: 0.08,
-      side: THREE.DoubleSide,
     })
   );
   curbMesh.receiveShadow = true;
@@ -373,19 +373,23 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
   // Deep valley base plane beneath the entire course so sky never shows through from below
   const valleyFloor = new THREE.Mesh(
     new THREE.PlaneGeometry((course.lengthFeet + 1400) * UNITS_PER_FOOT, 920),
-    makeSoapboxMat(theme.grassAltColor, 0.92, 0.02)
+    new THREE.MeshLambertMaterial({ color: theme.grassAltColor })
   );
   valleyFloor.rotation.x = -Math.PI / 2;
   valleyFloor.position.set((course.lengthFeet * 0.5) * UNITS_PER_FOOT, -18, 0);
-  valleyFloor.receiveShadow = true;
+  valleyFloor.receiveShadow = false;
   group.add(valleyFloor);
 
-  // Dashed yellow centerline & crisp white shoulder stripes along the course
+  // Dashed yellow centerline & crisp white shoulder stripes along the course (InstancedMesh)
   const dashGeo = new THREE.BoxGeometry(1.15, 0.026, 0.13);
   const dashMat = makeSoapboxMat('#facc15', 0.35);
   const edgeStripeGeo = new THREE.BoxGeometry(2.2, 0.024, 0.09);
   const edgeStripeMat = makeSoapboxMat('#f8fafc', 0.4);
   const courseObsForDashes = course.generateObstacles();
+
+  const dashMatrices: THREE.Matrix4[] = [];
+  const edgeMatrices: THREE.Matrix4[] = [];
+  const tempStripeObj = new THREE.Object3D();
 
   for (let s = 10; s < course.lengthFeet - 8; s += 20) {
     const r = getSoapboxRoadState(s, course.id);
@@ -400,25 +404,36 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
     );
 
     if (!overlapsCenterObstacle) {
-      const dash = new THREE.Mesh(dashGeo, dashMat);
-      dash.position.set(
+      tempStripeObj.position.set(
         r.xFeet * UNITS_PER_FOOT,
         r.yFeet * UNITS_PER_FOOT + 0.022,
         r.zFeet * UNITS_PER_FOOT
       );
-      dash.rotation.y = -r.headingRad;
-      dash.rotation.z = -r.slopeRad;
-      group.add(dash);
+      tempStripeObj.rotation.set(0, -r.headingRad, -r.slopeRad);
+      tempStripeObj.updateMatrix();
+      dashMatrices.push(tempStripeObj.matrix.clone());
     }
 
     [-12.2, 12.2].forEach((latEdge) => {
       const ePos = courseToWorldUnits(s, latEdge, 0.06, undefined, course.id);
-      const edgeMesh = new THREE.Mesh(edgeStripeGeo, edgeStripeMat);
-      edgeMesh.position.copy(ePos);
-      edgeMesh.rotation.y = -r.headingRad;
-      edgeMesh.rotation.z = -r.slopeRad;
-      group.add(edgeMesh);
+      tempStripeObj.position.copy(ePos);
+      tempStripeObj.rotation.set(0, -r.headingRad, -r.slopeRad);
+      tempStripeObj.updateMatrix();
+      edgeMatrices.push(tempStripeObj.matrix.clone());
     });
+  }
+
+  if (dashMatrices.length > 0) {
+    const dashInst = new THREE.InstancedMesh(dashGeo, dashMat, dashMatrices.length);
+    for (let i = 0; i < dashMatrices.length; i++) dashInst.setMatrixAt(i, dashMatrices[i]);
+    dashInst.instanceMatrix.needsUpdate = true;
+    group.add(dashInst);
+  }
+  if (edgeMatrices.length > 0) {
+    const edgeInst = new THREE.InstancedMesh(edgeStripeGeo, edgeStripeMat, edgeMatrices.length);
+    for (let i = 0; i < edgeMatrices.length; i++) edgeInst.setMatrixAt(i, edgeMatrices[i]);
+    edgeInst.instanceMatrix.needsUpdate = true;
+    group.add(edgeInst);
   }
 
   // Glowing Green Push-Bar Shove Zone Chevron Carpet on Starter Chute (-14.0..0 ft), strictly inside the road shoulders
@@ -481,39 +496,44 @@ function buildCourseRoadRibbon(course: SoapboxCourseDef): THREE.Group {
 function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): void {
   const theme = course.visualTheme;
   const sMax = course.lengthFeet - 20;
+  const tempObj = new THREE.Object3D();
 
-  // 1. Fluffy 3D Sky Clouds drifting above the mountain valley
+  // 1. Fluffy 3D Sky Clouds drifting above the mountain valley (InstancedMesh)
   const cloudMat = makeSoapboxMat('#ffffff', 0.85, 0.02);
   const puffGeo = new THREE.SphereGeometry(2.6, 10, 10);
   const cloudCount = Math.max(24, Math.round(course.lengthFeet / 85));
+  const puffOffsets = [
+    [0, 0, 0, 1.35],
+    [2.1, -0.3, 0.6, 1.0],
+    [-2.0, -0.4, -0.5, 1.05],
+    [0.8, 0.7, -0.4, 0.9],
+  ] as const;
+  const cloudInst = new THREE.InstancedMesh(puffGeo, cloudMat, cloudCount * puffOffsets.length);
+  let puffIdx = 0;
   for (let i = 0; i < cloudCount; i++) {
-    const cloudGroup = new THREE.Group();
     const sCloud = -60 + i * ((course.lengthFeet + 180) / Math.max(1, cloudCount - 1));
     const latCloud = (i % 2 === 0 ? 1 : -1) * (65 + ((i * 23) % 75));
     const roadAtCloud = getSoapboxRoadState(
       Math.max(0, Math.min(course.lengthFeet, sCloud)),
       course.id
     );
-    cloudGroup.position.set(
-      sCloud * UNITS_PER_FOOT,
-      roadAtCloud.yFeet * UNITS_PER_FOOT + 24 + (i % 4) * 4.5,
-      (roadAtCloud.zFeet + latCloud) * UNITS_PER_FOOT
-    );
-    [
-      [0, 0, 0, 1.35],
-      [2.1, -0.3, 0.6, 1.0],
-      [-2.0, -0.4, -0.5, 1.05],
-      [0.8, 0.7, -0.4, 0.9],
-    ].forEach(([cx, cy, cz, sc]) => {
-      const puff = new THREE.Mesh(puffGeo, cloudMat);
-      puff.position.set(cx, cy, cz);
-      puff.scale.set(sc * 1.4, sc * 0.72, sc);
-      cloudGroup.add(puff);
-    });
-    raceEnv.add(cloudGroup);
-  }
+    const gx = sCloud * UNITS_PER_FOOT;
+    const gy = roadAtCloud.yFeet * UNITS_PER_FOOT + 24 + (i % 4) * 4.5;
+    const gz = (roadAtCloud.zFeet + latCloud) * UNITS_PER_FOOT;
 
-  // 2. Distant Horizon Mountain Peaks framing the valley
+    for (let p = 0; p < puffOffsets.length; p++) {
+      const [cx, cy, cz, sc] = puffOffsets[p];
+      tempObj.position.set(gx + cx, gy + cy, gz + cz);
+      tempObj.rotation.set(0, 0, 0);
+      tempObj.scale.set(sc * 1.4, sc * 0.72, sc);
+      tempObj.updateMatrix();
+      cloudInst.setMatrixAt(puffIdx++, tempObj.matrix);
+    }
+  }
+  cloudInst.instanceMatrix.needsUpdate = true;
+  raceEnv.add(cloudInst);
+
+  // 2. Distant Horizon Mountain Peaks framing the valley (InstancedMesh)
   const peakColor =
     theme.sceneryType === 'desert_canyon'
       ? '#9a3412'
@@ -528,6 +548,9 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
       : '#f8fafc';
   const peakMat = makeSoapboxMat(peakColor, 0.88, 0.05);
   const capMat = makeSoapboxMat(snowCapColor, 0.65, 0.08);
+  const unitConeGeo = new THREE.ConeGeometry(1, 1, 7);
+  const mtnBaseMatrices: THREE.Matrix4[] = [];
+  const mtnCapMatrices: THREE.Matrix4[] = [];
 
   for (let s = -80; s <= course.lengthFeet + 160; s += 110) {
     [-1, 1].forEach((side, sIdx) => {
@@ -541,23 +564,31 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
       );
       const h = 22 + ((Math.abs(s) * 13) % 18);
       const r = 14 + ((Math.abs(s) * 9) % 10);
-      const mtnGroup = new THREE.Group();
-      mtnGroup.position.set(s * UNITS_PER_FOOT, pos.y, pos.z);
+      const mx = s * UNITS_PER_FOOT;
 
-      const baseCone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7), peakMat);
-      baseCone.position.y = h * 0.5;
-      mtnGroup.add(baseCone);
+      tempObj.position.set(mx, pos.y + h * 0.5, pos.z);
+      tempObj.rotation.set(0, 0, 0);
+      tempObj.scale.set(r, h, r);
+      tempObj.updateMatrix();
+      mtnBaseMatrices.push(tempObj.matrix.clone());
 
       // Proud radius (r * 0.445 vs baseCone's r * 0.42 at y = 0.79h) prevents coplanar Z-fighting stripes
-      const capCone = new THREE.Mesh(
-        new THREE.ConeGeometry(r * 0.445, h * 0.42, 7),
-        capMat
-      );
-      capCone.position.y = h * 0.795;
-      mtnGroup.add(capCone);
-
-      raceEnv.add(mtnGroup);
+      tempObj.position.set(mx, pos.y + h * 0.795, pos.z);
+      tempObj.scale.set(r * 0.445, h * 0.42, r * 0.445);
+      tempObj.updateMatrix();
+      mtnCapMatrices.push(tempObj.matrix.clone());
     });
+  }
+  if (mtnBaseMatrices.length > 0) {
+    const baseInst = new THREE.InstancedMesh(unitConeGeo, peakMat, mtnBaseMatrices.length);
+    const capInst = new THREE.InstancedMesh(unitConeGeo, capMat, mtnCapMatrices.length);
+    for (let i = 0; i < mtnBaseMatrices.length; i++) {
+      baseInst.setMatrixAt(i, mtnBaseMatrices[i]);
+      capInst.setMatrixAt(i, mtnCapMatrices[i]);
+    }
+    baseInst.instanceMatrix.needsUpdate = true;
+    capInst.instanceMatrix.needsUpdate = true;
+    raceEnv.add(baseInst, capInst);
   }
 
   // 3. Roadside Spectator Grandstands & Red Bull Canopies at Key Action Zones
@@ -575,6 +606,19 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
   const standPlinthMat = makeSoapboxMat('#334155', 0.75, 0.15);
   const canopyMat = makeSoapboxMat('#dc2626', 0.35, 0.15);
   const crowdColors = ['#facc15', '#38bdf8', '#f43f5e', '#4ade80', '#a855f7', '#fb923c'];
+  const fanGeo = new THREE.BoxGeometry(0.24, 0.46, 0.24);
+  const fanBaseMat = new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.08 });
+  const totalFans = standLocations.length * 3 * 9;
+  const fanInst = new THREE.InstancedMesh(fanGeo, fanBaseMat, totalFans);
+  let fanIdx = 0;
+  const standMatrix = new THREE.Matrix4();
+  const localFanMatrix = new THREE.Matrix4();
+  const worldFanMatrix = new THREE.Matrix4();
+  const tempColor = new THREE.Color();
+
+  const plinthGeo = new THREE.BoxGeometry(5.8, 1.8, 2.3);
+  const rearPostGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.6, 8);
+  const roofGeoStand = new THREE.BoxGeometry(6.0, 0.18, 2.4);
 
   standLocations.forEach(({ s, side }, idx) => {
     const r = getSoapboxRoadState(s, course.id);
@@ -586,9 +630,11 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
     // Keep stand aligned with road tangent; `side * tier * 0.62` steps tiers outward on both sides so stands always face the track!
     stand.rotation.y = -r.headingRad;
     stand.rotation.z = -r.slopeRad;
+    stand.updateMatrix();
+    standMatrix.copy(stand.matrix);
 
     // Grounded concrete foundation plinth extending into the sloped bank so bleachers never float
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(5.8, 1.8, 2.3), standPlinthMat);
+    const plinth = new THREE.Mesh(plinthGeo, standPlinthMat);
     plinth.position.set(0, -0.85, side * 0.62);
     stand.add(plinth);
 
@@ -601,41 +647,45 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
       bench.position.set(0, (0.45 + tier * 0.42) * 0.5, side * tier * 0.62);
       stand.add(bench);
 
-      // Cheering crowd figures on each tier
+      // Cheering crowd figures on each tier batched into fanInst
       for (let p = -4; p <= 4; p++) {
-        const fanMat = makeSoapboxMat(
-          crowdColors[(Math.abs(p) + tier + idx) % crowdColors.length],
-          0.45
-        );
-        const fan = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.46, 0.24), fanMat);
-        fan.position.set(
+        localFanMatrix.makeTranslation(
           p * 0.56,
           0.52 + tier * 0.42,
           side * tier * 0.62
         );
-        stand.add(fan);
+        worldFanMatrix.multiplyMatrices(standMatrix, localFanMatrix);
+        fanInst.setMatrixAt(fanIdx, worldFanMatrix);
+        tempColor.set(crowdColors[(Math.abs(p) + tier + idx) % crowdColors.length]);
+        fanInst.setColorAt(fanIdx, tempColor);
+        fanIdx++;
       }
     }
 
     // Rear support pillars & overhead Red Bull canopy roof
     [-2.5, 2.5].forEach((px) => {
-      const rearPost = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.08, 0.08, 2.6, 8),
-        standBaseMat
-      );
+      const rearPost = new THREE.Mesh(rearPostGeo, standBaseMat);
       rearPost.position.set(px, 1.3, side * 1.45);
       stand.add(rearPost);
     });
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.18, 2.4), canopyMat);
+    const roof = new THREE.Mesh(roofGeoStand, canopyMat);
     roof.position.set(0, 2.55, side * 0.6);
     stand.add(roof);
 
     raceEnv.add(stand);
   });
+  fanInst.instanceMatrix.needsUpdate = true;
+  if (fanInst.instanceColor) fanInst.instanceColor.needsUpdate = true;
+  raceEnv.add(fanInst);
 
   // 4. Mid-Course Red Bull Soapbox Distance Gantry Banners (every 400ft)
   const postMat = makeSoapboxMat('#0f172a', 0.4, 0.6);
   const bannerColors = ['#0284c7', '#f97316', '#dc2626', '#7c3aed'];
+  const gantryPostGeo = new THREE.CylinderGeometry(0.14, 0.18, 6.2, 10);
+  const crossbarGeo = new THREE.BoxGeometry(0.45, 0.72, 9.3);
+  const accentTrimGeo = new THREE.BoxGeometry(0.5, 0.18, 9.4);
+  const accentTrimMat = makeSoapboxMat('#facc15', 0.25);
+
   for (let milestone = 400; milestone < course.lengthFeet - 150; milestone += 400) {
     const r = getSoapboxRoadState(milestone, course.id);
     const arch = new THREE.Group();
@@ -646,53 +696,78 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
     );
 
     [-4.35, 4.35].forEach((az) => {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 6.2, 10), postMat);
+      const post = new THREE.Mesh(gantryPostGeo, postMat);
       post.position.set(0, 2.3, az);
       arch.add(post);
     });
 
     const crossbar = new THREE.Mesh(
-      new THREE.BoxGeometry(0.45, 0.72, 9.3),
+      crossbarGeo,
       makeSoapboxMat(bannerColors[Math.floor(milestone / 400) % bannerColors.length], 0.3)
     );
     crossbar.position.set(0, 4.9, 0);
     arch.add(crossbar);
 
-    const accentTrim = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 0.18, 9.4),
-      makeSoapboxMat('#facc15', 0.25)
-    );
+    const accentTrim = new THREE.Mesh(accentTrimGeo, accentTrimMat);
     accentTrim.position.set(0, 4.55, 0);
     arch.add(accentTrim);
 
     raceEnv.add(arch);
   }
 
-  // 5. Roadside Safety Guardrails & Corner Warning Flags along High-Curvature Bends
+  // 5. Roadside Safety Guardrails & Corner Warning Flags along High-Curvature Bends (InstancedMesh)
   const flagPoleMat = makeSoapboxMat('#e2e8f0', 0.3, 0.7);
   const flagRedMat = makeSoapboxMat('#ef4444', 0.35);
   const flagYellowMat = makeSoapboxMat('#facc15', 0.35);
+  const stemGeo = new THREE.CylinderGeometry(0.04, 0.04, 1.85, 6);
+  const pennantGeo = new THREE.BoxGeometry(0.42, 0.28, 0.04);
+  const stemMatrices: THREE.Matrix4[] = [];
+  const redPennantMatrices: THREE.Matrix4[] = [];
+  const yellowPennantMatrices: THREE.Matrix4[] = [];
+
   for (let s = 20; s <= sMax; s += 28) {
     const r = getSoapboxRoadState(s, course.id);
+    const isRed = Math.floor(s / 28) % 2 === 0;
     [-1, 1].forEach((side) => {
       const lat = side * 17.5;
       const pos = courseToWorldUnits(s, lat, getTerrainHeightOffsetFeet(s, lat), undefined, course.id);
-      const pole = new THREE.Group();
-      pole.position.copy(pos);
-      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.85, 6), flagPoleMat);
-      stem.position.y = 0.65;
-      const pennant = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.28, 0.04),
-        Math.floor(s / 28) % 2 === 0 ? flagRedMat : flagYellowMat
-      );
-      pennant.position.set(0.2, 1.4, 0);
-      pennant.rotation.y = -r.headingRad;
-      pole.add(stem, pennant);
-      raceEnv.add(pole);
+
+      tempObj.position.set(pos.x, pos.y + 0.65, pos.z);
+      tempObj.rotation.set(0, 0, 0);
+      tempObj.scale.set(1, 1, 1);
+      tempObj.updateMatrix();
+      stemMatrices.push(tempObj.matrix.clone());
+
+      tempObj.position.set(pos.x + 0.2, pos.y + 1.4, pos.z);
+      tempObj.rotation.set(0, -r.headingRad, 0);
+      tempObj.updateMatrix();
+      if (isRed) {
+        redPennantMatrices.push(tempObj.matrix.clone());
+      } else {
+        yellowPennantMatrices.push(tempObj.matrix.clone());
+      }
     });
   }
+  if (stemMatrices.length > 0) {
+    const stemInst = new THREE.InstancedMesh(stemGeo, flagPoleMat, stemMatrices.length);
+    for (let i = 0; i < stemMatrices.length; i++) stemInst.setMatrixAt(i, stemMatrices[i]);
+    stemInst.instanceMatrix.needsUpdate = true;
+    raceEnv.add(stemInst);
+  }
+  if (redPennantMatrices.length > 0) {
+    const redInst = new THREE.InstancedMesh(pennantGeo, flagRedMat, redPennantMatrices.length);
+    for (let i = 0; i < redPennantMatrices.length; i++) redInst.setMatrixAt(i, redPennantMatrices[i]);
+    redInst.instanceMatrix.needsUpdate = true;
+    raceEnv.add(redInst);
+  }
+  if (yellowPennantMatrices.length > 0) {
+    const yellowInst = new THREE.InstancedMesh(pennantGeo, flagYellowMat, yellowPennantMatrices.length);
+    for (let i = 0; i < yellowPennantMatrices.length; i++) yellowInst.setMatrixAt(i, yellowPennantMatrices[i]);
+    yellowInst.instanceMatrix.needsUpdate = true;
+    raceEnv.add(yellowInst);
+  }
 
-  // 6. Biome-Specific Trees / Canyon Rocks / Urban Facades / Snow Crags (grounded to exact hillside elevation)
+  // 6. Biome-Specific Trees / Canyon Rocks / Urban Facades / Snow Crags (InstancedMesh, grounded to exact hillside elevation)
   if (theme.sceneryType === 'alpine_pines') {
     const trunkGeo = new THREE.CylinderGeometry(0.14, 0.22, 1.85, 8);
     const trunkMat = makeSoapboxMat('#78350f', 0.8);
@@ -700,101 +775,176 @@ function buildThemedScenery(raceEnv: THREE.Group, course: SoapboxCourseDef): voi
     const foliageGeo2 = new THREE.ConeGeometry(0.85, 1.9, 10);
     const foliageMat = makeSoapboxMat(theme.grassColor, 0.65);
 
+    const trunkMatrices: THREE.Matrix4[] = [];
+    const cone1Matrices: THREE.Matrix4[] = [];
+    const cone2Matrices: THREE.Matrix4[] = [];
+
     for (let s = 10; s <= sMax; s += 26) {
       [-1, 1].forEach((side) => {
         const lat = side * (22 + ((s * 7) % 14));
         const terrainY = getTerrainHeightOffsetFeet(s, lat);
         const pos = courseToWorldUnits(s, lat, terrainY, undefined, course.id);
-        const tree = new THREE.Group();
-        tree.position.copy(pos);
-        const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-        // Trunk extends from y = -0.57 to y = +1.28 so it roots deeply into the sloped hillside
-        trunk.position.y = 0.35;
-        const cone1 = new THREE.Mesh(foliageGeo1, foliageMat);
-        cone1.position.y = 1.8;
-        const cone2 = new THREE.Mesh(foliageGeo2, foliageMat);
-        cone2.position.y = 2.85;
-        tree.add(trunk, cone1, cone2);
-        raceEnv.add(tree);
+        tempObj.rotation.set(0, 0, 0);
+        tempObj.scale.set(1, 1, 1);
+
+        tempObj.position.set(pos.x, pos.y + 0.35, pos.z);
+        tempObj.updateMatrix();
+        trunkMatrices.push(tempObj.matrix.clone());
+
+        tempObj.position.set(pos.x, pos.y + 1.8, pos.z);
+        tempObj.updateMatrix();
+        cone1Matrices.push(tempObj.matrix.clone());
+
+        tempObj.position.set(pos.x, pos.y + 2.85, pos.z);
+        tempObj.updateMatrix();
+        cone2Matrices.push(tempObj.matrix.clone());
       });
+    }
+
+    if (trunkMatrices.length > 0) {
+      const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, trunkMatrices.length);
+      const cone1Inst = new THREE.InstancedMesh(foliageGeo1, foliageMat, cone1Matrices.length);
+      const cone2Inst = new THREE.InstancedMesh(foliageGeo2, foliageMat, cone2Matrices.length);
+      for (let i = 0; i < trunkMatrices.length; i++) {
+        trunkInst.setMatrixAt(i, trunkMatrices[i]);
+        cone1Inst.setMatrixAt(i, cone1Matrices[i]);
+        cone2Inst.setMatrixAt(i, cone2Matrices[i]);
+      }
+      trunkInst.instanceMatrix.needsUpdate = true;
+      cone1Inst.instanceMatrix.needsUpdate = true;
+      cone2Inst.instanceMatrix.needsUpdate = true;
+      raceEnv.add(trunkInst, cone1Inst, cone2Inst);
     }
   } else if (theme.sceneryType === 'desert_canyon') {
     const rockGeo = new THREE.CylinderGeometry(1.6, 2.6, 5.8, 6);
     const rockMat = makeSoapboxMat(theme.asphaltColor, 0.9, 0.1);
     const cactusMat = makeSoapboxMat('#15803d', 0.7);
+    const cactusStemGeo = new THREE.CylinderGeometry(0.18, 0.18, 2.6, 8);
+    const cactusArmGeo = new THREE.BoxGeometry(0.8, 0.16, 0.16);
+
+    const rockMatrices: THREE.Matrix4[] = [];
+    const stemMatricesCactus: THREE.Matrix4[] = [];
+    const armMatricesCactus: THREE.Matrix4[] = [];
 
     for (let s = 20; s <= sMax; s += 34) {
       [-1, 1].forEach((side) => {
         const lat = side * (24 + ((s * 5) % 12));
         const pos = courseToWorldUnits(s, lat, getTerrainHeightOffsetFeet(s, lat), undefined, course.id);
-        const rock = new THREE.Mesh(rockGeo, rockMat);
-        rock.position.copy(pos);
-        rock.position.y += 2.2;
-        rock.scale.set(1 + (s % 3) * 0.4, 1 + (s % 2) * 0.5, 1);
-        raceEnv.add(rock);
+        tempObj.position.set(pos.x, pos.y + 2.2, pos.z);
+        tempObj.rotation.set(0, 0, 0);
+        tempObj.scale.set(1 + (s % 3) * 0.4, 1 + (s % 2) * 0.5, 1);
+        tempObj.updateMatrix();
+        rockMatrices.push(tempObj.matrix.clone());
 
         const cLat = side * 19;
         const cPos = courseToWorldUnits(s + 14, cLat, getTerrainHeightOffsetFeet(s + 14, cLat), undefined, course.id);
-        const cactus = new THREE.Group();
-        cactus.position.copy(cPos);
-        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 2.6, 8), cactusMat);
-        stem.position.y = 0.9;
-        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.16, 0.16), cactusMat);
-        arm.position.set(0, 1.4, 0);
-        cactus.add(stem, arm);
-        raceEnv.add(cactus);
+        tempObj.scale.set(1, 1, 1);
+        tempObj.position.set(cPos.x, cPos.y + 0.9, cPos.z);
+        tempObj.updateMatrix();
+        stemMatricesCactus.push(tempObj.matrix.clone());
+
+        tempObj.position.set(cPos.x, cPos.y + 1.4, cPos.z);
+        tempObj.updateMatrix();
+        armMatricesCactus.push(tempObj.matrix.clone());
       });
+    }
+
+    if (rockMatrices.length > 0) {
+      const rockInst = new THREE.InstancedMesh(rockGeo, rockMat, rockMatrices.length);
+      const stemInst = new THREE.InstancedMesh(cactusStemGeo, cactusMat, stemMatricesCactus.length);
+      const armInst = new THREE.InstancedMesh(cactusArmGeo, cactusMat, armMatricesCactus.length);
+      for (let i = 0; i < rockMatrices.length; i++) {
+        rockInst.setMatrixAt(i, rockMatrices[i]);
+        stemInst.setMatrixAt(i, stemMatricesCactus[i]);
+        armInst.setMatrixAt(i, armMatricesCactus[i]);
+      }
+      rockInst.instanceMatrix.needsUpdate = true;
+      stemInst.instanceMatrix.needsUpdate = true;
+      armInst.instanceMatrix.needsUpdate = true;
+      raceEnv.add(rockInst, stemInst, armInst);
     }
   } else if (theme.sceneryType === 'urban_alleys') {
     const facadeGeo = new THREE.BoxGeometry(4.6, 9.0, 2.2);
     const roofGeo = new THREE.ConeGeometry(3.2, 1.8, 4);
     const colors = ['#e2e8f0', '#fed7aa', '#fbcfe8', '#cbd5e1', '#fef08a'];
     const roofMat = makeSoapboxMat('#b91c1c', 0.65);
+    const facadeBaseMat = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.08 });
+
+    const facadeMatrices: THREE.Matrix4[] = [];
+    const facadeColorsList: THREE.Color[] = [];
+    const roofMatrices: THREE.Matrix4[] = [];
 
     for (let s = 20; s <= sMax; s += 30) {
       [-1, 1].forEach((side, idx) => {
         const lat = side * 19.2;
         const pos = courseToWorldUnits(s, lat, getTerrainHeightOffsetFeet(s, lat), undefined, course.id);
-        const facadeMat = makeSoapboxMat(
-          colors[(Math.floor(s / 30) + idx) % colors.length],
-          0.6
-        );
-        const bldg = new THREE.Group();
-        bldg.position.copy(pos);
         const road = getSoapboxRoadState(s, course.id);
-        bldg.rotation.y = -road.headingRad;
+        tempObj.scale.set(1, 1, 1);
 
-        const facade = new THREE.Mesh(facadeGeo, facadeMat);
-        facade.position.y = 3.7;
-        const roof = new THREE.Mesh(roofGeo, roofMat);
-        roof.position.y = 9.0;
-        roof.rotation.y = Math.PI / 4;
-        bldg.add(facade, roof);
-        raceEnv.add(bldg);
+        tempObj.position.set(pos.x, pos.y + 3.7, pos.z);
+        tempObj.rotation.set(0, -road.headingRad, 0);
+        tempObj.updateMatrix();
+        facadeMatrices.push(tempObj.matrix.clone());
+        facadeColorsList.push(new THREE.Color(colors[(Math.floor(s / 30) + idx) % colors.length]));
+
+        tempObj.position.set(pos.x, pos.y + 9.0, pos.z);
+        tempObj.rotation.set(0, -road.headingRad + Math.PI / 4, 0);
+        tempObj.updateMatrix();
+        roofMatrices.push(tempObj.matrix.clone());
       });
+    }
+
+    if (facadeMatrices.length > 0) {
+      const facadeInst = new THREE.InstancedMesh(facadeGeo, facadeBaseMat, facadeMatrices.length);
+      const roofInst = new THREE.InstancedMesh(roofGeo, roofMat, roofMatrices.length);
+      for (let i = 0; i < facadeMatrices.length; i++) {
+        facadeInst.setMatrixAt(i, facadeMatrices[i]);
+        facadeInst.setColorAt(i, facadeColorsList[i]);
+        roofInst.setMatrixAt(i, roofMatrices[i]);
+      }
+      facadeInst.instanceMatrix.needsUpdate = true;
+      if (facadeInst.instanceColor) facadeInst.instanceColor.needsUpdate = true;
+      roofInst.instanceMatrix.needsUpdate = true;
+      raceEnv.add(facadeInst, roofInst);
     }
   } else if (theme.sceneryType === 'snow_peaks') {
     const cragGeo = new THREE.ConeGeometry(2.4, 6.6, 5);
     const cragMat = makeSoapboxMat('#e0f2fe', 0.4, 0.2);
+    const snowPineGeo = new THREE.ConeGeometry(1.05, 3.4, 8);
     const snowPineMat = makeSoapboxMat('#f8fafc', 0.7);
+
+    const cragMatrices: THREE.Matrix4[] = [];
+    const pineMatrices: THREE.Matrix4[] = [];
 
     for (let s = 20; s <= sMax; s += 32) {
       [-1, 1].forEach((side) => {
         const lat = side * (24 + ((s * 3) % 10));
         const pos = courseToWorldUnits(s, lat, getTerrainHeightOffsetFeet(s, lat), undefined, course.id);
-        const crag = new THREE.Mesh(cragGeo, cragMat);
-        crag.position.copy(pos);
-        crag.position.y += 2.6;
-        crag.rotation.y = s * 0.1;
-        raceEnv.add(crag);
+        tempObj.scale.set(1, 1, 1);
+        tempObj.position.set(pos.x, pos.y + 2.6, pos.z);
+        tempObj.rotation.set(0, s * 0.1, 0);
+        tempObj.updateMatrix();
+        cragMatrices.push(tempObj.matrix.clone());
 
         const pLat = side * 18.5;
         const pinePos = courseToWorldUnits(s + 15, pLat, getTerrainHeightOffsetFeet(s + 15, pLat), undefined, course.id);
-        const pine = new THREE.Mesh(new THREE.ConeGeometry(1.05, 3.4, 8), snowPineMat);
-        pine.position.copy(pinePos);
-        pine.position.y += 1.3;
-        raceEnv.add(pine);
+        tempObj.position.set(pinePos.x, pinePos.y + 1.3, pinePos.z);
+        tempObj.rotation.set(0, 0, 0);
+        tempObj.updateMatrix();
+        pineMatrices.push(tempObj.matrix.clone());
       });
+    }
+
+    if (cragMatrices.length > 0) {
+      const cragInst = new THREE.InstancedMesh(cragGeo, cragMat, cragMatrices.length);
+      const pineInst = new THREE.InstancedMesh(snowPineGeo, snowPineMat, pineMatrices.length);
+      for (let i = 0; i < cragMatrices.length; i++) {
+        cragInst.setMatrixAt(i, cragMatrices[i]);
+        pineInst.setMatrixAt(i, pineMatrices[i]);
+      }
+      cragInst.instanceMatrix.needsUpdate = true;
+      pineInst.instanceMatrix.needsUpdate = true;
+      raceEnv.add(cragInst, pineInst);
     }
   }
 }
@@ -1201,32 +1351,47 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
         boostCarpet.position.y = 0.025;
         node.add(boostCarpet);
       } else if (obs.type === 'cobble_strip') {
-        // Road-conforming 3D Cobblestone Rumble Strip Stones following exact road elevation & curvature
+        // Road-conforming 3D Cobblestone Rumble Strip Stones following exact road elevation & curvature (InstancedMesh)
         const stoneMat = makeSoapboxMat('#94a3b8', 0.85, 0.1);
         const stoneDarkMat = makeSoapboxMat('#475569', 0.85, 0.1);
         const stoneGeo = new THREE.BoxGeometry(0.46, 0.06, 0.42);
         const halfLenFt = obs.lengthFeet * 0.46;
         const halfWFt = obs.halfWidthFeet * 0.86;
+        const lightMatrices: THREE.Matrix4[] = [];
+        const darkMatrices: THREE.Matrix4[] = [];
+        const tempStoneObj = new THREE.Object3D();
 
         for (let ds = -halfLenFt; ds <= halfLenFt; ds += 3.0) {
           const sHere = obs.sFeet + ds;
           const rHere = getSoapboxRoadState(sHere, course.id);
           for (let dLat = -halfWFt; dLat <= halfWFt; dLat += 2.6) {
-            const cobble = new THREE.Mesh(
-              stoneGeo,
-              Math.round((ds + dLat) * 3) % 2 === 0 ? stoneMat : stoneDarkMat
-            );
             courseToWorldUnits(
               sHere,
               obs.lateralCenterFeet + dLat,
               0.05,
-              cobble.position,
+              tempStoneObj.position,
               course.id
             );
-            cobble.rotation.y = -rHere.headingRad;
-            cobble.rotation.z = -rHere.slopeRad;
-            node.add(cobble);
+            tempStoneObj.rotation.set(0, -rHere.headingRad, -rHere.slopeRad);
+            tempStoneObj.updateMatrix();
+            if (Math.round((ds + dLat) * 3) % 2 === 0) {
+              lightMatrices.push(tempStoneObj.matrix.clone());
+            } else {
+              darkMatrices.push(tempStoneObj.matrix.clone());
+            }
           }
+        }
+        if (lightMatrices.length > 0) {
+          const lightInst = new THREE.InstancedMesh(stoneGeo, stoneMat, lightMatrices.length);
+          for (let i = 0; i < lightMatrices.length; i++) lightInst.setMatrixAt(i, lightMatrices[i]);
+          lightInst.instanceMatrix.needsUpdate = true;
+          node.add(lightInst);
+        }
+        if (darkMatrices.length > 0) {
+          const darkInst = new THREE.InstancedMesh(stoneGeo, stoneDarkMat, darkMatrices.length);
+          for (let i = 0; i < darkMatrices.length; i++) darkInst.setMatrixAt(i, darkMatrices[i]);
+          darkInst.instanceMatrix.needsUpdate = true;
+          node.add(darkInst);
         }
       }
 
@@ -1362,7 +1527,7 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.08;
     container.innerHTML = '';
@@ -1383,8 +1548,8 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
       theme.sunPosition[2]
     );
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 2048;
-    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.mapSize.width = 512;
+    sunLight.shadow.mapSize.height = 512;
     sunLight.shadow.camera.near = 0.5;
     sunLight.shadow.camera.far = 320;
     const shadowD = 9.5;
@@ -1402,36 +1567,45 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
     const garageEnv = new THREE.Group();
     scene.add(garageEnv);
 
-    // Wide Alpine Meadow & Hilltop Ground surrounding the Garage Paddock
+    // Wide Alpine Meadow & Hilltop Ground surrounding the Garage Paddock (RingGeometry avoids overdraw under paddockApron)
     const garageMeadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(320, 320),
-      makeSoapboxMat('#15803d', 0.88, 0.02)
+      new THREE.RingGeometry(14.5, 160, 32),
+      new THREE.MeshLambertMaterial({ color: '#15803d' })
     );
     garageMeadow.rotation.x = -Math.PI / 2;
     garageMeadow.position.y = -0.88;
-    garageMeadow.receiveShadow = true;
+    garageMeadow.receiveShadow = false;
     garageEnv.add(garageMeadow);
 
-    // Paved Asphalt Paddock Apron around Turntable
+    // Paved Asphalt Paddock Apron around Turntable (RingGeometry avoids overdraw under turntable)
     const paddockApron = new THREE.Mesh(
-      new THREE.CylinderGeometry(14.5, 15.0, 0.08, 48),
-      makeSoapboxMat('#1e293b', 0.65, 0.12)
+      new THREE.RingGeometry(4.3, 14.8, 36),
+      new THREE.MeshLambertMaterial({ color: '#1e293b' })
     );
-    paddockApron.position.y = -0.86;
-    paddockApron.receiveShadow = true;
+    paddockApron.rotation.x = -Math.PI / 2;
+    paddockApron.position.y = -0.84;
+    paddockApron.receiveShadow = false;
     garageEnv.add(paddockApron);
 
-    // Red & White Racing Curb Ring framing the Paddock Apron
+    // Red & White Racing Curb Ring framing the Paddock Apron (InstancedMesh)
+    const curbBlockGeo = new THREE.BoxGeometry(1.25, 0.12, 0.55);
+    const curbRedInst = new THREE.InstancedMesh(curbBlockGeo, makeSoapboxMat('#dc2626', 0.4), 18);
+    const curbWhiteInst = new THREE.InstancedMesh(curbBlockGeo, makeSoapboxMat('#f8fafc', 0.4), 18);
+    const tempCurbObj = new THREE.Object3D();
     for (let seg = 0; seg < 36; seg++) {
       const ang = (seg / 36) * Math.PI * 2;
-      const curbBlock = new THREE.Mesh(
-        new THREE.BoxGeometry(1.25, 0.12, 0.55),
-        makeSoapboxMat(seg % 2 === 0 ? '#dc2626' : '#f8fafc', 0.4)
-      );
-      curbBlock.position.set(Math.cos(ang) * 8.6, -0.8, Math.sin(ang) * 8.6);
-      curbBlock.rotation.y = -ang + Math.PI / 2;
-      garageEnv.add(curbBlock);
+      tempCurbObj.position.set(Math.cos(ang) * 8.6, -0.8, Math.sin(ang) * 8.6);
+      tempCurbObj.rotation.set(0, -ang + Math.PI / 2, 0);
+      tempCurbObj.updateMatrix();
+      if (seg % 2 === 0) {
+        curbRedInst.setMatrixAt(seg >> 1, tempCurbObj.matrix);
+      } else {
+        curbWhiteInst.setMatrixAt(seg >> 1, tempCurbObj.matrix);
+      }
     }
+    curbRedInst.instanceMatrix.needsUpdate = true;
+    curbWhiteInst.instanceMatrix.needsUpdate = true;
+    garageEnv.add(curbRedInst, curbWhiteInst);
 
     // Garage Pit Turntable Platform
     const turntable = new THREE.Mesh(
@@ -1477,64 +1651,81 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
     pitBackdrop.add(topBeam, goldStripe);
 
     // Red Tool Chests & Stacked Racing Slicks in the Pit Bay
+    const chestGeo = new THREE.BoxGeometry(1.45, 1.15, 0.68);
+    const chestMat = makeSoapboxMat('#dc2626', 0.32, 0.45);
     [-2.8, 2.8].forEach((tx) => {
-      const chest = new THREE.Mesh(
-        new THREE.BoxGeometry(1.45, 1.15, 0.68),
-        makeSoapboxMat('#dc2626', 0.32, 0.45)
-      );
+      const chest = new THREE.Mesh(chestGeo, chestMat);
       chest.position.set(tx, 0.58, 0.2);
       pitBackdrop.add(chest);
     });
+    const spareTireGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.24, 16);
+    const spareTireMat = makeSoapboxMat('#0f172a', 0.7, 0.1);
     [-4.1, 4.1].forEach((sx) => {
       for (let t = 0; t < 4; t++) {
-        const spareTire = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.38, 0.38, 0.24, 16),
-          makeSoapboxMat('#0f172a', 0.7, 0.1)
-        );
+        const spareTire = new THREE.Mesh(spareTireGeo, spareTireMat);
         spareTire.position.set(sx, 0.14 + t * 0.25, 0.65);
         pitBackdrop.add(spareTire);
       }
     });
 
-    // Scenic Pines & Distant Alpine Peaks around the Garage Paddock Horizon
+    // Scenic Pines & Distant Alpine Peaks around the Garage Paddock Horizon (batched into 4 InstancedMeshes)
     const garagePineMat = makeSoapboxMat('#166534', 0.68);
     const garageTrunkMat = makeSoapboxMat('#78350f', 0.8);
     const garageMtnMat = makeSoapboxMat('#1e293b', 0.85);
     const garageSnowMat = makeSoapboxMat('#f8fafc', 0.6);
+
+    const garageTrunkGeo = new THREE.CylinderGeometry(0.14, 0.18, 1.1, 8);
+    const garageFoliageGeo = new THREE.ConeGeometry(1.1, 2.8, 9);
+    const garageMtnUnitGeo = new THREE.ConeGeometry(1, 1, 7);
+
+    const garageTrunkInst = new THREE.InstancedMesh(garageTrunkGeo, garageTrunkMat, 16);
+    const garageFoliageInst = new THREE.InstancedMesh(garageFoliageGeo, garagePineMat, 16);
+    const garageMtnInst = new THREE.InstancedMesh(garageMtnUnitGeo, garageMtnMat, 16);
+    const garageSnowInst = new THREE.InstancedMesh(garageMtnUnitGeo, garageSnowMat, 16);
+    garageTrunkInst.frustumCulled = false;
+    garageFoliageInst.frustumCulled = false;
+    garageMtnInst.frustumCulled = false;
+    garageSnowInst.frustumCulled = false;
+
+    const gDummy = new THREE.Object3D();
     for (let i = 0; i < 16; i++) {
       const ang = (i / 16) * Math.PI * 2 + 0.2;
       const dist = 16 + (i % 3) * 4.5;
-      const tree = new THREE.Group();
-      tree.position.set(Math.cos(ang) * dist, -0.85, Math.sin(ang) * dist);
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.14, 0.18, 1.1, 8),
-        garageTrunkMat
-      );
-      trunk.position.y = 0.55;
-      const foliage = new THREE.Mesh(
-        new THREE.ConeGeometry(1.1, 2.8, 9),
-        garagePineMat
-      );
-      foliage.position.y = 2.1;
-      tree.add(trunk, foliage);
-      garageEnv.add(tree);
+      const tx = Math.cos(ang) * dist;
+      const tz = Math.sin(ang) * dist;
+
+      gDummy.rotation.set(0, 0, 0);
+      gDummy.scale.set(1, 1, 1);
+      gDummy.position.set(tx, -0.3, tz);
+      gDummy.updateMatrix();
+      garageTrunkInst.setMatrixAt(i, gDummy.matrix);
+
+      gDummy.position.set(tx, 1.25, tz);
+      gDummy.updateMatrix();
+      garageFoliageInst.setMatrixAt(i, gDummy.matrix);
 
       // Distant mountain peak behind trees
       const mtnDist = 58 + (i % 4) * 14;
       const mtnH = 18 + (i % 5) * 5;
       const mtnR = 12 + (i % 3) * 4;
-      const mtn = new THREE.Group();
-      mtn.position.set(Math.cos(ang) * mtnDist, -1.2, Math.sin(ang) * mtnDist);
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(mtnR, mtnH, 7), garageMtnMat);
-      cone.position.y = mtnH * 0.5;
-      const cap = new THREE.Mesh(
-        new THREE.ConeGeometry(mtnR * 0.445, mtnH * 0.42, 7),
-        garageSnowMat
-      );
-      cap.position.y = mtnH * 0.795;
-      mtn.add(cone, cap);
-      garageEnv.add(mtn);
+      const mx = Math.cos(ang) * mtnDist;
+      const mz = Math.sin(ang) * mtnDist;
+
+      gDummy.position.set(mx, -1.2 + mtnH * 0.5, mz);
+      gDummy.scale.set(mtnR, mtnH, mtnR);
+      gDummy.updateMatrix();
+      garageMtnInst.setMatrixAt(i, gDummy.matrix);
+
+      gDummy.position.set(mx, -1.2 + mtnH * 0.795, mz);
+      gDummy.scale.set(mtnR * 0.445, mtnH * 0.42, mtnR * 0.445);
+      gDummy.updateMatrix();
+      garageSnowInst.setMatrixAt(i, gDummy.matrix);
     }
+    garageTrunkInst.instanceMatrix.needsUpdate = true;
+    garageFoliageInst.instanceMatrix.needsUpdate = true;
+    garageMtnInst.instanceMatrix.needsUpdate = true;
+    garageSnowInst.instanceMatrix.needsUpdate = true;
+    garageEnv.add(garageTrunkInst, garageFoliageInst, garageMtnInst, garageSnowInst);
 
     // 4 Hydraulic Shaker Pad Plates under the wheels
     const shakerPadsGroup = new THREE.Group();
@@ -1633,10 +1824,13 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
         orbitPitchRef.current = targetOrbitPitchRef.current;
         lastPointerX = e.clientX;
         lastPointerY = e.clientY;
-      } else {
+      } else if (e.target === renderer.domElement) {
         const cat = pickSocketCategory(e.clientX, e.clientY);
         hoveredCategoryRef.current = cat;
-        renderer.domElement.style.cursor = cat ? 'pointer' : 'grab';
+        const nextCursor = cat ? 'pointer' : 'grab';
+        if (renderer.domElement.style.cursor !== nextCursor) {
+          renderer.domElement.style.cursor = nextCursor;
+        }
       }
     };
 
@@ -1692,8 +1886,17 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
     const tempCarWorldPos = new THREE.Vector3();
     const tempDesiredCamPos = new THREE.Vector3();
     const tempCamLookPos = new THREE.Vector3();
+    let lastHudSyncTime = 0;
+    let lastHudSignature = '';
+    let lastSnapX = Number.NaN;
+    let lastSnapY = Number.NaN;
+    let lastSnapZ = Number.NaN;
 
     const animate = (now: number) => {
+      if (pausedRef.current) {
+        rafId = 0;
+        return;
+      }
       rafId = window.requestAnimationFrame(animate);
 
       const rawDt = Math.min(0.08, (now - lastTime) / 1000);
@@ -1729,8 +1932,14 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
         camera.position.set(r * cp * sy, r * sp + 0.15, r * cp * cy);
         camera.lookAt(0, 0.05, 0);
 
-        sunLight.position.set(16, 28, 18);
-        sunLight.target.position.set(0, 0, 0);
+        if (lastSnapX !== 0 || lastSnapY !== 0 || lastSnapZ !== 0) {
+          lastSnapX = 0;
+          lastSnapY = 0;
+          lastSnapZ = 0;
+          sunLight.position.set(16, 28, 18);
+          sunLight.target.position.set(0, 0, 0);
+          sunLight.target.updateMatrixWorld();
+        }
 
         // Sync 3D Center of Gravity & Track Width Gizmos with live metrics
         const m = metricsRef.current;
@@ -1874,7 +2083,14 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
         }
         wasDriftingRef.current = sim.isDrifting;
 
-        onHudSyncRef.current?.({ ...sim });
+        // Sync discrete React HUD state only when discrete fields change or every 120ms for obstacle lookahead.
+        // Continuous telemetry (speed, timer, G-load, integrity bar, push-bar cursor) is updated at 60fps via direct DOM refs in SoapboxRaceHUD.
+        const hudSig = `${sim.phase}|${sim.sectionName}|${sim.isWrecked}|${sim.wreckReason}|${sim.partsDetachedCount}|${sim.rollWarning}|${sim.isDrifting}|${sim.isBrakeFading}|${sim.steerInput}|${sim.brakeInput}|${sim.pushTuckActive}|${sim.statusBanner?.text ?? ''}|${Math.round(sim.structuralIntegrity * 25)}|${Math.round(sim.pullYawRate * 10)}`;
+        if (hudSig !== lastHudSignature || tSec - lastHudSyncTime >= 0.12) {
+          lastHudSignature = hudSig;
+          lastHudSyncTime = tSec;
+          onHudSyncRef.current?.({ ...sim });
+        }
 
         // Update Start Gate Rotation (fold flat around Z-axis onto the starter ramp floor!) & Gantry Lights
         if (startGatePivotRef.current) {
@@ -1899,11 +2115,15 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
           });
         }
 
-        // Update Obstacle Meshes Visibility
-        obstacleMeshesRef.current.forEach((mesh, id) => {
-          const oState = sim.obstacles.find((o) => o.id === id);
-          mesh.visible = !(oState && oState.triggered);
-        });
+        // Update Obstacle Meshes Visibility in O(N) instead of O(N^2)
+        const obsMap = obstacleMeshesRef.current;
+        for (let i = 0; i < sim.obstacles.length; i++) {
+          const oState = sim.obstacles[i];
+          const mesh = obsMap.get(oState.id);
+          if (mesh) {
+            mesh.visible = !oState.triggered;
+          }
+        }
 
         // 3D Soapbox Position & Orientation (offset by wheel ground clearance so tire bottoms rest flush on the road)
         const road = getSoapboxRoadState(sim.sFeet, activeCourseId);
@@ -2086,12 +2306,17 @@ export const SoapboxCanvas3D: React.FC<SoapboxCanvas3DProps> = React.memo(({
         );
         camera.lookAt(tempCamLookPos);
 
-        sunLight.position.set(
-          tempCarWorldPos.x + 14,
-          tempCarWorldPos.y + 28,
-          tempCarWorldPos.z + 18
-        );
-        sunLight.target.position.copy(tempCarWorldPos);
+        const snapX = Math.round(tempCarWorldPos.x * 2) * 0.5;
+        const snapY = Math.round(tempCarWorldPos.y * 2) * 0.5;
+        const snapZ = Math.round(tempCarWorldPos.z * 2) * 0.5;
+        if (snapX !== lastSnapX || snapY !== lastSnapY || snapZ !== lastSnapZ) {
+          lastSnapX = snapX;
+          lastSnapY = snapY;
+          lastSnapZ = snapZ;
+          sunLight.position.set(snapX + 14, snapY + 28, snapZ + 18);
+          sunLight.target.position.set(snapX, snapY, snapZ);
+          sunLight.target.updateMatrixWorld();
+        }
       }
 
       renderer.render(scene, camera);

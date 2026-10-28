@@ -69,8 +69,8 @@ export function disposeCraftObject3D(root: THREE.Object3D, disposeCached = false
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
-    if (obj instanceof THREE.InstancedMesh && disposeCached) {
-      obj.dispose();
+    if ((obj as THREE.InstancedMesh).isInstancedMesh) {
+      (obj as THREE.InstancedMesh).dispose();
     }
     if (mesh.geometry && (disposeCached || !mesh.geometry.userData?.cached)) {
       mesh.geometry.dispose();
@@ -209,9 +209,9 @@ export function buildCraft3D(loadout: CraftLoadout): Craft3DGroups {
         mesh.geometry.computeBoundingSphere();
       }
       const radius = mesh.geometry.boundingSphere?.radius ?? 1;
-      // Only cast/receive shadows on substantial structural meshes to cut shadow-pass draw calls
+      // Only cast shadows on substantial structural meshes to cut shadow-pass draw calls; disable self-shadowing
       mesh.castShadow = radius >= 0.25;
-      mesh.receiveShadow = radius >= 0.55;
+      mesh.receiveShadow = false;
     }
   });
 

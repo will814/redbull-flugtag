@@ -92,6 +92,15 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
   const orbitPitchRef = useRef<number>(0.32);
   const orbitRadiusRef = useRef<number>(7.4);
   const snapBounceRef = useRef<number>(0);
+  const loopControlRef = useRef<{ pause: () => void; resume: () => void } | null>(null);
+
+  useEffect(() => {
+    if (paused) {
+      loopControlRef.current?.pause();
+    } else {
+      loopControlRef.current?.resume();
+    }
+  }, [paused]);
 
   // Gently frame the selected attachment socket when switching categories in Hangar
   useEffect(() => {
@@ -155,7 +164,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
@@ -166,8 +175,8 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     const sunLight = new THREE.DirectionalLight('#fffbeb', 1.65);
     sunLight.position.set(18, 35, 22);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.width = 1024;
-    sunLight.shadow.mapSize.height = 1024;
+    sunLight.shadow.mapSize.width = 512;
+    sunLight.shadow.mapSize.height = 512;
     sunLight.shadow.camera.near = 1;
     sunLight.shadow.camera.far = 120;
     sunLight.shadow.bias = -0.0005;
@@ -299,17 +308,15 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     const bayEnv = new THREE.Group();
     scene.add(bayEnv);
 
-    // Sparkling Ocean Water Plane (2 triangles — flat standard material needs no subdivisions)
+    // Sparkling Ocean Water Plane (2 triangles — flat lambert material avoids full-screen PBR/shadow fill bottleneck)
     const waterGeo = new THREE.PlaneGeometry(360, 220, 1, 1);
     waterGeo.rotateX(-Math.PI / 2);
-    const waterMat = new THREE.MeshStandardMaterial({
+    const waterMat = new THREE.MeshLambertMaterial({
       color: '#0284c7',
-      roughness: 0.22,
-      metalness: 0.15,
     });
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMesh.position.set(65, 0, 0);
-    waterMesh.receiveShadow = true;
+    waterMesh.receiveShadow = false;
     bayEnv.add(waterMesh);
 
     // 30-Foot-High Flight Deck Pier (90 ft long -> from x = -22.5u to 0u, height = 7.5u)
@@ -581,6 +588,13 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
       }
       if (!isDragging) {
         if (activePointers.size === 0 && craftGroupsRef.current) {
+          if (e.target !== renderer.domElement) {
+            if (hoveredCategoryRef.current !== null) {
+              hoveredCategoryRef.current = null;
+              container.style.cursor = '';
+            }
+            return;
+          }
           const rect = renderer.domElement.getBoundingClientRect();
           pointerNdc.x = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
           pointerNdc.y = -((e.clientY - rect.top) / Math.max(1, rect.height)) * 2 + 1;
@@ -690,6 +704,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     const smoothedLookAt = new THREE.Vector3(0, 0.35, 0);
     const desiredCamPos = new THREE.Vector3();
     const desiredLookAt = new THREE.Vector3();
+    let lastSnapShadowX = Number.NaN;
 
     const updateShadowBounds = (d: number) => {
       sunLight.shadow.camera.left = -d;
@@ -700,11 +715,11 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
     };
 
     const animate = (now: number) => {
-      rafId = requestAnimationFrame(animate);
       if (pausedRef.current) {
-        lastTime = now;
+        rafId = 0;
         return;
       }
+      rafId = requestAnimationFrame(animate);
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
       const elapsedSec = now * 0.001;
@@ -727,6 +742,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
           sunLight.position.set(10, 22, 14);
           sunLight.target.position.set(0, 0, 0);
           sunLight.target.updateMatrixWorld();
+          lastSnapShadowX = Number.NaN;
           for (const cat of SOCKET_CATEGORIES) {
             craft.socketMarkers[cat].visible = true;
           }
@@ -740,6 +756,7 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
         } else {
           container.style.cursor = '';
           updateShadowBounds(14);
+          lastSnapShadowX = Number.NaN;
           for (const cat of SOCKET_CATEGORIES) {
             craft.socketMarkers[cat].visible = false;
           }
@@ -983,9 +1000,12 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
 
         // Snap shadow frustum target to 0.5u increments to eliminate sub-texel shadow swimming
         const snapShadowX = Math.round(craftXU * 2) * 0.5;
-        sunLight.position.set(snapShadowX + 14, 35, 22);
-        sunLight.target.position.set(snapShadowX, 0, 0);
-        sunLight.target.updateMatrixWorld();
+        if (snapShadowX !== lastSnapShadowX) {
+          lastSnapShadowX = snapShadowX;
+          sunLight.position.set(snapShadowX + 14, 35, 22);
+          sunLight.target.position.set(snapShadowX, 0, 0);
+          sunLight.target.updateMatrixWorld();
+        }
 
         // Update 3D Wingtip Trails during Airborne Phase
         if (sim.phase === 'airborne') {
@@ -1138,10 +1158,30 @@ export const FlugtagCanvas3D: React.FC<FlugtagCanvas3DProps> = React.memo(({
       renderer.render(scene, camera);
     };
 
-    rafId = requestAnimationFrame(animate);
+    loopControlRef.current = {
+      pause: () => {
+        if (rafId !== 0) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+      },
+      resume: () => {
+        if (rafId === 0 && !pausedRef.current) {
+          lastTime = performance.now();
+          rafId = requestAnimationFrame(animate);
+        }
+      },
+    };
+
+    if (!pausedRef.current) {
+      rafId = requestAnimationFrame(animate);
+    }
 
     return () => {
-      cancelAnimationFrame(rafId);
+      loopControlRef.current = null;
+      if (rafId !== 0) {
+        cancelAnimationFrame(rafId);
+      }
       domEl.removeEventListener('pointerdown', onPointerDown);
       domEl.removeEventListener('wheel', onWheel);
       window.removeEventListener('pointermove', onPointerMove);

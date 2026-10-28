@@ -74,6 +74,9 @@ export function disposeCoasterObject3D(root: THREE.Object3D): void {
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if ((mesh as THREE.InstancedMesh).isInstancedMesh) {
+      (mesh as THREE.InstancedMesh).dispose();
+    }
     if (mesh.geometry && !mesh.geometry.userData?.cached && !disposedGeos.has(mesh.geometry)) {
       disposedGeos.add(mesh.geometry);
       mesh.geometry.dispose();
@@ -1117,8 +1120,12 @@ export function buildCoasterCar3D(loadout: CoasterLoadout): CoasterCar3DGroups {
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (mesh.isMesh && !mesh.userData.coasterCategory) {
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      if (!mesh.geometry.boundingSphere) {
+        mesh.geometry.computeBoundingSphere();
+      }
+      const r = mesh.geometry.boundingSphere?.radius ?? 0.5;
+      mesh.castShadow = r >= 0.22;
+      mesh.receiveShadow = false;
     }
   });
 

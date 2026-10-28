@@ -108,11 +108,23 @@ function createHarmonicElevation(params: {
 
   const g0 = (startElevationFeet - finishElevationFeet) / lengthFeet;
   const rampSlope = -(rampTopElevationFeet - startElevationFeet) / startRampFeet;
+  const rampDrop = rampTopElevationFeet - startElevationFeet;
+  const precomputed = harmonics.map((h) => {
+    const freq = (2 * Math.PI * h.harmonicNumber) / lengthFeet;
+    return {
+      amplitude: h.amplitude,
+      phase: h.phase,
+      freq,
+      ampOverFreq: h.amplitude / freq,
+      sinPhase: Math.sin(h.phase),
+    };
+  });
+  const numHarmonics = precomputed.length;
 
   return function getElevation(s: number): { yFeet: number; dyDs: number } {
     if (s < 0) {
       const u = (s + startRampFeet) / startRampFeet;
-      const yFeet = rampTopElevationFeet - u * (rampTopElevationFeet - startElevationFeet);
+      const yFeet = rampTopElevationFeet - u * rampDrop;
       return { yFeet, dyDs: rampSlope };
     }
     if (s > lengthFeet) {
@@ -126,11 +138,11 @@ function createHarmonicElevation(params: {
     let sumGradeHarmonics = 0;
     let sumIntegralHarmonics = 0;
 
-    for (const h of harmonics) {
-      const freq = (2 * Math.PI * h.harmonicNumber) / lengthFeet;
-      const angle = freq * s + h.phase;
+    for (let i = 0; i < numHarmonics; i++) {
+      const h = precomputed[i];
+      const angle = h.freq * s + h.phase;
       sumGradeHarmonics += h.amplitude * Math.cos(angle);
-      sumIntegralHarmonics += (h.amplitude / freq) * (Math.sin(angle) - Math.sin(h.phase));
+      sumIntegralHarmonics += h.ampOverFreq * (Math.sin(angle) - h.sinPhase);
     }
 
     const downhillGrade = g0 + sumGradeHarmonics;

@@ -109,7 +109,7 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
   const [loadout, setLoadout] = useState<SoapboxLoadout>(loadInitialSoapboxLoadout);
   const [history, setHistory] = useState<{ entries: SoapboxLoadout[]; index: number }>(
     () => ({
-      entries: [loadInitialSoapboxLoadout()],
+      entries: [loadout],
       index: 0,
     })
   );

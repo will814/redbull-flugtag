@@ -491,7 +491,7 @@ export function detachSoapboxPart(
   let latOffset = 0;
   let heightOffset = 1.2;
   let vLatImpulse = 0;
-  let vHeightImpulse = 14 + Math.random() * 6;
+  let vHeightImpulse = 12 + Math.random() * 4.5;
   let vsImpulse = state.speedFtS * 0.75 + Math.random() * 6;
 
   switch (slot) {
@@ -525,7 +525,7 @@ export function detachSoapboxPart(
       sOffset = -1.2;
       latOffset = 0;
       heightOffset = 3.2;
-      vHeightImpulse = 18 + Math.random() * 8; // High vertical launch
+      vHeightImpulse = 15 + Math.random() * 4.5; // High vertical launch
       vLatImpulse = (Math.random() - 0.5) * 12;
       break;
   }
@@ -853,33 +853,8 @@ export function stepSoapboxSimulation(
 
   const recFeet = bestRecordFeet ?? 0;
 
-  if (state.phase === 'finished') {
-    state.phaseTime += dt;
-    if (state.completedCourse && !state.isRolledOver && !state.isWrecked) {
-      state.speedFtS = Math.max(0, state.speedFtS - 28 * dt);
-      state.mph = state.speedFtS * 0.681818;
-      state.sFeet = Math.min(state.courseLengthFeet + 85, state.sFeet + state.speedFtS * dt);
-      state.rollDeg *= Math.max(0, 1 - dt * 6);
-      state.driftAngleDeg *= Math.max(0, 1 - dt * 6);
-    }
-    return events;
-  }
-
-  state.phaseTime += dt;
-
-  if (state.statusBannerTimer > 0) {
-    state.statusBannerTimer = Math.max(0, state.statusBannerTimer - dt);
-    if (state.statusBannerTimer === 0) {
-      state.statusBanner = null;
-    }
-  }
-
-  if (state.sparkIntensity > 0) {
-    state.sparkIntensity = Math.max(0, state.sparkIntensity - dt * 2.8);
-  }
-
   // ----------------------------------------------------------------------------
-  // Step Frenet 3D Tumbling Debris Ballistics
+  // Step Frenet 3D Tumbling Debris Ballistics (including during finished/wrecked state)
   // ----------------------------------------------------------------------------
   for (const d of state.debris) {
     d.sFeet += d.velSFtS * dt;
@@ -923,6 +898,31 @@ export function stepSoapboxSimulation(
     d.xFeet = roadAtD.xFeet;
     d.yFeet = roadAtD.yFeet + d.heightFeet;
     d.zFeet = roadAtD.zFeet + d.lateralFeet;
+  }
+
+  if (state.phase === 'finished') {
+    state.phaseTime += dt;
+    if (state.completedCourse && !state.isRolledOver && !state.isWrecked) {
+      state.speedFtS = Math.max(0, state.speedFtS - 28 * dt);
+      state.mph = state.speedFtS * 0.681818;
+      state.sFeet = Math.min(state.courseLengthFeet + 85, state.sFeet + state.speedFtS * dt);
+      state.rollDeg *= Math.max(0, 1 - dt * 6);
+      state.driftAngleDeg *= Math.max(0, 1 - dt * 6);
+    }
+    return events;
+  }
+
+  state.phaseTime += dt;
+
+  if (state.statusBannerTimer > 0) {
+    state.statusBannerTimer = Math.max(0, state.statusBannerTimer - dt);
+    if (state.statusBannerTimer === 0) {
+      state.statusBanner = null;
+    }
+  }
+
+  if (state.sparkIntensity > 0) {
+    state.sparkIntensity = Math.max(0, state.sparkIntensity - dt * 2.8);
   }
 
   // Smooth front wheel steering angle visual response

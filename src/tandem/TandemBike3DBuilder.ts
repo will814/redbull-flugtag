@@ -181,7 +181,7 @@ function createStrutBetween(
   const geo = new THREE.CylinderGeometry(radius, radius, length, radialSegments);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.receiveShadow = false;
 
   const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
   mesh.position.copy(mid);
@@ -1252,6 +1252,11 @@ function buildCrewMember(
   return { crewGroup, legL, legR };
 }
 
+const _ikUpAxis = new THREE.Vector3(0, 1, 0);
+const _ikKneePos = new THREE.Vector3();
+const _ikPedalPos = new THREE.Vector3();
+const _ikDir = new THREE.Vector3();
+
 // Analytical Closed-form 2-bone Inverse Kinematics solver
 export function updateCrewLegIK(leg: LegIKChain, crankAngleRad: number): void {
   const L1 = TANDEM_GEOMETRY.thighLengthM;
@@ -1289,26 +1294,24 @@ export function updateCrewLegIK(leg: LegIKChain, crankAngleRad: number): void {
   const kneeY = hipY + L1 * Math.sin(thighAngle);
   const kneeZ = leg.hipPos.z + (leg.isLeft ? -0.015 : 0.015);
 
-  const kneePos = new THREE.Vector3(kneeX, kneeY, kneeZ);
-  const pedalPos = new THREE.Vector3(pedalX, pedalY, pedalZ);
+  _ikKneePos.set(kneeX, kneeY, kneeZ);
+  _ikPedalPos.set(pedalX, pedalY, pedalZ);
 
   // 1. Position & Orient Thigh Cylinder
-  const thighMid = new THREE.Vector3().addVectors(leg.hipPos, kneePos).multiplyScalar(0.5);
-  leg.thighMesh.position.copy(thighMid);
-  const thighDir = new THREE.Vector3().subVectors(kneePos, leg.hipPos).normalize();
-  leg.thighMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), thighDir);
+  leg.thighMesh.position.addVectors(leg.hipPos, _ikKneePos).multiplyScalar(0.5);
+  _ikDir.subVectors(_ikKneePos, leg.hipPos).normalize();
+  leg.thighMesh.quaternion.setFromUnitVectors(_ikUpAxis, _ikDir);
 
   // 2. Position Knee Joint
-  leg.kneeJoint.position.copy(kneePos);
+  leg.kneeJoint.position.copy(_ikKneePos);
 
   // 3. Position & Orient Shank Cylinder
-  const shankMid = new THREE.Vector3().addVectors(kneePos, pedalPos).multiplyScalar(0.5);
-  leg.shankMesh.position.copy(shankMid);
-  const shankDir = new THREE.Vector3().subVectors(pedalPos, kneePos).normalize();
-  leg.shankMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), shankDir);
+  leg.shankMesh.position.addVectors(_ikKneePos, _ikPedalPos).multiplyScalar(0.5);
+  _ikDir.subVectors(_ikPedalPos, _ikKneePos).normalize();
+  leg.shankMesh.quaternion.setFromUnitVectors(_ikUpAxis, _ikDir);
 
   // 4. Position Foot / Shoe
-  leg.footMesh.position.copy(pedalPos);
+  leg.footMesh.position.copy(_ikPedalPos);
   leg.footMesh.rotation.set(0, 0, 0); // Flat on pedal
 }
 
@@ -1498,10 +1501,13 @@ export function updateTandemAnimation(
     }
   }
 
-  updateCrewLegIK(craft.crewIK.captainLegL, crankAngle);
-  updateCrewLegIK(craft.crewIK.captainLegR, crankAngle);
-  updateCrewLegIK(craft.crewIK.stokerLegL, crankAngle);
-  updateCrewLegIK(craft.crewIK.stokerLegR, crankAngle);
+  if (craft.root.userData.lastCrankAngleRad !== crankAngle) {
+    craft.root.userData.lastCrankAngleRad = crankAngle;
+    updateCrewLegIK(craft.crewIK.captainLegL, crankAngle);
+    updateCrewLegIK(craft.crewIK.captainLegR, crankAngle);
+    updateCrewLegIK(craft.crewIK.stokerLegL, crankAngle);
+    updateCrewLegIK(craft.crewIK.stokerLegR, crankAngle);
+  }
 }
 
 // ============================================================================
@@ -1515,6 +1521,9 @@ export function disposeTandemObject3D(root: THREE.Object3D, disposeCached = fals
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
+    if ((mesh as THREE.InstancedMesh).isInstancedMesh) {
+      (mesh as THREE.InstancedMesh).dispose();
+    }
 
     if (mesh.geometry && (disposeCached || !mesh.geometry.userData?.cached)) {
       if (!disposedGeos.has(mesh.geometry)) {

@@ -30,6 +30,7 @@ import { soundEngine } from '../audio/SoundEngine';
 
 export interface CoasterCanvas3DProps {
   mode: 'builder' | 'ride';
+  rideRunId?: number;
   loadout: CoasterLoadout;
   metrics: CoasterMetrics;
   activeCategory: CoasterPartCategory;
@@ -52,11 +53,11 @@ function buildSplineTubeMesh(
   material: THREE.Material
 ): THREE.Mesh {
   const curve = new THREE.CatmullRomCurve3(points);
-  const tubularSegments = Math.max(24, points.length * 2);
+  const tubularSegments = Math.max(24, points.length);
   const geo = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
   const mesh = new THREE.Mesh(geo, material);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
   return mesh;
 }
 
@@ -67,6 +68,7 @@ function buildSplineTubeMesh(
 function buildThemeParkCoasterEnvironment(railTintHex: string): {
   envGroup: THREE.Group;
   beaconMeshes: THREE.Mesh[];
+  railMat: THREE.MeshStandardMaterial;
 } {
   const envGroup = new THREE.Group();
   const beaconMeshes: THREE.Mesh[] = [];
@@ -105,15 +107,13 @@ function buildThemeParkCoasterEnvironment(railTintHex: string): {
   });
 
   // 1. Ground Meadow Plane & Theme-Park Pathway
-  const groundMat = new THREE.MeshStandardMaterial({
+  const groundMat = new THREE.MeshLambertMaterial({
     color: new THREE.Color('#15803d'),
-    roughness: 0.9,
-    metalness: 0.02,
   });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 600), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(320, -0.1, 0);
-  ground.receiveShadow = true;
+  ground.receiveShadow = false;
   envGroup.add(ground);
 
   // 2. Sample the 2,000-ft track before and after the Broken Rail Gap [1270..1302 ft]
@@ -139,19 +139,28 @@ function buildThemeParkCoasterEnvironment(railTintHex: string): {
       spinePts.push(p.clone().addScaledVector(n, -0.42));
     }
 
-    envGroup.add(buildSplineTubeMesh(leftPts, 0.068, 8, railMat));
-    envGroup.add(buildSplineTubeMesh(rightPts, 0.068, 8, railMat));
-    envGroup.add(buildSplineTubeMesh(spinePts, 0.13, 8, spineMat));
+    envGroup.add(buildSplineTubeMesh(leftPts, 0.068, 6, railMat));
+    envGroup.add(buildSplineTubeMesh(rightPts, 0.068, 6, railMat));
+    envGroup.add(buildSplineTubeMesh(spinePts, 0.13, 6, spineMat));
   }
 
-  // 3. Crosstie Ribs & Support Stanchions along the track
+  // 3. Crosstie Ribs & Support Stanchions along the track (batched via InstancedMesh)
   const tieGeo = new THREE.BoxGeometry(0.1, 0.08, COASTER_RAIL_HALF_GAUGE * 2.15);
   const strutGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.56, 6);
   const brakeFinGeo = new THREE.BoxGeometry(1.8, 0.22, 0.24);
+  const unitColGeo = new THREE.CylinderGeometry(0.16, 0.22, 1, 8);
   const rotMat = new THREE.Matrix4();
   const vecT = new THREE.Vector3();
   const vecN = new THREE.Vector3();
   const vecB = new THREE.Vector3();
+  const tempObj = new THREE.Object3D();
+
+  const stdTieMatrices: THREE.Matrix4[] = [];
+  const bullseyeTieMatrices: THREE.Matrix4[] = [];
+  const strutMatrices: THREE.Matrix4[] = [];
+  const copperFinMatrices: THREE.Matrix4[] = [];
+  const bullseyeFinMatrices: THREE.Matrix4[] = [];
+  const colMatrices: THREE.Matrix4[] = [];
 
   for (let s = 0; s <= COASTER_TRACK_LENGTH_FEET; s += 8) {
     if (s > GAP_START_FEET && s < GAP_END_FEET) continue;
@@ -160,46 +169,70 @@ function buildThemeParkCoasterEnvironment(railTintHex: string): {
     vecN.set(sample.nx, sample.ny, sample.nz);
     vecB.set(sample.bx, sample.by, sample.bz);
     rotMat.makeBasis(vecT, vecN, vecB);
+    tempObj.quaternion.setFromRotationMatrix(rotMat);
+    tempObj.scale.set(1, 1, 1);
 
     const isBullseye = s >= BULLSEYE_START_FEET && s <= BULLSEYE_END_FEET;
-    const tieMesh = new THREE.Mesh(tieGeo, isBullseye ? bullseyeRailMat : tieMat);
-    tieMesh.position
+    tempObj.position
       .set(sample.xMeters, sample.yMeters, sample.zMeters)
       .addScaledVector(vecN, -0.06);
-    tieMesh.quaternion.setFromRotationMatrix(rotMat);
-    envGroup.add(tieMesh);
+    tempObj.updateMatrix();
+    if (isBullseye) {
+      bullseyeTieMatrices.push(tempObj.matrix.clone());
+    } else {
+      stdTieMatrices.push(tempObj.matrix.clone());
+    }
 
-    const centerStrut = new THREE.Mesh(strutGeo, tieMat);
-    centerStrut.position
+    tempObj.position
       .set(sample.xMeters, sample.yMeters, sample.zMeters)
       .addScaledVector(vecN, -0.22);
-    centerStrut.quaternion.setFromRotationMatrix(rotMat);
-    envGroup.add(centerStrut);
+    tempObj.updateMatrix();
+    strutMatrices.push(tempObj.matrix.clone());
 
     // Eddy-current magnetic stator fins on the Final Brake Run (1,800..1,990 ft)
     if (s >= 1800 && s <= 1990) {
-      const brakeFin = new THREE.Mesh(
-        brakeFinGeo,
-        isBullseye ? bullseyeRailMat : copperBrakeMat
-      );
-      brakeFin.position
+      tempObj.position
         .set(sample.xMeters, sample.yMeters, sample.zMeters)
         .addScaledVector(vecN, 0.06);
-      brakeFin.quaternion.setFromRotationMatrix(rotMat);
-      envGroup.add(brakeFin);
+      tempObj.updateMatrix();
+      if (isBullseye) {
+        bullseyeFinMatrices.push(tempObj.matrix.clone());
+      } else {
+        copperFinMatrices.push(tempObj.matrix.clone());
+      }
     }
 
     // Vertical Steel Support Columns to ground every 32 ft (skipping inverted apex & water)
     if (s % 32 === 0 && sample.ny > 0.25 && !sample.isLagoonSplash) {
       const colHeight = Math.max(0.5, sample.yMeters - 0.35);
-      const col = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.16, 0.22, colHeight, 8),
-        columnMat
-      );
-      col.position.set(sample.xMeters, colHeight / 2, sample.zMeters);
-      envGroup.add(col);
+      tempObj.position.set(sample.xMeters, colHeight / 2, sample.zMeters);
+      tempObj.rotation.set(0, 0, 0);
+      tempObj.scale.set(1, colHeight, 1);
+      tempObj.updateMatrix();
+      colMatrices.push(tempObj.matrix.clone());
     }
   }
+
+  const addInstancedBatch = (
+    geo: THREE.BufferGeometry,
+    mat: THREE.Material,
+    matrices: THREE.Matrix4[]
+  ) => {
+    if (matrices.length === 0) return;
+    const inst = new THREE.InstancedMesh(geo, mat, matrices.length);
+    for (let i = 0; i < matrices.length; i++) {
+      inst.setMatrixAt(i, matrices[i]);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+    envGroup.add(inst);
+  };
+
+  addInstancedBatch(tieGeo, tieMat, stdTieMatrices);
+  addInstancedBatch(tieGeo, bullseyeRailMat, bullseyeTieMatrices);
+  addInstancedBatch(strutGeo, tieMat, strutMatrices);
+  addInstancedBatch(brakeFinGeo, copperBrakeMat, copperFinMatrices);
+  addInstancedBatch(brakeFinGeo, bullseyeRailMat, bullseyeFinMatrices);
+  addInstancedBatch(unitColGeo, columnMat, colMatrices);
 
   // 4. Elevated Boarding Station Canopy & LIM Launch Stator Coils (s = 0..55 ft)
   const st0 = evaluateCoasterTrack(24);
@@ -303,7 +336,7 @@ function buildThemeParkCoasterEnvironment(railTintHex: string): {
   bumper.position.set(endSample.xMeters, endSample.yMeters + 0.6, endSample.zMeters);
   envGroup.add(bumper);
 
-  return { envGroup, beaconMeshes };
+  return { envGroup, beaconMeshes, railMat };
 }
 
 /**
@@ -324,11 +357,11 @@ function buildEngineeringBayEnvironment(): {
   // Workshop polished floor
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(36, 36),
-    new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.45, metalness: 0.25 })
+    new THREE.MeshLambertMaterial({ color: '#0f172a' })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = -0.85;
-  floor.receiveShadow = true;
+  floor.receiveShadow = false;
   bayGroup.add(floor);
 
   // Inspection pit safety yellow curb
@@ -426,6 +459,7 @@ function buildEngineeringBayEnvironment(): {
 
 export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
   mode,
+  rideRunId = 0,
   loadout,
   metrics,
   activeCategory,
@@ -444,6 +478,8 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
   metricsRef.current = metrics;
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const rideRunIdRef = useRef(rideRunId);
+  rideRunIdRef.current = rideRunId;
   const dynoRef = useRef(dynoActive);
   dynoRef.current = dynoActive;
   const pausedRef = useRef(paused);
@@ -457,8 +493,10 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
 
   const carGroupsRef = useRef<CoasterCar3DGroups | null>(null);
   const testTrackRigRef = useRef<THREE.Group | null>(null);
+  const parkRailMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const snapPopTimerRef = useRef<number>(0);
   const loopControlRef = useRef<{ pause: () => void; resume: () => void } | null>(null);
+  const syncSceneModeRef = useRef<((m: 'builder' | 'ride', runId: number) => void) | null>(null);
 
   // Stop or resume the requestAnimationFrame loop when `paused` changes (e.g. while CoasterScorecardModal is open)
   useEffect(() => {
@@ -469,6 +507,11 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
     }
   }, [paused]);
 
+  // Synchronously transition 3D scene state whenever `mode` or `rideRunId` changes
+  useEffect(() => {
+    syncSceneModeRef.current?.(mode, rideRunId);
+  }, [mode, rideRunId]);
+
   // Rebuild 3D coaster car whenever loadout changes
   useEffect(() => {
     const rig = testTrackRigRef.current;
@@ -478,22 +521,32 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
       disposeCoasterObject3D(carGroupsRef.current.root);
     }
     const built = buildCoasterCar3D(loadout);
+    const isBuilder = modeRef.current === 'builder';
+    for (const m of built.socketMarkerList) {
+      m.visible = isBuilder;
+    }
     rig.add(built.root);
     carGroupsRef.current = built;
     snapPopTimerRef.current = 0.22;
+    if (parkRailMatRef.current) {
+      const paintTheme = getCoasterPaintTheme(loadout.paintId);
+      parkRailMatRef.current.color.set(paintTheme.railTintHex);
+    }
   }, [loadout]);
 
-  // Main Three.js Scene & 120Hz Simulation Loop
+  // Main Three.js Scene & 120Hz Simulation Loop (kept mounted across mode & rideRunId transitions)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const initialMode = modeRef.current;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(mode === 'builder' ? '#0b1120' : '#0284c7');
-    scene.fog =
-      mode === 'builder'
-        ? new THREE.FogExp2('#0b1120', 0.035)
-        : new THREE.FogExp2('#bae6fd', 0.0022);
+    const bgBuilder = new THREE.Color('#0b1120');
+    const bgRide = new THREE.Color('#0284c7');
+    const fogBuilder = new THREE.FogExp2('#0b1120', 0.035);
+    const fogRide = new THREE.FogExp2('#bae6fd', 0.0022);
+    scene.background = initialMode === 'builder' ? bgBuilder : bgRide;
+    scene.fog = initialMode === 'builder' ? fogBuilder : fogRide;
 
     const camera = new THREE.PerspectiveCamera(
       52,
@@ -506,7 +559,7 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
@@ -515,24 +568,33 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
     scene.add(hemiLight);
 
     const sunLight = new THREE.DirectionalLight('#ffffff', 1.35);
-    sunLight.position.set(24, 48, 32);
+    sunLight.position.set(16, 32, 20);
     sunLight.castShadow = true;
-    sunLight.shadow.mapSize.set(1024, 1024);
+    sunLight.shadow.mapSize.set(512, 512);
+    sunLight.shadow.camera.near = 2;
+    sunLight.shadow.camera.far = 85;
+    sunLight.shadow.camera.left = -14;
+    sunLight.shadow.camera.right = 14;
+    sunLight.shadow.camera.top = 14;
+    sunLight.shadow.camera.bottom = -14;
+    sunLight.shadow.bias = -0.0005;
     scene.add(sunLight);
+    scene.add(sunLight.target);
 
-    // Build mode-specific environment
+    // Build both environments once
     const bayEnv = buildEngineeringBayEnvironment();
-    bayEnv.bayGroup.visible = mode === 'builder';
+    bayEnv.bayGroup.visible = initialMode === 'builder';
     scene.add(bayEnv.bayGroup);
 
     const paintTheme = getCoasterPaintTheme(loadoutRef.current.paintId);
     const parkEnv = buildThemeParkCoasterEnvironment(paintTheme.railTintHex);
-    parkEnv.envGroup.visible = mode === 'ride';
+    parkEnv.envGroup.visible = initialMode === 'ride';
+    parkRailMatRef.current = parkEnv.railMat;
     scene.add(parkEnv.envGroup);
 
     // Holder group for the coaster car (attached to testTrackRig in builder, or world in ride)
     const carHolder = new THREE.Group();
-    if (mode === 'builder') {
+    if (initialMode === 'builder') {
       bayEnv.testTrackRig.add(carHolder);
     } else {
       scene.add(carHolder);
@@ -540,6 +602,9 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
     testTrackRigRef.current = carHolder;
 
     const initialCar = buildCoasterCar3D(loadoutRef.current);
+    for (const m of initialCar.socketMarkerList) {
+      m.visible = initialMode === 'builder';
+    }
     carHolder.add(initialCar.root);
     carGroupsRef.current = initialCar;
 
@@ -641,18 +706,17 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
     };
     window.addEventListener('resize', onResize);
 
-    // Reset ride state when entering ride mode
-    if (mode === 'ride') {
-      rideStateRef.current = createInitialCoasterPhysicsState();
-      actionTapCountRef.current = 0;
-    }
-
     let lastTime = performance.now();
     let physAccum = 0;
     let lastHandledTapCount = actionTapCountRef.current;
     let completionNotified = false;
     let splashSoundCooldown = 0;
     let rafId = 0;
+    let lastSceneMode: 'builder' | 'ride' | null = null;
+    let lastRideRunId = -1;
+    let lastSnapX = Number.NaN;
+    let lastSnapY = Number.NaN;
+    let lastSnapZ = Number.NaN;
 
     // Reusable Three.js math objects for zero-GC 120Hz updates
     const vecT = new THREE.Vector3();
@@ -666,6 +730,83 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
     const smoothLookAt = new THREE.Vector3(4.5, 13.3, 0);
     const smoothCamUp = new THREE.Vector3(0, 1, 0);
 
+    const updateSunShadowTarget = (tx: number, ty: number, tz: number) => {
+      const snapX = Math.round(tx * 2) * 0.5;
+      const snapY = Math.round(ty * 2) * 0.5;
+      const snapZ = Math.round(tz * 2) * 0.5;
+      if (snapX !== lastSnapX || snapY !== lastSnapY || snapZ !== lastSnapZ) {
+        lastSnapX = snapX;
+        lastSnapY = snapY;
+        lastSnapZ = snapZ;
+        sunLight.position.set(snapX + 16, snapY + 32, snapZ + 20);
+        sunLight.target.position.set(snapX, snapY, snapZ);
+        sunLight.target.updateMatrixWorld();
+      }
+    };
+
+    const syncSceneMode = (nextMode: 'builder' | 'ride', nextRunId: number) => {
+      if (
+        lastSceneMode === nextMode &&
+        (nextMode !== 'ride' || lastRideRunId === nextRunId)
+      ) {
+        return;
+      }
+      lastSceneMode = nextMode;
+      lastRideRunId = nextRunId;
+      bayEnv.bayGroup.visible = nextMode === 'builder';
+      parkEnv.envGroup.visible = nextMode === 'ride';
+      scene.background = nextMode === 'builder' ? bgBuilder : bgRide;
+      scene.fog = nextMode === 'builder' ? fogBuilder : fogRide;
+
+      const car = carGroupsRef.current;
+      if (nextMode === 'builder') {
+        if (carHolder.parent !== bayEnv.testTrackRig) {
+          bayEnv.testTrackRig.add(carHolder);
+        }
+        if (car) {
+          car.root.position.set(0, 0, 0);
+          car.root.rotation.set(0, 0, 0);
+          for (const m of car.socketMarkerList) m.visible = true;
+        }
+        for (const p of splashParticles) {
+          p.life = 0;
+          p.mesh.visible = false;
+        }
+        camera.up.set(0, 1, 0);
+        updateSunShadowTarget(0, 0, 0);
+      } else {
+        if (carHolder.parent !== scene) {
+          scene.add(carHolder);
+        }
+        if (
+          !rideStateRef.current ||
+          rideStateRef.current.phase === 'completed' ||
+          rideStateRef.current.phase === 'derailed'
+        ) {
+          rideStateRef.current = createInitialCoasterPhysicsState();
+        }
+        if (car) {
+          for (const m of car.socketMarkerList) m.visible = false;
+        }
+        lastHandledTapCount = 0;
+        physAccum = 0;
+        completionNotified = false;
+        splashSoundCooldown = 0;
+        smoothCamPos.set(-6.8, 15.65, 0);
+        smoothLookAt.set(4.5, 13.3, 0);
+        smoothCamUp.set(0, 1, 0);
+        for (const p of splashParticles) {
+          p.life = 0;
+          p.mesh.visible = false;
+        }
+        const st = rideStateRef.current;
+        updateSunShadowTarget(st.worldX, st.worldY, st.worldZ);
+      }
+    };
+
+    syncSceneModeRef.current = syncSceneMode;
+    syncSceneMode(modeRef.current, rideRunIdRef.current);
+
     const animate = (now: number) => {
       if (pausedRef.current) {
         rafId = 0;
@@ -676,6 +817,9 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
       lastTime = now;
       const elapsedSec = now * 0.001;
 
+      const currentMode = modeRef.current;
+      const currentRideRunId = rideRunIdRef.current;
+      syncSceneMode(currentMode, currentRideRunId);
       const car = carGroupsRef.current;
 
       // Pop-scale animation when swapping parts
@@ -687,7 +831,7 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
         car.root.scale.setScalar(1);
       }
 
-      if (modeRef.current === 'builder') {
+      if (currentMode === 'builder') {
         // ---------------------------------------------------------------------
         // ENGINEERING BAY & INTERACTIVE TRACK DYNO RIG
         // ---------------------------------------------------------------------
@@ -750,12 +894,15 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
 
         // Handle discrete action taps (LIM Charge / Launch / KERS Boost)
         if (actionTapCountRef.current !== lastHandledTapCount) {
+          const tapsToProcess = Math.max(1, actionTapCountRef.current - lastHandledTapCount);
           lastHandledTapCount = actionTapCountRef.current;
-          const res = triggerCoasterActionTap(state, metricsRef.current);
-          if (res.type === 'lim_launch_perfect' || res.type === 'kers_boost') {
-            soundEngine.playLimLaunchWhoosh(res.type === 'lim_launch_perfect');
-          } else if (res.type === 'lim_charge') {
-            soundEngine.playPushBoost();
+          for (let t = 0; t < tapsToProcess; t++) {
+            const res = triggerCoasterActionTap(state, metricsRef.current);
+            if (res.type === 'lim_launch_perfect' || res.type === 'kers_boost') {
+              soundEngine.playLimLaunchWhoosh(res.type === 'lim_launch_perfect');
+            } else if (res.type === 'lim_charge') {
+              soundEngine.playPushBoost();
+            }
           }
         }
 
@@ -865,6 +1012,9 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
           for (const m of car.socketMarkerList) m.visible = false;
         }
 
+        // Update snapped directional light shadow frustum around the coaster car
+        updateSunShadowTarget(state.worldX, state.worldY, state.worldZ);
+
         // Dynamic Chase Camera that follows behind & along the coaster normal (zero gimbal lock in 360° loop!)
         const camBackDist = 6.8;
         const camUpHeight = 2.65;
@@ -918,8 +1068,10 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
 
     return () => {
       loopControlRef.current = null;
+      syncSceneModeRef.current = null;
       testTrackRigRef.current = null;
       carGroupsRef.current = null;
+      parkRailMatRef.current = null;
       if (rafId !== 0) {
         cancelAnimationFrame(rafId);
       }
@@ -933,7 +1085,7 @@ export const CoasterCanvas3D: React.FC<CoasterCanvas3DProps> = ({
       disposeCoasterObject3D(scene);
       renderer.dispose();
     };
-  }, [mode]);
+  }, []);
 
   return (
     <div

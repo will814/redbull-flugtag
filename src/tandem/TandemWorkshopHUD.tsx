@@ -169,17 +169,21 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showPresetsModal, showCoursesModal, onReturnToHub, onSelectCategory, onStartCourseRun, canUndo, canRedo, onUndo, onRedo]);
 
-  // Auto-rock simulation for Dyno Balance Rig
+  // Auto-rock simulation for Dyno Balance Rig (throttled to ~20Hz to avoid 60fps React tree re-renders)
   useEffect(() => {
     if (!autoRocking) {
       if (autoRockRef.current) cancelAnimationFrame(autoRockRef.current);
       return;
     }
     const startTime = performance.now();
+    let lastEmit = 0;
     const loop = (now: number) => {
-      const elapsed = (now - startTime) / 1000;
-      const angle = Math.sin(elapsed * 2.8) * Math.min(24, Math.max(10, metrics.rolloverThresholdDeg - 4));
-      onChangeDynoTiltAngle(Number(angle.toFixed(1)));
+      if (now - lastEmit >= 50) {
+        lastEmit = now;
+        const elapsed = (now - startTime) / 1000;
+        const angle = Math.sin(elapsed * 2.8) * Math.min(24, Math.max(10, metrics.rolloverThresholdDeg - 4));
+        onChangeDynoTiltAngle(Number(angle.toFixed(1)));
+      }
       autoRockRef.current = requestAnimationFrame(loop);
     };
     autoRockRef.current = requestAnimationFrame(loop);
