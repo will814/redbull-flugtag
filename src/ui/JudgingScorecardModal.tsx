@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { CraftPart, PART_CATALOG } from '../builder/PartCatalog';
 import { FlightSimulationState } from '../physics/AeroPhysicsEngine';
-import { RotateCcw, Wrench, Trophy, Sparkles, ArrowLeft } from 'lucide-react';
+import { RotateCcw, Wrench, Trophy, Sparkles } from 'lucide-react';
 
 interface JudgingScorecardModalProps {
   flightState: FlightSimulationState;
@@ -40,12 +40,16 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.code === 'Space' || e.code === 'Enter') {
+      if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyR') {
         if (e.repeat || performance.now() - mountedAt < 350) {
           e.preventDefault();
           return;
         }
-        if (document.activeElement instanceof HTMLButtonElement) {
+        if (
+          document.activeElement instanceof HTMLButtonElement &&
+          document.activeElement !== primaryBtnRef.current &&
+          e.code !== 'KeyR'
+        ) {
           return;
         }
         e.preventDefault();
@@ -216,7 +220,7 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/25 via-yellow-500/25 to-emerald-500/25 border-2 border-yellow-300 px-2.5 py-1.5">
             <div className="flex items-center gap-1.5 font-display text-[11px] sm:text-xs font-black text-yellow-300 mb-1">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>NEW PARTS UNLOCKED IN THE HANGAR!</span>
+              <span>NEW PARTS UNLOCKED IN WORKSHOP!</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {newlyUnlockedParts.map((part) => (
@@ -244,37 +248,37 @@ export const JudgingScorecardModal: React.FC<JudgingScorecardModalProps> = React
           </div>
         ) : null}
 
-        {/* ACTION BUTTONS */}
-        <div className="grid grid-cols-2 gap-2">
+        {/* UNIFIED ACTION BUTTONS ROW */}
+        <div className="flex flex-wrap items-center gap-2 pt-0.5">
           <button
             ref={primaryBtnRef}
             onClick={onFlyAgain}
-            className="flex items-center justify-center gap-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border-2 border-sky-400/60 py-2 sm:py-2.5 font-display text-xs sm:text-base font-black text-sky-200 shadow-lg active:scale-95 transition cursor-pointer"
-            title="Fly Again (Space / Enter)"
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 border-2 border-white py-2.5 px-3 font-display text-xs sm:text-sm font-black text-slate-950 shadow-xl active:scale-95 transition cursor-pointer"
+            title="Fly Again (Space / Enter / R)"
           >
-            <RotateCcw className="h-4 w-4 sm:h-5 sm:w-5" />
-            <span>FLY AGAIN!</span>
+            <RotateCcw className="h-4 w-4 stroke-[2.5]" />
+            <span>FLY AGAIN! [R / Space]</span>
           </button>
 
           <button
             onClick={onBackToHangar}
-            className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 border-2 border-white py-2 sm:py-2.5 font-display text-xs sm:text-base font-black text-slate-950 shadow-xl active:scale-95 transition cursor-pointer"
-            title="Return to Hangar (B / Esc)"
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border-2 border-sky-400/60 py-2.5 px-3 font-display text-xs sm:text-sm font-black text-white shadow-lg active:scale-95 transition cursor-pointer"
+            title="Return to Workshop (B / Esc)"
           >
-            <Wrench className="h-4 w-4 sm:h-5 sm:w-5" />
-            <span>BUILD & UPGRADE!</span>
+            <Wrench className="h-4 w-4 text-sky-400" />
+            <span>WORKSHOP [B / Esc]</span>
           </button>
-        </div>
 
-        {onReturnToHub && (
-          <button
-            onClick={onReturnToHub}
-            className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 py-1.5 text-xs font-extrabold text-slate-300 hover:text-white active:scale-95 transition cursor-pointer"
-          >
-            <ArrowLeft className="h-3.5 w-3.5 text-amber-400" />
-            <span>◀ Arcade Hub — Switch Game Mode</span>
-          </button>
-        )}
+          {onReturnToHub && (
+            <button
+              onClick={onReturnToHub}
+              className="flex items-center justify-center gap-1 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 py-2.5 px-3 text-xs font-extrabold text-slate-300 hover:text-white active:scale-95 transition cursor-pointer"
+              title="Return to Arcade Hub"
+            >
+              <span>◀ Arcade Hub</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

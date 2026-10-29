@@ -218,6 +218,15 @@ export const CoasterGame: React.FC<CoasterGameProps> = ({
   useEffect(() => {
     if (mode !== 'builder') return;
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable ||
+        document.querySelector('[role="dialog"]')
+      ) {
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
         e.preventDefault();
         soundEngine.playSnapPop();
@@ -234,6 +243,7 @@ export const CoasterGame: React.FC<CoasterGameProps> = ({
         handleRedo();
         return;
       }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const idx = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].indexOf(
         e.code
       );

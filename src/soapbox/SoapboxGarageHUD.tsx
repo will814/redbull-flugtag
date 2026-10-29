@@ -184,6 +184,14 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
         target instanceof HTMLTextAreaElement ||
         target?.isContentEditable;
 
+      if (isInput) {
+        if (e.code === 'Escape') {
+          e.preventDefault();
+          (target as HTMLElement).blur();
+        }
+        return;
+      }
+
       if (e.code === 'Escape') {
         e.preventDefault();
         if (showCourseModal) {
@@ -198,8 +206,6 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
         return;
       }
 
-      if (isInput) return;
-
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
         e.preventDefault();
         if (e.shiftKey) {
@@ -207,15 +213,66 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
         } else {
           onUndo();
         }
+        return;
       } else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') {
         e.preventDefault();
         onRedo();
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey || showCourseModal) return;
+
+      if (e.code === 'KeyG') {
+        e.preventDefault();
+        setShowGarageModal((v) => !v);
+        return;
+      }
+
+      if (showGarageModal) return;
+
+      if (['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].includes(e.code)) {
+        const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
+        const cat = SOAPBOX_CATEGORIES[idx];
+        if (cat) {
+          setShowPaintDrawer(false);
+          setDockCollapsed(false);
+          onSelectCategory(cat.id);
+        }
+      } else if (e.code === 'KeyP') {
+        e.preventDefault();
+        setShowPaintDrawer((p) => !p);
+        setDockCollapsed(false);
+      } else if (e.code === 'KeyW') {
+        e.preventDefault();
+        onToggleShakerRig();
+      } else if (e.code === 'KeyR') {
+        e.preventDefault();
+        onRandomizeSoapbox();
+      } else if (e.code === 'KeyM') {
+        e.preventDefault();
+        onToggleMute();
+      } else if (e.code === 'Space') {
+        if (document.activeElement instanceof HTMLButtonElement) return;
+        e.preventDefault();
+        onStartRace();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showCourseModal, showGarageModal, showPaintDrawer, onReturnToHub, onUndo, onRedo]);
+  }, [
+    showCourseModal,
+    showGarageModal,
+    showPaintDrawer,
+    onReturnToHub,
+    onUndo,
+    onRedo,
+    onSelectCategory,
+    onToggleShakerRig,
+    onRandomizeSoapbox,
+    onToggleMute,
+    onStartRace,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -262,144 +319,138 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
     }
   }, [displayMetrics.handlingStatus]);
 
+  const activeCategoryPart = useMemo(
+    () =>
+      hoveredPart ??
+      categoryParts.find((p) => p.id === currentEquippedId) ??
+      categoryParts[0],
+    [hoveredPart, categoryParts, currentEquippedId]
+  );
+
   return (
     <div className="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-2 sm:p-3.5">
       {/* ==================================================================== */}
-      {/* TOP BAR: ARCADE HUB BACK BUTTON, TITLE, RECORDS & DYNO CONTROLS      */}
+      {/* TOP BAR: UNIFIED WORKSHOP HEADER & CONTROLS                          */}
       {/* ==================================================================== */}
-      <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-1.5">
-        {/* Left: Back to Hub + Title & Records */}
-        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-slate-900/90 border-2 border-amber-400/60 px-2.5 py-1.5 shadow-xl backdrop-blur-md shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Left: Arcade Hub Back Button + Event Title */}
+        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-slate-900/90 border border-white/15 px-3 py-1.5 shadow-xl backdrop-blur-md">
           <button
             type="button"
             onClick={onReturnToHub}
-            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 px-2.5 py-1.5 text-xs font-black text-amber-300 transition active:scale-95 cursor-pointer"
+            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 px-2.5 py-1 text-xs font-extrabold text-amber-300 transition active:scale-95 cursor-pointer"
+            title="Return to Arcade Hub (Esc)"
           >
             ◀ Arcade Hub
           </button>
-
-          <div className="flex items-center gap-2 pr-1">
-            <span className="text-xl sm:text-2xl">🏎️</span>
+          <div className="h-5 w-px bg-white/15" />
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🏎️</span>
             <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="font-display text-sm sm:text-base font-black tracking-wide text-white uppercase whitespace-nowrap">
-                  Red Bull Soap Box Garage
-                </h1>
-                <span className="rounded-full bg-amber-400/20 border border-amber-400/50 px-2 py-0.5 text-[10px] font-black text-amber-300 whitespace-nowrap">
-                  ⭐ {totalStars}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-300">
-                <span>
-                  🏆 Best: <strong className="text-yellow-300">{bestRecordFeet} / {activeCourse.lengthFeet.toLocaleString()} ft</strong>
-                </span>
-                {bestTimeSec !== null && (
-                  <span>
-                    ⏱️ Record Time: <strong className="text-emerald-300">{bestTimeSec.toFixed(1)}s</strong>
-                  </span>
-                )}
+              <h1 className="font-display text-xs sm:text-sm font-black tracking-wide text-white uppercase leading-none">
+                Red Bull Soap Box Workshop
+              </h1>
+              <div className="text-[10px] font-bold text-amber-300/90">
+                Gravity Racer Engineering &amp; Downhill Tuning
               </div>
             </div>
           </div>
         </div>
 
-        {/* Center: Course Selector Pill */}
-        <div className="pointer-events-auto flex items-center shrink-0">
+        {/* Right: Course Pill, Best & Stars, Shaker Rig, Presets & Builds, Random, Undo/Redo, Mute */}
+        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-900/90 border border-white/15 px-2.5 py-1.5 shadow-xl backdrop-blur-md">
+          {/* Course Selector Button */}
           <button
             type="button"
             onClick={() => setShowCourseModal(true)}
-            className="flex items-center gap-2 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border-2 border-amber-400 px-3 py-1.5 shadow-xl backdrop-blur-md transition hover:scale-105 active:scale-95 cursor-pointer text-left"
-            title="Click to Choose Downhill Course"
+            className="flex items-center gap-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 px-2.5 py-1 text-xs font-black text-amber-200 transition active:scale-95 cursor-pointer"
+            title="Choose Downhill Course"
           >
-            <span className="text-xl">{activeCourse.emoji}</span>
-            <div className="flex flex-col">
-              <span className="text-[10px] font-black tracking-wider text-amber-300 uppercase">
-                Active Course
-              </span>
-              <span className="font-display text-xs sm:text-sm font-black text-white whitespace-nowrap">
-                {activeCourse.name}
-              </span>
-            </div>
-            <div className="ml-1 hidden xl:flex flex-col text-[10px] font-bold text-slate-300 whitespace-nowrap">
-              <span>📉 -{activeCourse.dropFeet} ft drop</span>
-              <span>📏 {activeCourse.lengthFeet.toLocaleString()} ft</span>
-            </div>
-            <ChevronDown className="h-4 w-4 text-amber-400 ml-0.5" />
+            <span>📍 {activeCourse.emoji}</span>
+            <span>{activeCourse.name}</span>
+            <span className="text-[10px] text-amber-300/80 hidden xl:inline">
+              ({activeCourse.lengthFeet.toLocaleString()} FT)
+            </span>
           </button>
-        </div>
 
-        {/* Right: Shaker Dyno Rig, Garage Presets, Undo/Redo, Randomize, Mute & DROP GATE CTA */}
-        <div className="pointer-events-auto flex items-center gap-1.5 shrink-0">
+          {/* Best Record & Shared Stars */}
+          <div className="flex items-center gap-2 rounded-xl bg-slate-950/80 border border-white/10 px-2.5 py-1 text-xs font-black">
+            <span className="text-amber-300">BEST: {bestRecordFeet} FT</span>
+            {bestTimeSec !== null && (
+              <>
+                <span className="text-slate-600">|</span>
+                <span className="text-emerald-300">TIME: {bestTimeSec.toFixed(1)}s</span>
+              </>
+            )}
+            <span className="text-slate-600">|</span>
+            <span className="text-yellow-300">⭐ {totalStars}</span>
+          </div>
+
+          {/* Shaker Dyno Rig Toggle */}
           <button
             type="button"
             onClick={onToggleShakerRig}
-            className={`flex items-center justify-center gap-1.5 min-w-[122px] rounded-xl border-2 px-2.5 py-1.5 text-xs font-black shadow-lg transition active:scale-95 cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1 rounded-xl border px-2.5 py-1 text-xs font-black transition active:scale-95 cursor-pointer ${
               shakerRigActive
-                ? 'bg-cyan-500 border-cyan-200 text-slate-950 animate-pulse'
-                : 'bg-slate-900/90 border-cyan-400/50 text-cyan-200 hover:bg-slate-800'
+                ? 'bg-cyan-400 text-slate-950 border-white shadow-md'
+                : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-400/40'
             }`}
-            title="Toggle Hydraulic Road Shaker & Rollover Tilt Dyno Rig"
+            title="Toggle Hydraulic Shaker & Rollover Tilt Rig (W)"
           >
-            <Activity className="h-4 w-4 shrink-0" />
-            <span>{shakerRigActive ? 'Shaker: ON' : 'Shaker Rig'}</span>
+            <Activity className="h-3.5 w-3.5" />
+            <span>{shakerRigActive ? 'Shaker Rig: ON' : 'Shaker Rig'}</span>
           </button>
 
+          {/* Presets & Saved Builds Modal */}
           <button
             type="button"
             onClick={() => setShowGarageModal(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border-2 border-amber-400/50 px-2.5 py-1.5 text-xs font-black text-amber-200 shadow-lg transition active:scale-95 cursor-pointer whitespace-nowrap"
+            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/40 px-2.5 py-1 text-xs font-black text-amber-300 transition active:scale-95 cursor-pointer"
+            title="Presets & Saved Builds (G)"
           >
-            <FolderOpen className="h-4 w-4 text-amber-400 shrink-0" />
-            <span>Presets & Builds</span>
+            <FolderOpen className="h-3.5 w-3.5" />
+            <span>Presets &amp; Builds</span>
           </button>
 
+          {/* Randomize */}
           <button
             type="button"
             onClick={onRandomizeSoapbox}
-            className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-1.5 text-xs font-extrabold text-purple-300 shadow-lg transition active:scale-95 cursor-pointer whitespace-nowrap"
-            title="Randomize Unlocked Soapbox Parts"
+            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-purple-400/40 px-2 py-1 text-xs font-black text-purple-300 transition active:scale-95 cursor-pointer"
+            title="Randomize Unlocked Parts (R)"
           >
-            <Shuffle className="h-3.5 w-3.5 shrink-0" />
+            <Shuffle className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Random</span>
           </button>
 
-          <div className="flex items-center rounded-xl bg-slate-900/90 border border-white/15 p-0.5 shadow-lg">
-            <button
-              type="button"
-              onClick={onUndo}
-              disabled={!canUndo}
-              className="rounded-lg p-1.5 text-slate-200 hover:bg-slate-800 disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed"
-              title="Undo Part Change"
-            >
-              <Undo2 className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={onRedo}
-              disabled={!canRedo}
-              className="rounded-lg p-1.5 text-slate-200 hover:bg-slate-800 disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed"
-              title="Redo Part Change"
-            >
-              <Redo2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          {/* Undo / Redo */}
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className="rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-35 border border-white/10 p-1.5 text-slate-200 transition cursor-pointer disabled:cursor-not-allowed"
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            className="rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-35 border border-white/10 p-1.5 text-slate-200 transition cursor-pointer disabled:cursor-not-allowed"
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+          </button>
 
+          {/* Mute Toggle */}
           <button
             type="button"
             onClick={onToggleMute}
-            className="rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 p-2 text-slate-200 shadow-lg transition cursor-pointer"
-            title={muted ? 'Unmute Audio' : 'Mute Audio'}
+            className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 p-1.5 text-slate-200 transition cursor-pointer"
+            title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
           >
-            {muted ? <VolumeX className="h-4 w-4 text-rose-400" /> : <Volume2 className="h-4 w-4 text-emerald-400" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={onStartRace}
-            className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 hover:from-red-500 hover:to-yellow-300 border-2 border-yellow-200 px-3.5 py-2 text-xs sm:text-sm font-black text-slate-950 shadow-xl transition hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
-          >
-            <Flag className="h-4 w-4 fill-slate-950 shrink-0" />
-            <span>DROP THE GATE! 🏁</span>
+            {muted ? <VolumeX className="h-3.5 w-3.5 text-rose-400" /> : <Volume2 className="h-3.5 w-3.5 text-emerald-400" />}
           </button>
         </div>
       </div>
@@ -543,15 +594,21 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
             {handlingBadge.label}
           </div>
 
-          {/* 1-Click Quick-Build Archetype Pills */}
+          {/* 1-Click Quick Builds Grid */}
           <div className="mt-2 border-t border-white/10 pt-2">
             <div className="mb-1 flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-slate-400">
-              <span>⚡ Instant Blueprints</span>
-              <span>1-Click Loadout</span>
+              <span>⚡ Quick Builds:</span>
+              <span>1-Click Equip</span>
             </div>
             <div className="grid grid-cols-2 gap-1">
               {SOAPBOX_PRESETS.map((preset) => {
-                const isActivePreset = loadout.name === preset.name;
+                const isActivePreset =
+                  loadout.chassis === preset.chassis &&
+                  loadout.wheels === preset.wheels &&
+                  loadout.steering === preset.steering &&
+                  loadout.suspension === preset.suspension &&
+                  loadout.brakes === preset.brakes &&
+                  loadout.topper === preset.topper;
                 return (
                   <button
                     key={preset.name}
@@ -574,13 +631,13 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
       </div>
 
       {/* ==================================================================== */}
-      {/* BOTTOM DOCK: 6 AUTOMOTIVE CATEGORY TABS & PART CARDS                 */}
+      {/* BOTTOM DOCK: 6 AUTOMOTIVE CATEGORY TABS, PART CARDS & LAUNCH CTA     */}
       {/* ==================================================================== */}
       <div className="pointer-events-auto flex flex-col gap-1.5 rounded-3xl bg-slate-950/92 border-2 border-amber-400/50 p-2 sm:p-3 shadow-2xl backdrop-blur-md">
         {/* Category Tabs Row + Paint Livery & Collapse Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-1.5">
           <div className="flex flex-wrap items-center gap-1">
-            {SOAPBOX_CATEGORIES.map((cat) => {
+            {SOAPBOX_CATEGORIES.map((cat, idx) => {
               const isSelected = selectedCategory === cat.id && !showPaintDrawer;
               return (
                 <button
@@ -591,7 +648,8 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                     setDockCollapsed(false);
                     onSelectCategory(cat.id);
                   }}
-                  className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-black transition cursor-pointer ${
+                  title={`${cat.label} (Key ${idx + 1})`}
+                  className={`flex items-center gap-1 rounded-xl px-2.5 py-1 text-xs font-black transition cursor-pointer ${
                     isSelected
                       ? 'bg-amber-400 text-slate-950 shadow-md scale-102'
                       : 'bg-slate-800/90 text-slate-200 hover:bg-slate-700 border border-white/10'
@@ -599,6 +657,9 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                 >
                   <span>{cat.emoji}</span>
                   <span>{cat.shortLabel}</span>
+                  <span className={`text-[9px] font-bold ${isSelected ? 'text-slate-800' : 'text-slate-400'}`}>
+                    [{idx + 1}]
+                  </span>
                 </button>
               );
             })}
@@ -609,21 +670,34 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                 setShowPaintDrawer((p) => !p);
                 setDockCollapsed(false);
               }}
-              className={`flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-black transition cursor-pointer ${
+              className={`flex items-center gap-1 rounded-xl px-2.5 py-1 text-xs font-black transition cursor-pointer ${
                 showPaintDrawer
                   ? 'bg-pink-500 text-white shadow-md'
                   : 'bg-slate-800/90 text-pink-300 hover:bg-slate-700 border border-pink-400/30'
               }`}
+              title="Toggle Paint Livery Swatches (P)"
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span>Paint</span>
+              <span className="text-[9px] font-bold opacity-80">[P]</span>
             </button>
           </div>
 
           <div className="flex items-center gap-2">
             <span className="hidden lg:inline-block text-[10px] font-bold text-slate-400">
-              🖱️ Drag 3D Paddock to Orbit • Scroll to Zoom • Click Socket Rings
+              🖱️ Drag 3D to Orbit • Scroll to Zoom • Click Sockets
             </span>
+            {dockCollapsed && (
+              <button
+                type="button"
+                onClick={onStartRace}
+                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 border border-yellow-200 px-3 py-1 text-xs font-black text-slate-950 shadow-lg active:scale-95 transition cursor-pointer"
+                title="Start Downhill Derby Run (Space)"
+              >
+                <Flag className="h-3.5 w-3.5 fill-slate-950" />
+                <span>DROP THE GATE! 🏁</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setDockCollapsed((c) => !c)}
@@ -635,165 +709,196 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
           </div>
         </div>
 
-        {/* Paint Theme Swatches or Horizontal Part Cards */}
+        {/* Paint Theme Swatches or Horizontal Part Cards + Bottom-Right Launch CTA */}
         {!dockCollapsed && (
-          <>
-            {showPaintDrawer ? (
-              <div className="flex items-center gap-2 overflow-x-auto py-1 no-scrollbar">
-                {SOAPBOX_PAINT_THEMES.map((theme) => {
-                  const active = loadout.paintTheme === theme.id;
-                  return (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      onClick={() => onSelectPaint(theme.id)}
-                      className={`flex shrink-0 items-center gap-2 rounded-2xl border-2 px-3 py-2 text-xs font-black transition cursor-pointer ${
-                        active
-                          ? 'bg-slate-800 border-amber-400 text-white shadow-lg'
-                          : 'bg-slate-900/90 border-white/10 text-slate-300 hover:border-white/30'
-                      }`}
-                    >
-                      <span className="flex items-center gap-1">
-                        <span
-                          className="h-4 w-4 rounded-full border border-white/40"
-                          style={{ backgroundColor: theme.bodyHex }}
-                        />
-                        <span
-                          className="h-4 w-4 rounded-full border border-white/40"
-                          style={{ backgroundColor: theme.trimHex }}
-                        />
-                        <span
-                          className="h-4 w-4 rounded-full border border-white/40"
-                          style={{ backgroundColor: theme.accentHex }}
-                        />
-                      </span>
-                      <span>{theme.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="flex items-stretch gap-2 overflow-x-auto py-1 no-scrollbar">
-                {categoryParts.map((part) => {
-                  const isEquipped = currentEquippedId === part.id;
-                  const isLocked = part.unlockStars > totalStars;
-
-                  return (
-                    <button
-                      key={part.id}
-                      ref={isEquipped ? activePartCardRef : null}
-                      type="button"
-                      aria-disabled={isLocked}
-                      onMouseEnter={() => setHoveredPartId(part.id)}
-                      onMouseLeave={() =>
-                        setHoveredPartId((prev) => (prev === part.id ? null : prev))
-                      }
-                      onFocus={() => setHoveredPartId(part.id)}
-                      onBlur={() =>
-                        setHoveredPartId((prev) => (prev === part.id ? null : prev))
-                      }
-                      onClick={() => {
-                        if (!isLocked) {
-                          onEquipPart(selectedCategory, part.id);
-                        }
-                      }}
-                      className={`group relative flex w-56 sm:w-64 shrink-0 flex-col justify-between rounded-2xl border-2 p-2.5 text-left transition ${
-                        isLocked
-                          ? 'bg-slate-900/75 border-slate-700/80 hover:border-amber-400/50 opacity-80 cursor-not-allowed'
-                          : isEquipped
-                          ? 'bg-gradient-to-b from-amber-500/25 to-slate-900 border-amber-400 shadow-lg cursor-pointer'
-                          : 'bg-slate-900/90 border-white/12 hover:border-amber-300/60 hover:bg-slate-800/85 cursor-pointer'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-start justify-between gap-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xl">{part.emoji}</span>
-                            <span className="font-display text-xs sm:text-sm font-black text-white leading-tight">
-                              {part.name}
-                            </span>
-                          </div>
-                          {isLocked ? (
-                            <span className="inline-flex items-center gap-0.5 rounded-full bg-slate-800 border border-amber-400/40 px-1.5 py-0.5 text-[10px] font-black text-amber-300">
-                              <Lock className="h-2.5 w-2.5" /> {part.unlockStars}⭐
-                            </span>
-                          ) : isEquipped ? (
-                            <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-black text-slate-950">
-                              EQUIPPED
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="mt-1 text-[11px] font-semibold text-slate-300 leading-snug line-clamp-2">
-                          {part.tagline}
-                        </p>
-                      </div>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-white/10 pt-1.5 text-[10px] font-extrabold text-slate-300">
-                        <span className="rounded bg-slate-800 px-1.5 py-0.5">
-                          {part.massLbs} lbs
+          <div className="flex flex-col md:flex-row items-stretch gap-2 pt-0.5">
+            <div className="flex-1 min-w-0">
+              {showPaintDrawer ? (
+                <div className="flex items-center gap-2 overflow-x-auto py-1 no-scrollbar">
+                  {SOAPBOX_PAINT_THEMES.map((theme) => {
+                    const active = loadout.paintTheme === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        type="button"
+                        onClick={() => onSelectPaint(theme.id)}
+                        className={`flex shrink-0 items-center gap-2 rounded-2xl border-2 px-3 py-2 text-xs font-black transition cursor-pointer ${
+                          active
+                            ? 'bg-slate-800 border-amber-400 text-white shadow-lg'
+                            : 'bg-slate-900/90 border-white/10 text-slate-300 hover:border-white/30'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="h-4 w-4 rounded-full border border-white/40"
+                            style={{ backgroundColor: theme.bodyHex }}
+                          />
+                          <span
+                            className="h-4 w-4 rounded-full border border-white/40"
+                            style={{ backgroundColor: theme.trimHex }}
+                          />
+                          <span
+                            className="h-4 w-4 rounded-full border border-white/40"
+                            style={{ backgroundColor: theme.accentHex }}
+                          />
                         </span>
-                        {part.category === 'chassis' && (
-                          <span className="rounded bg-sky-950 text-sky-300 px-1.5 py-0.5">
-                            {part.cgHeightOffsetMeters.toFixed(2)}m CoG
+                        <span>{theme.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex items-stretch gap-2 overflow-x-auto py-1 no-scrollbar">
+                  {categoryParts.map((part) => {
+                    const isEquipped = currentEquippedId === part.id;
+                    const isLocked = part.unlockStars > totalStars;
+
+                    return (
+                      <button
+                        key={part.id}
+                        ref={isEquipped ? activePartCardRef : null}
+                        type="button"
+                        aria-disabled={isLocked}
+                        onMouseEnter={() => setHoveredPartId(part.id)}
+                        onMouseLeave={() =>
+                          setHoveredPartId((prev) => (prev === part.id ? null : prev))
+                        }
+                        onFocus={() => setHoveredPartId(part.id)}
+                        onBlur={() =>
+                          setHoveredPartId((prev) => (prev === part.id ? null : prev))
+                        }
+                        onClick={() => {
+                          if (!isLocked) {
+                            onEquipPart(selectedCategory, part.id);
+                          }
+                        }}
+                        className={`group relative flex w-56 sm:w-64 shrink-0 flex-col justify-between rounded-2xl border-2 p-2.5 text-left transition ${
+                          isLocked
+                            ? 'bg-slate-900/75 border-slate-700/80 hover:border-amber-400/50 opacity-80 cursor-not-allowed'
+                            : isEquipped
+                            ? 'bg-gradient-to-b from-amber-500/25 to-slate-900 border-amber-400 shadow-lg cursor-pointer'
+                            : 'bg-slate-900/90 border-white/12 hover:border-amber-300/60 hover:bg-slate-800/85 cursor-pointer'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xl">{part.emoji}</span>
+                              <span className="font-display text-xs sm:text-sm font-black text-white leading-tight">
+                                {part.name}
+                              </span>
+                            </div>
+                            {isLocked ? (
+                              <span className="inline-flex items-center gap-0.5 rounded-full bg-slate-800 border border-amber-400/40 px-1.5 py-0.5 text-[10px] font-black text-amber-300">
+                                <Lock className="h-2.5 w-2.5" /> {part.unlockStars}⭐
+                              </span>
+                            ) : isEquipped ? (
+                              <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-black text-slate-950">
+                                EQUIPPED
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-[11px] font-semibold text-slate-300 leading-snug line-clamp-2">
+                            {part.tagline}
+                          </p>
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-white/10 pt-1.5 text-[10px] font-extrabold text-slate-300">
+                          <span className="rounded bg-slate-800 px-1.5 py-0.5">
+                            {part.massLbs} lbs
                           </span>
-                        )}
-                        {part.trackWidthMeters >= 0.9 && (
-                          <span className="rounded bg-cyan-950 text-cyan-300 px-1.5 py-0.5">
-                            {part.trackWidthMeters.toFixed(2)}m Track
-                          </span>
-                        )}
-                        {part.category !== 'chassis' && part.cgHeightOffsetMeters <= -0.02 && (
-                          <span className="rounded bg-emerald-950 text-emerald-300 px-1.5 py-0.5">
-                            {part.cgHeightOffsetMeters}m CoG
-                          </span>
-                        )}
-                        {part.category === 'wheels' && (
-                          <span className="rounded bg-emerald-950 text-emerald-300 px-1.5 py-0.5">
-                            Grip {Math.round(part.asphaltGrip * 100)}
-                          </span>
-                        )}
-                        {part.roughTerrainRating >= 0.4 && (
-                          <span className="rounded bg-purple-950 text-purple-300 px-1.5 py-0.5">
-                            Cobble {Math.round(part.roughTerrainRating * 100)}%
-                          </span>
-                        )}
-                        {part.suspensionTravelMeters >= 0.05 && (
-                          <span className="rounded bg-indigo-950 text-indigo-300 px-1.5 py-0.5">
-                            {Math.round(part.suspensionTravelMeters * 100)}cm Travel
-                          </span>
-                        )}
-                        {part.brakePower >= 0.5 && (
-                          <span className="rounded bg-rose-950 text-rose-300 px-1.5 py-0.5">
-                            Brake {Math.round(part.brakePower * 100)}
-                          </span>
-                        )}
-                        {part.downforceFactor >= 0.25 && (
-                          <span className="rounded bg-sky-950 text-sky-300 px-1.5 py-0.5">
-                            +{Math.round(part.downforceFactor * 100)}% Downforce
-                          </span>
-                        )}
-                        {part.hayPlowProtection >= 0.3 && (
-                          <span className="rounded bg-amber-950 text-amber-300 px-1.5 py-0.5">
-                            -{Math.round(part.hayPlowProtection * 100)}% Hay Dmg
-                          </span>
-                        )}
-                        {part.driftAgility >= 0.35 && (
-                          <span className="rounded bg-fuchsia-950 text-fuchsia-300 px-1.5 py-0.5">
-                            Drift +{Math.round(part.driftAgility * 100)}
-                          </span>
-                        )}
-                        {part.creativityBonus >= 20 && (
-                          <span className="rounded bg-pink-950 text-pink-300 px-1.5 py-0.5">
-                            +{part.creativityBonus} Flair
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </>
+                          {part.category === 'chassis' && (
+                            <span className="rounded bg-sky-950 text-sky-300 px-1.5 py-0.5">
+                              {part.cgHeightOffsetMeters.toFixed(2)}m CoG
+                            </span>
+                          )}
+                          {part.trackWidthMeters >= 0.9 && (
+                            <span className="rounded bg-cyan-950 text-cyan-300 px-1.5 py-0.5">
+                              {part.trackWidthMeters.toFixed(2)}m Track
+                            </span>
+                          )}
+                          {part.category !== 'chassis' && part.cgHeightOffsetMeters <= -0.02 && (
+                            <span className="rounded bg-emerald-950 text-emerald-300 px-1.5 py-0.5">
+                              {part.cgHeightOffsetMeters}m CoG
+                            </span>
+                          )}
+                          {part.category === 'wheels' && (
+                            <span className="rounded bg-emerald-950 text-emerald-300 px-1.5 py-0.5">
+                              Grip {Math.round(part.asphaltGrip * 100)}
+                            </span>
+                          )}
+                          {part.roughTerrainRating >= 0.4 && (
+                            <span className="rounded bg-purple-950 text-purple-300 px-1.5 py-0.5">
+                              Cobble {Math.round(part.roughTerrainRating * 100)}%
+                            </span>
+                          )}
+                          {part.suspensionTravelMeters >= 0.05 && (
+                            <span className="rounded bg-indigo-950 text-indigo-300 px-1.5 py-0.5">
+                              {Math.round(part.suspensionTravelMeters * 100)}cm Travel
+                            </span>
+                          )}
+                          {part.brakePower >= 0.5 && (
+                            <span className="rounded bg-rose-950 text-rose-300 px-1.5 py-0.5">
+                              Brake {Math.round(part.brakePower * 100)}
+                            </span>
+                          )}
+                          {part.downforceFactor >= 0.25 && (
+                            <span className="rounded bg-sky-950 text-sky-300 px-1.5 py-0.5">
+                              +{Math.round(part.downforceFactor * 100)}% Downforce
+                            </span>
+                          )}
+                          {part.hayPlowProtection >= 0.3 && (
+                            <span className="rounded bg-amber-950 text-amber-300 px-1.5 py-0.5">
+                              -{Math.round(part.hayPlowProtection * 100)}% Hay Dmg
+                            </span>
+                          )}
+                          {part.driftAgility >= 0.35 && (
+                            <span className="rounded bg-fuchsia-950 text-fuchsia-300 px-1.5 py-0.5">
+                              Drift +{Math.round(part.driftAgility * 100)}
+                            </span>
+                          )}
+                          {part.creativityBonus >= 20 && (
+                            <span className="rounded bg-pink-950 text-pink-300 px-1.5 py-0.5">
+                              +{part.creativityBonus} Flair
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Right: Active/Hovered Part Summary + Primary Launch CTA */}
+            <div className="flex flex-col justify-between gap-2 md:w-72 shrink-0 rounded-2xl bg-slate-900/90 border border-white/10 p-2.5">
+              {activeCategoryPart && (
+                <div className="text-[11px]">
+                  <div className="flex items-center justify-between font-black text-white">
+                    <span className="truncate">
+                      {activeCategoryPart.emoji} {activeCategoryPart.name}
+                    </span>
+                    <span className="text-amber-300 shrink-0 ml-1">
+                      {activeCategoryPart.massLbs} lbs
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-slate-300 line-clamp-2">
+                    {activeCategoryPart.tagline}
+                  </p>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={onStartRace}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 hover:from-red-500 hover:to-yellow-300 border-2 border-yellow-200 px-4 py-2.5 font-display text-sm sm:text-base font-black text-slate-950 shadow-xl transition hover:scale-102 active:scale-95 cursor-pointer"
+                title="Launch Downhill Derby Run (Space)"
+              >
+                <Flag className="h-4 w-4 fill-slate-950 shrink-0" />
+                <span>DROP THE GATE! 🏁</span>
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -817,7 +922,7 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                 id="soapbox-presets-modal-heading"
                 className="font-display text-lg sm:text-xl font-black text-amber-300"
               >
-                🏎️ SOAPBOX GARAGE PRESETS & SAVED BUILDS
+                🏎️ PRESETS &amp; SAVED BUILDS
               </h2>
               <button
                 type="button"
@@ -828,29 +933,10 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
               </button>
             </div>
 
-            {/* Save Current Soapbox Build */}
-            <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-950/70 border border-white/10 p-2.5">
-              <input
-                type="text"
-                value={customBuildName}
-                onChange={(e) => setCustomBuildName(e.target.value)}
-                placeholder="Custom Soapbox Name (optional)..."
-                className="flex-1 rounded-xl bg-slate-800 border border-white/15 px-3 py-1.5 text-xs font-bold text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-400"
-              />
-              <button
-                type="button"
-                onClick={handleSaveBuildClick}
-                className="flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 text-xs font-black text-slate-950 transition cursor-pointer"
-              >
-                {justSavedToast ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-                <span>{justSavedToast ? 'Saved!' : 'Save Current Soapbox'}</span>
-              </button>
-            </div>
-
             {/* 4 Official Soapbox Presets */}
             <div>
               <h3 className="text-xs font-black uppercase tracking-wider text-sky-300 mb-2">
-                Official Derby Blueprints
+                Official Presets (4)
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {SOAPBOX_PRESETS.map((preset) => {
@@ -889,11 +975,40 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
             </div>
 
             {/* Saved Custom Builds */}
-            {savedBuilds.length > 0 && (
-              <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-amber-300 mb-2">
-                  Your Saved Soapbox Builds ({savedBuilds.length})
-                </h3>
+            <div className="border-t border-white/10 pt-3 flex flex-col gap-2.5">
+              <h3 className="text-xs font-black uppercase tracking-wider text-amber-300">
+                Saved Builds ({savedBuilds.length})
+              </h3>
+
+              {/* Save Current Soapbox Build */}
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-950/70 border border-white/10 p-2">
+                <input
+                  type="text"
+                  value={customBuildName}
+                  onChange={(e) => setCustomBuildName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSaveBuildClick();
+                    }
+                  }}
+                  placeholder="Custom build name (optional)..."
+                  className="flex-1 rounded-xl bg-slate-800 border border-white/15 px-3 py-1.5 text-xs font-bold text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveBuildClick}
+                  className="flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 text-xs font-black text-slate-950 transition cursor-pointer"
+                >
+                  {justSavedToast ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+                  <span>{justSavedToast ? 'Saved!' : 'Save Build'}</span>
+                </button>
+              </div>
+
+              {savedBuilds.length === 0 ? (
+                <div className="rounded-xl bg-slate-800/50 border border-white/10 p-3 text-center text-xs font-bold text-slate-400">
+                  No custom builds saved yet. Click &ldquo;Save Build&rdquo; to save your design!
+                </div>
+              ) : (
                 <div className="space-y-1.5">
                   {savedBuilds.map((slot) => (
                     <div
@@ -906,9 +1021,19 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                           onApplyPreset(slot.loadout);
                           setShowGarageModal(false);
                         }}
-                        className="flex-1 text-left text-xs font-black text-white hover:text-amber-300 cursor-pointer"
+                        className="flex-1 text-left text-xs font-black text-white hover:text-amber-300 cursor-pointer truncate"
                       >
                         {slot.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onApplyPreset(slot.loadout);
+                          setShowGarageModal(false);
+                        }}
+                        className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
+                      >
+                        Load
                       </button>
                       <button
                         type="button"
@@ -921,8 +1046,8 @@ export const SoapboxGarageHUD: React.FC<SoapboxGarageHUDProps> = React.memo(({
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}

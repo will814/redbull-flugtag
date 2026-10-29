@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { FlightSimulationState } from '../physics/AeroPhysicsEngine';
 import { RAMP_LENGTH_FEET, WORLD_RECORD_FEET } from '../builder/PartCatalog';
-import { Wrench, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
+import { Wrench, RotateCcw, ArrowUp, ArrowDown, Volume2, VolumeX } from 'lucide-react';
 
 interface FlightHUDProps {
   flightState: FlightSimulationState;
@@ -12,6 +12,8 @@ interface FlightHUDProps {
   onPitchInputChange: (val: number) => void;
   onReturnToHangar: () => void;
   onRestartFlight: () => void;
+  muted?: boolean;
+  onToggleMute?: () => void;
 }
 
 export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
@@ -23,6 +25,8 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
   onPitchInputChange,
   onReturnToHangar,
   onRestartFlight,
+  muted = false,
+  onToggleMute,
 }) => {
   const heldPositiveKeysRef = useRef<Set<string>>(new Set());
   const heldNegativeKeysRef = useRef<Set<string>>(new Set());
@@ -47,7 +51,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
       const s = flightStateRef.current;
       if (s) {
         if (distanceTextRef.current) {
-          distanceTextRef.current.textContent = `${s.distanceFeet} FT`;
+          distanceTextRef.current.textContent = `${s.distanceFeet} / ${WORLD_RECORD_FEET} FT`;
         }
         if (progressBarFillRef.current) {
           const distRatio = Math.max(0, Math.min(1, s.distanceFeet / WORLD_RECORD_FEET));
@@ -92,6 +96,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
 
   // Keyboard & Global Pointer Release Support:
   // - Spacebar = Action Tap (Hype / Push / Drop Wheels)
+  // - Enter = Skip Skit to Push
   // - Up/W/Left/A = Nose Up (+1), Down/S/Right/D = Nose Down (-1)
   useEffect(() => {
     const syncInputFromHeldKeys = () => {
@@ -122,6 +127,16 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
       if ((e.code === 'Escape' || e.code === 'KeyB') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         onReturnToHangar();
+        return;
+      }
+      if (e.code === 'KeyM' && !e.ctrlKey && !e.metaKey && onToggleMute) {
+        e.preventDefault();
+        onToggleMute();
+        return;
+      }
+      if (e.code === 'Enter' && flightStateRef?.current?.phase === 'skit') {
+        e.preventDefault();
+        onSkipSkitToPush();
         return;
       }
 
@@ -175,7 +190,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
       window.removeEventListener('pointercancel', handleGlobalPointerRelease);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [onActionTap, onPitchInputChange, onRestartFlight, onReturnToHangar]);
+  }, [flightStateRef, onActionTap, onPitchInputChange, onRestartFlight, onReturnToHangar, onSkipSkitToPush, onToggleMute]);
 
   const handleActionButtonKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.repeat) return;
@@ -219,41 +234,22 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
         };
 
   return (
-    <div className="safe-area-hud pointer-events-none fixed inset-0 z-10 flex flex-col justify-between">
-      {/* TOP BAR: Back to Hangar, Distance Counter & World Record Progress */}
-      <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-2xl bg-slate-900/95 px-2.5 sm:px-3 py-1.5 border border-white/15 shadow-xl">
-        {/* Left: Hangar & Retry Buttons */}
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={onReturnToHangar}
-            className="flex items-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-extrabold text-white active:scale-95 transition cursor-pointer"
-            title="Return to Hangar (B / Esc)"
-          >
-            <Wrench className="h-4 w-4 text-amber-400" />
-            <span>Build</span>
-          </button>
-
-          <button
-            onClick={onRestartFlight}
-            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 px-2.5 py-1.5 text-xs sm:text-sm font-extrabold text-sky-300 active:scale-95 transition cursor-pointer"
-            title="Restart Launch (R)"
-          >
-            <RotateCcw className="h-4 w-4" />
-            <span className="hidden sm:inline">Retry</span>
-          </button>
-        </div>
-
-        {/* Center: Live Flight Distance & World Record Tape */}
-        <div className="flex flex-1 max-w-md flex-col items-center px-1.5 sm:px-2">
-          <div className="flex flex-wrap items-baseline justify-center gap-1.5 sm:gap-2">
+    <div className="safe-area-hud pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-2 sm:p-4">
+      {/* ===================================================================== */}
+      {/* TOP BAR: Flight Distance Progress, Live Telemetry & Action Navigation */}
+      {/* ===================================================================== */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        {/* Top-Left: Course Progress & World Record Distance Card */}
+        <div className="pointer-events-auto flex flex-col gap-1.5 rounded-2xl bg-slate-950/90 border border-white/15 px-3 py-2 shadow-xl backdrop-blur-md min-w-[210px] sm:min-w-[270px]">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-black uppercase tracking-wider text-sky-300">
+              ✈️ Miami Bay Pier Flight
+            </span>
             <span
               ref={distanceTextRef}
-              className="font-display text-xl sm:text-3xl font-black text-yellow-300 drop-shadow tabular-nums"
+              className="font-display text-sm sm:text-base font-black text-yellow-300 tabular-nums"
             >
-              {flightState.distanceFeet} FT
-            </span>
-            <span className="text-[11px] sm:text-xs font-extrabold text-sky-200">
-              (Best: {bestDistanceFeet} ft • Rec: {WORLD_RECORD_FEET} ft)
+              {flightState.distanceFeet} / {WORLD_RECORD_FEET} FT
             </span>
           </div>
 
@@ -263,7 +259,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
             aria-valuenow={flightState.distanceFeet}
             aria-valuemin={0}
             aria-valuemax={WORLD_RECORD_FEET}
-            className="relative mt-0.5 h-2.5 w-full rounded-full bg-slate-800 border border-white/15 overflow-hidden"
+            className="relative h-2.5 w-full rounded-full bg-slate-800 border border-white/15 overflow-hidden"
           >
             <div
               ref={progressBarFillRef}
@@ -271,30 +267,76 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
               style={{ transform: `scaleX(${distancePct / 100})` }}
             />
           </div>
+
+          <div className="flex items-center justify-between text-[10px] font-extrabold text-slate-300">
+            <span>
+              🏆 Best: <strong className="text-yellow-300">{bestDistanceFeet} ft</strong>
+            </span>
+            <span>🎯 World Record: {WORLD_RECORD_FEET} ft</span>
+          </div>
         </div>
 
-        {/* Right: Altitude, Speed & Thermal Rings Caught */}
-        <div className="flex items-center gap-1.5">
+        {/* Top-Center: Speed, Altitude & Thermal Rings Caught */}
+        <div className="pointer-events-auto flex items-center gap-1.5 rounded-2xl bg-slate-950/90 border border-white/15 px-3 py-2 shadow-xl backdrop-blur-md">
           <div
-            className="rounded-xl bg-amber-500/20 border border-amber-400/40 px-2 py-1 text-xs font-black text-amber-300 tabular-nums"
-            title="Thermal Wind Rings Collected"
+            ref={speedTextRef}
+            className="rounded-xl bg-sky-500/20 border border-sky-400/30 px-2.5 py-1 text-xs font-black text-sky-200 tabular-nums"
+            title="Forward Airspeed"
           >
-            ⭕ {flightState.thermalsCollected}/3
+            💨 {Math.round(flightState.vxFeet)} ft/s
           </div>
           <div
             ref={altTextRef}
-            className="rounded-xl bg-emerald-500/20 border border-emerald-400/30 px-2 py-1 text-xs font-black text-emerald-200 tabular-nums"
+            className="rounded-xl bg-emerald-500/20 border border-emerald-400/30 px-2.5 py-1 text-xs font-black text-emerald-200 tabular-nums"
             title="Height Above Water"
           >
             📏 {Math.max(0, Math.round(flightState.yFeet))} ft
           </div>
           <div
-            ref={speedTextRef}
-            className="rounded-xl bg-sky-500/20 border border-sky-400/30 px-2 py-1 text-xs font-black text-sky-200 tabular-nums"
-            title="Forward Airspeed"
+            className="rounded-xl bg-amber-500/20 border border-amber-400/40 px-2.5 py-1 text-xs font-black text-amber-300 tabular-nums"
+            title="Thermal Wind Rings Collected"
           >
-            💨 {Math.round(flightState.vxFeet)} ft/s
+            ⭕ {flightState.thermalsCollected}/3
           </div>
+        </div>
+
+        {/* Top-Right: Unified Action Hub (Mute, Restart [R], Workshop [B]) */}
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          {onToggleMute && (
+            <button
+              type="button"
+              onClick={onToggleMute}
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-950/90 hover:bg-slate-800 border border-white/15 text-slate-200 shadow-lg transition active:scale-95 cursor-pointer"
+              title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
+              aria-label={muted ? 'Unmute Audio' : 'Mute Audio'}
+            >
+              {muted ? (
+                <VolumeX className="h-4 w-4 text-rose-400" />
+              ) : (
+                <Volume2 className="h-4 w-4 text-emerald-400" />
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onRestartFlight}
+            className="flex items-center gap-1.5 rounded-xl bg-slate-950/90 hover:bg-slate-800 border border-white/15 px-3 py-2 text-xs font-black text-amber-300 shadow-lg transition active:scale-95 cursor-pointer"
+            title="Restart Run (R)"
+          >
+            <RotateCcw className="h-4 w-4" />
+            <span>Restart [R]</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onReturnToHangar}
+            className="flex items-center gap-1.5 rounded-xl bg-slate-950/90 hover:bg-slate-800 border border-white/15 px-3 py-2 text-xs font-black text-slate-100 shadow-lg transition active:scale-95 cursor-pointer"
+            title="Return to Workshop (B / Esc)"
+          >
+            <Wrench className="h-4 w-4 text-sky-400" />
+            <span>Workshop [B]</span>
+          </button>
         </div>
       </div>
 
@@ -324,8 +366,9 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
             <button
               onClick={onSkipSkitToPush}
               className="rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 text-xs sm:text-sm font-black text-slate-950 shadow active:scale-95 cursor-pointer"
+              title="Skip Skit & Start Ramp Push (Enter)"
             >
-              PUSH NOW! ▶
+              PUSH NOW! ▶ [Enter]
             </button>
           </div>
         )}
@@ -433,14 +476,17 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
                 if (e.buttons > 0) onPitchInputChange(0);
               }}
               onPointerCancel={() => onPitchInputChange(0)}
-              className={`flex h-14 w-28 sm:h-16 sm:w-36 items-center justify-center gap-1.5 rounded-2xl border-2 font-display text-sm sm:text-base font-black shadow-xl transition select-none cursor-pointer ${
+              className={`flex h-14 w-28 sm:h-16 sm:w-36 flex-col items-center justify-center rounded-2xl border-2 font-display text-sm sm:text-base font-black shadow-xl transition select-none cursor-pointer ${
                 flightState.pilotPitchInput > 0
                   ? 'bg-sky-400 text-slate-950 border-white scale-95'
                   : 'bg-slate-900/95 text-sky-300 border-sky-400/60 hover:bg-slate-800'
               }`}
             >
-              <ArrowUp className="h-5 w-5 sm:h-6 sm:w-6 stroke-[3]" />
-              <span>NOSE UP</span>
+              <div className="flex items-center gap-1">
+                <ArrowUp className="h-4 w-4 sm:h-5 sm:w-5 stroke-[3]" />
+                <span>NOSE UP</span>
+              </div>
+              <span className="text-[10px] font-bold opacity-80">[W / ↑]</span>
             </button>
 
             <button
@@ -453,14 +499,17 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
                 if (e.buttons > 0) onPitchInputChange(0);
               }}
               onPointerCancel={() => onPitchInputChange(0)}
-              className={`flex h-14 w-28 sm:h-16 sm:w-36 items-center justify-center gap-1.5 rounded-2xl border-2 font-display text-sm sm:text-base font-black shadow-xl transition select-none cursor-pointer ${
+              className={`flex h-14 w-28 sm:h-16 sm:w-36 flex-col items-center justify-center rounded-2xl border-2 font-display text-sm sm:text-base font-black shadow-xl transition select-none cursor-pointer ${
                 flightState.pilotPitchInput < 0
                   ? 'bg-amber-400 text-slate-950 border-white scale-95'
                   : 'bg-slate-900/95 text-amber-300 border-amber-400/60 hover:bg-slate-800'
               }`}
             >
-              <ArrowDown className="h-5 w-5 sm:h-6 sm:w-6 stroke-[3]" />
-              <span>NOSE DOWN</span>
+              <div className="flex items-center gap-1">
+                <ArrowDown className="h-4 w-4 sm:h-5 sm:w-5 stroke-[3]" />
+                <span>NOSE DOWN</span>
+              </div>
+              <span className="text-[10px] font-bold opacity-80">[S / ↓]</span>
             </button>
           </div>
 
@@ -539,7 +588,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
             >
               <span className="text-2xl sm:text-3xl">🎉</span>
               <span className="text-base sm:text-lg font-black tracking-wide">HYPE DANCE!</span>
-              <span className="text-[11px] font-bold opacity-90">TAP FAST!</span>
+              <span className="text-[11px] font-bold opacity-90">TAP / [SPACE]</span>
             </button>
           )}
 
@@ -551,7 +600,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
             >
               <span className="text-2xl sm:text-3xl">👟</span>
               <span className="text-base sm:text-xl font-black tracking-wide">PUSH!!</span>
-              <span className="text-[11px] font-extrabold">TAP OR SPACE!</span>
+              <span className="text-[11px] font-extrabold">TAP / [SPACE]</span>
             </button>
           )}
 
@@ -563,7 +612,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
             >
               <span className="text-2xl sm:text-3xl">🛹</span>
               <span className="text-base sm:text-xl font-black tracking-wide">DROP WHEELS!</span>
-              <span className="text-xs font-extrabold">TAP NOW!</span>
+              <span className="text-xs font-extrabold">TAP / [SPACE]!</span>
             </button>
           )}
 
@@ -575,6 +624,7 @@ export const FlightHUD: React.FC<FlightHUDProps> = React.memo(({
             >
               <span className="text-xl sm:text-2xl">📣</span>
               <span className="text-xs sm:text-sm font-black">AIRHORN!</span>
+              <span className="text-[10px] font-bold opacity-80">[SPACE]</span>
             </button>
           )}
         </div>

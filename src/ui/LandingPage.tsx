@@ -47,7 +47,7 @@ const GAME_CARDS: GameCardDefinition[] = [
     title: 'Red Bull Flugtag',
     subtitle: 'Miami Bay 30-Ft Pier Flight',
     tagline:
-      'Snap together wild homemade gliders in the Hangar, test your Center of Gravity & Lift in the Wind Tunnel, and launch off the 30-foot flight deck over Miami Bay!',
+      'Snap together wild homemade gliders in the Workshop, test your Center of Gravity & Lift in the Wind Tunnel, and launch off the 30-foot flight deck over Miami Bay!',
     launchPlatform: '30-Ft Flight Deck Pier over Miami Bay',
     testRig: 'Wind Tunnel & CoG/CoL Balance Gizmos',
     vehicleComponents: ['Hull', 'Wings', 'Tail', 'Nose', 'Topper', 'Trolley'],
@@ -72,7 +72,7 @@ const GAME_CARDS: GameCardDefinition[] = [
     title: 'Red Bull Soap Box Derby',
     subtitle: 'Alpine Hilltop Gravity Road Race',
     tagline:
-      'Engineer an unpowered downhill racer in the Garage, test rollover stability & shocks on the Road Shaker Rig, and drop through the hilltop start gate down a 2,400-ft course!',
+      'Engineer an unpowered downhill racer in the Workshop, test rollover stability & shocks on the Road Shaker Rig, and drop through the hilltop start gate down a 2,400-ft course!',
     launchPlatform: 'Hilltop Start Pavilion & Hinged Steel Drop-Gate (+269 Ft)',
     testRig: 'Road Shaker & Tilt Dyno Rig',
     vehicleComponents: ['Chassis', 'Steering Axle', 'Wheels', 'Suspension', 'Brakes', 'Topper'],
@@ -91,13 +91,13 @@ const GAME_CARDS: GameCardDefinition[] = [
   {
     id: 'coaster',
     keyHint: '3',
-    badge: 'EVENT 03 • EXTREME COASTER LAB',
+    badge: 'EVENT 03 • EXTREME COASTER CIRCUIT',
     emoji: '🎢',
     secondaryEmojis: ['⚡', '🌀', '🔥'],
     title: 'Red Bull Extreme Rollercoaster',
-    subtitle: 'Theme-Park Steel Coaster Test Lab',
+    subtitle: 'Theme-Park Steel Coaster Circuit',
     tagline:
-      'Build a custom coaster train in the Engineering Bay, test upstop wheel clamping on the Track Dyno Rig, and launch through a 2,000-ft 3D steel circuit!',
+      'Build a custom coaster train in the Workshop, test upstop wheel clamping on the Track Dyno Rig, and launch through a 2,000-ft 3D steel circuit!',
     launchPlatform: 'Elevated Boarding Station & LIM Capacitor Launch Track',
     testRig: '3-Wheel-Set Upstop Bogies & Track Dyno Rig',
     vehicleComponents: [
@@ -255,7 +255,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <Trophy className="h-3.5 w-3.5 shrink-0 text-yellow-300" aria-hidden="true" />
         <span>
           Best Track: {Math.round(coasterBestDist)} FT
-          {coasterBestThrill > 0 ? ` • ${coasterBestThrill.toFixed(1)}/30 Pts` : ''}
+          {coasterBestThrill > 0 ? ` • ${Math.round(coasterBestThrill)} Pts` : ''}
         </span>
       </div>
     ) : (
@@ -310,7 +310,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   {totalStars} STARS
                 </div>
                 <div className="text-[9px] font-extrabold uppercase tracking-wider text-amber-200/80 hidden sm:block">
-                  Shared Garage Unlocks
+                  Shared Workshop Unlocks
                 </div>
               </div>
             </div>

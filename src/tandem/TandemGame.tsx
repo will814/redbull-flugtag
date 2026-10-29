@@ -739,9 +739,17 @@ export const TandemGame: React.FC<TandemGameProps> = ({
     };
   }, [mode, triggerPostRunConclusion]);
 
-  // Global Escape Key Listener
+  // Global Escape Key Listener (fallback when child HUD/modal hasn't handled it)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        document.querySelector('[role="dialog"]')
+      ) {
+        return;
+      }
       if (e.code === 'Escape' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         soundEngine.playSnapPop();

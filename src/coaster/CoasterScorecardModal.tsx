@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { CoasterPhysicsState } from './CoasterPhysicsEngine';
 import { CoasterMetrics } from './CoasterMetrics';
 import { soundEngine } from '../audio/SoundEngine';
+import { RotateCcw, Wrench } from 'lucide-react';
 
 export interface CoasterScorecardResult {
   distanceFeet: number;
@@ -80,6 +81,7 @@ export const CoasterScorecardModal: React.FC<CoasterScorecardModalProps> = ({
   onReturnToWorkshop,
   onReturnToHub,
 }) => {
+  const primaryBtnRef = useRef<HTMLButtonElement | null>(null);
   const isSuccess =
     finalState.stoppedInBullseye ||
     finalState.outcomeReason === 'brake_run_stop' ||
@@ -97,15 +99,30 @@ export const CoasterScorecardModal: React.FC<CoasterScorecardModalProps> = ({
   }, [finalState.stoppedInBullseye, scorecard.starsEarned]);
 
   useEffect(() => {
+    primaryBtnRef.current?.focus();
+    const mountedAt = performance.now();
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.code === 'KeyR') {
+      if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyR') {
+        if (e.repeat || performance.now() - mountedAt < 350) {
+          e.preventDefault();
+          return;
+        }
+        if (
+          document.activeElement instanceof HTMLButtonElement &&
+          document.activeElement !== primaryBtnRef.current &&
+          e.code !== 'KeyR'
+        ) {
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         soundEngine.playAirhorn();
         onRideAgain();
       } else if (e.code === 'KeyB' || e.code === 'Escape') {
+        if (e.repeat || performance.now() - mountedAt < 350) return;
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -118,8 +135,13 @@ export const CoasterScorecardModal: React.FC<CoasterScorecardModalProps> = ({
   }, [onReturnToWorkshop, onRideAgain]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 select-none overflow-y-auto">
-      <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl flex flex-col gap-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="coaster-scorecard-heading"
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 select-none overflow-y-auto"
+    >
+      <div className="bg-slate-900 border-4 border-sky-400 rounded-3xl max-w-xl w-full p-5 sm:p-6 shadow-2xl flex flex-col gap-4">
         {/* Outcome Header */}
         <div className="flex flex-col items-center text-center gap-1.5">
           <div className="flex items-center gap-2">
@@ -136,7 +158,7 @@ export const CoasterScorecardModal: React.FC<CoasterScorecardModalProps> = ({
           </div>
 
           <h2
-            className={`text-xl sm:text-2xl font-black uppercase tracking-tight ${
+            className={`font-display text-xl sm:text-2xl font-black uppercase tracking-tight ${
               finalState.stoppedInBullseye
                 ? 'text-emerald-300'
                 : isSuccess
@@ -243,28 +265,35 @@ export const CoasterScorecardModal: React.FC<CoasterScorecardModalProps> = ({
           </span>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2.5 pt-1">
+        {/* UNIFIED ACTION BUTTONS ROW */}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
+            ref={primaryBtnRef}
             type="button"
             onClick={() => {
               soundEngine.playAirhorn();
               onRideAgain();
             }}
-            className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-sm uppercase tracking-wide shadow-lg cursor-pointer"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 border-2 border-white text-slate-950 font-display font-black text-xs sm:text-sm shadow-xl active:scale-95 transition cursor-pointer"
+            title="Ride Again (Space / Enter / R)"
           >
-            🔄 Ride Again! [R]
+            <RotateCcw className="h-4 w-4 stroke-[2.5]" />
+            <span>RIDE AGAIN! [R / Space]</span>
           </button>
+
           <button
             type="button"
             onClick={() => {
               soundEngine.playSnapPop();
               onReturnToWorkshop();
             }}
-            className="flex-1 py-3 px-4 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-black text-sm uppercase tracking-wide shadow-lg cursor-pointer"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 border-2 border-sky-400/60 text-white font-display font-black text-xs sm:text-sm shadow-lg active:scale-95 transition cursor-pointer"
+            title="Return to Workshop (B / Esc)"
           >
-            🔧 Workshop [B]
+            <Wrench className="h-4 w-4 text-sky-400" />
+            <span>WORKSHOP [B / Esc]</span>
           </button>
+
           {onReturnToHub && (
             <button
               type="button"
@@ -272,9 +301,10 @@ export const CoasterScorecardModal: React.FC<CoasterScorecardModalProps> = ({
                 soundEngine.playSnapPop();
                 onReturnToHub();
               }}
-              className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs sm:text-sm border border-slate-600 cursor-pointer"
+              className="flex items-center justify-center gap-1 py-2.5 px-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 text-slate-300 hover:text-white font-extrabold text-xs active:scale-95 transition cursor-pointer"
+              title="Return to Arcade Hub"
             >
-              ◀ Arcade Hub
+              <span>◀ Arcade Hub</span>
             </button>
           )}
         </div>

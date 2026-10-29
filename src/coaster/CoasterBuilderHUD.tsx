@@ -11,6 +11,15 @@ import {
 } from './CoasterPartCatalog';
 import { CoasterMetrics, computeCoasterMetrics } from './CoasterMetrics';
 import { soundEngine } from '../audio/SoundEngine';
+import {
+  Volume2,
+  VolumeX,
+  Zap,
+  FolderOpen,
+  Shuffle,
+  Undo2,
+  Redo2,
+} from 'lucide-react';
 
 export interface SavedCoasterBlueprint {
   name: string;
@@ -78,6 +87,12 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable;
+
       if (e.code === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -88,11 +103,56 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
         } else {
           onReturnToHub();
         }
+        return;
+      }
+
+      if (isInput || e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (e.code === 'KeyG') {
+        e.preventDefault();
+        soundEngine.playSnapPop();
+        setShowPresetsModal((v) => !v);
+        return;
+      }
+
+      if (showPresetsModal) return;
+
+      if (e.code === 'KeyW') {
+        e.preventDefault();
+        soundEngine.playRollersWhir();
+        onToggleDyno();
+      } else if (e.code === 'KeyP') {
+        e.preventDefault();
+        soundEngine.playSnapPop();
+        const curIdx = COASTER_PAINT_THEMES.findIndex((t) => t.id === loadout.paintId);
+        const nextTheme = COASTER_PAINT_THEMES[(curIdx + 1) % COASTER_PAINT_THEMES.length];
+        if (nextTheme) onSelectPaint(nextTheme.id);
+      } else if (e.code === 'KeyR') {
+        e.preventDefault();
+        soundEngine.playSnapPop();
+        onRandomize();
+      } else if (e.code === 'KeyM') {
+        e.preventDefault();
+        onToggleMute();
+      } else if (e.code === 'Space') {
+        if (document.activeElement instanceof HTMLButtonElement) return;
+        e.preventDefault();
+        soundEngine.playAirhorn();
+        onStartRide();
       }
     };
     window.addEventListener('keydown', onKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
-  }, [onReturnToHub, showPresetsModal]);
+  }, [
+    onReturnToHub,
+    showPresetsModal,
+    onToggleDyno,
+    onRandomize,
+    onToggleMute,
+    onStartRide,
+    loadout.paintId,
+    onSelectPaint,
+  ]);
 
   const categoryParts = useMemo(
     () => getCoasterPartsByCategory(activeCategory),
@@ -159,53 +219,46 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
   };
 
   return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 sm:p-4 select-none z-10">
+    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2 sm:p-3.5 select-none z-10">
       {/* ===================================================================== */}
-      {/* TOP BAR: Arcade Hub Return, Title, Track Dyno, Blueprints & Records */}
+      {/* TOP BAR: UNIFIED WORKSHOP HEADER & CONTROLS                           */}
       {/* ===================================================================== */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="pointer-events-auto flex items-center gap-2 bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3 py-2 shadow-xl">
+        {/* Left: Arcade Hub Back Button + Event Title */}
+        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-slate-900/90 border border-white/15 px-3 py-1.5 shadow-xl backdrop-blur-md">
           <button
             type="button"
             onClick={() => {
               soundEngine.playSnapPop();
               onReturnToHub();
             }}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-100 text-xs sm:text-sm font-extrabold border border-slate-600 transition cursor-pointer"
+            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 px-2.5 py-1 text-xs font-extrabold text-amber-300 transition active:scale-95 cursor-pointer"
+            title="Return to Arcade Hub (Esc)"
           >
             ◀ Arcade Hub
           </button>
-
-          <div className="pl-1 pr-2 border-l border-slate-700">
-            <div className="flex items-center gap-1.5">
-              <span className="text-lg sm:text-xl">🎢</span>
-              <h1 className="text-sm sm:text-base font-black tracking-tight text-white uppercase">
-                Red Bull Coaster Lab
+          <div className="h-5 w-px bg-white/15" />
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🎢</span>
+            <div>
+              <h1 className="font-display text-xs sm:text-sm font-black tracking-wide text-white uppercase leading-none">
+                Red Bull Coaster Workshop
               </h1>
+              <p className="text-[10px] font-bold text-sky-300/90">
+                2,000-Ft Loop, Helix, 32-Ft Rail Gap &amp; Golden Bullseye Brake Run
+              </p>
             </div>
-            <p className="text-[10px] sm:text-xs text-sky-300 font-semibold">
-              2,000-Ft Loop, Helix, 32-Ft Rail Gap &amp; Golden Bullseye Brake Run
-            </p>
           </div>
         </div>
 
-        {/* Center/Right Controls: Records, Stars, Dyno, Presets, Undo/Redo, Mute */}
-        <div className="pointer-events-auto flex flex-wrap items-center gap-2 bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3 py-2 shadow-xl">
-          <div className="flex items-center gap-3 px-2 py-0.5 bg-slate-900/90 rounded-xl border border-slate-800 text-xs">
-            <div>
-              <span className="text-slate-400 font-semibold">BEST: </span>
-              <span className="text-amber-300 font-black">{bestDistanceFeet} FT</span>
-            </div>
-            <div className="h-3 w-px bg-slate-700" />
-            <div>
-              <span className="text-slate-400 font-semibold">HIGH SCORE: </span>
-              <span className="text-emerald-300 font-black">{bestThrillScore} PTS</span>
-            </div>
-            <div className="h-3 w-px bg-slate-700" />
-            <div className="flex items-center gap-1 text-yellow-300 font-black">
-              <span>⭐</span>
-              <span>{totalStars}</span>
-            </div>
+        {/* Right: Best & Stars, Track Rig, Presets & Builds, Random, Undo/Redo, Mute */}
+        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-900/90 border border-white/15 px-2.5 py-1.5 shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-2 rounded-xl bg-slate-950/80 border border-white/10 px-2.5 py-1 text-xs font-black">
+            <span className="text-amber-300">BEST: {bestDistanceFeet} FT</span>
+            <span className="text-slate-600">|</span>
+            <span className="text-emerald-300">SCORE: {bestThrillScore} PTS</span>
+            <span className="text-slate-600">|</span>
+            <span className="text-yellow-300">⭐ {totalStars}</span>
           </div>
 
           <button
@@ -214,13 +267,15 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
               soundEngine.playRollersWhir();
               onToggleDyno();
             }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border transition cursor-pointer ${
+            className={`flex items-center gap-1 rounded-xl border px-2.5 py-1 text-xs font-black transition active:scale-95 cursor-pointer ${
               dynoActive
-                ? 'bg-cyan-500 text-slate-950 border-cyan-300 shadow-lg shadow-cyan-500/30'
-                : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-500/40'
+                ? 'bg-cyan-400 text-slate-950 border-white shadow-md'
+                : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-400/40'
             }`}
+            title="Toggle Track G-Force Test Rig (W)"
           >
-            {dynoActive ? '⚡ Track Dyno ON' : '⚡ Track Dyno'}
+            <Zap className="h-3.5 w-3.5" />
+            <span>{dynoActive ? 'Track Rig: ON' : 'Track Rig'}</span>
           </button>
 
           <button
@@ -229,9 +284,11 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
               soundEngine.playSnapPop();
               setShowPresetsModal(true);
             }}
-            className="px-3 py-1.5 rounded-xl bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-extrabold border border-indigo-400/50 transition cursor-pointer"
+            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/40 px-2.5 py-1 text-xs font-black text-amber-300 transition active:scale-95 cursor-pointer"
+            title="Presets & Saved Builds (G)"
           >
-            📋 Blueprints
+            <FolderOpen className="h-3.5 w-3.5" />
+            <span>Presets &amp; Builds</span>
           </button>
 
           <button
@@ -240,10 +297,11 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
               soundEngine.playSnapPop();
               onRandomize();
             }}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer"
-            title="Randomize Coaster Build"
+            className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-purple-400/40 px-2 py-1 text-xs font-black text-purple-300 transition active:scale-95 cursor-pointer"
+            title="Randomize Unlocked Parts (R)"
           >
-            🎲 Random
+            <Shuffle className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Random</span>
           </button>
 
           {onUndo && (
@@ -255,14 +313,10 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                 soundEngine.playSnapPop();
                 onUndo();
               }}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition ${
-                canUndo
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600 cursor-pointer'
-                  : 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
-              }`}
-              title="Undo Part Swap (Ctrl+Z)"
+              className="rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-35 border border-white/10 p-1.5 text-slate-200 transition cursor-pointer disabled:cursor-not-allowed"
+              title="Undo (Ctrl+Z)"
             >
-              ↩ Undo
+              <Undo2 className="h-3.5 w-3.5" />
             </button>
           )}
 
@@ -275,24 +329,24 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                 soundEngine.playSnapPop();
                 onRedo();
               }}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition ${
-                canRedo
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600 cursor-pointer'
-                  : 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
-              }`}
-              title="Redo Part Swap (Ctrl+Y)"
+              className="rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-35 border border-white/10 p-1.5 text-slate-200 transition cursor-pointer disabled:cursor-not-allowed"
+              title="Redo (Ctrl+Y)"
             >
-              ↪ Redo
+              <Redo2 className="h-3.5 w-3.5" />
             </button>
           )}
 
           <button
             type="button"
             onClick={onToggleMute}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer"
-            title={muted ? 'Unmute Audio' : 'Mute Audio'}
+            className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 p-1.5 text-slate-200 transition cursor-pointer"
+            title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
           >
-            {muted ? '🔇' : '🔊'}
+            {muted ? (
+              <VolumeX className="h-3.5 w-3.5 text-rose-400" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5 text-emerald-400" />
+            )}
           </button>
         </div>
       </div>
@@ -301,7 +355,7 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
       {/* MIDDLE LEFT: Coaster Engineering Telemetry & Upstop Clamp Diagnostics */}
       {/* ===================================================================== */}
       <div className="flex flex-col lg:flex-row items-start lg:items-end justify-between gap-3 my-auto">
-        <div className="pointer-events-auto w-full max-w-xs bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-2xl p-3 shadow-2xl flex flex-col gap-2">
+        <div className="pointer-events-auto w-full max-w-xs bg-slate-950/88 backdrop-blur-md border-2 border-white/15 rounded-2xl p-3 shadow-2xl flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
             <span
               className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border ${
@@ -382,16 +436,53 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
               {previewMetrics ? previewMetrics.maxSafeNegativeG : metrics.maxSafeNegativeG}G
             </span>
           </div>
+
+          {/* 1-Click Quick Builds Grid */}
+          <div className="border-t border-white/10 pt-1.5">
+            <div className="mb-1 flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-slate-400">
+              <span>⚡ Quick Builds:</span>
+              <span>1-Click Equip</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {COASTER_PRESETS.map((preset) => {
+                const isActive =
+                  loadout.chassis === preset.loadout.chassis &&
+                  loadout.bogies === preset.loadout.bogies &&
+                  loadout.restraints === preset.loadout.restraints &&
+                  loadout.nose === preset.loadout.nose &&
+                  loadout.booster === preset.loadout.booster &&
+                  loadout.shell === preset.loadout.shell;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playSnapPop();
+                      onApplyPreset(preset.loadout);
+                    }}
+                    className={`truncate rounded-lg border px-1.5 py-1 text-left text-[9.5px] tracking-tight font-extrabold transition cursor-pointer ${
+                      isActive
+                        ? 'border-sky-400 bg-sky-400/20 text-sky-200'
+                        : 'border-white/10 bg-slate-900/80 text-slate-300 hover:border-sky-400/50 hover:text-white'
+                    }`}
+                    title={`Equip ${preset.name}`}
+                  >
+                    {preset.emoji} {preset.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* ===================================================================== */}
       {/* BOTTOM DOCK: Category Tabs, Paint Swatches, Part Cards & BOARD BUTTON */}
       {/* ===================================================================== */}
-      <div className="pointer-events-auto bg-slate-950/90 backdrop-blur-md border border-slate-700/80 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5">
-        {/* Category Tabs + Paint Theme Swatches + Selected Part Info */}
+      <div className="pointer-events-auto bg-slate-950/92 backdrop-blur-md border-2 border-sky-400/50 rounded-3xl p-2 sm:p-3 shadow-2xl flex flex-col gap-2">
+        {/* Category Tabs + Paint Theme Swatches + Orbit Hint */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1">
             {COASTER_CATEGORY_TABS.map((tab) => {
               const isSelected = tab.id === activeCategory;
               return (
@@ -402,48 +493,62 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                     soundEngine.playSnapPop();
                     onSelectCategory(tab.id);
                   }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer border ${
+                  title={`${tab.label} (Key ${tab.keyHint})`}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-black transition flex items-center gap-1 cursor-pointer border ${
                     isSelected
-                      ? 'bg-sky-500 text-slate-950 border-sky-300 shadow-md shadow-sky-500/25'
-                      : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-700'
+                      ? 'bg-sky-400 text-slate-950 border-white shadow-md scale-102'
+                      : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-white/10'
                   }`}
                 >
                   <span>{tab.emoji}</span>
                   <span>{tab.label}</span>
-                  <span className="text-[10px] opacity-65 font-mono">[{tab.keyHint}]</span>
+                  <span className={`text-[9px] font-bold ${isSelected ? 'text-slate-800' : 'text-slate-400'}`}>
+                    [{tab.keyHint}]
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Paint Swatches */}
-          <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800">
-            <span className="text-[11px] font-bold text-slate-400 mr-1">🎨 Livery:</span>
-            {COASTER_PAINT_THEMES.map((theme) => {
-              const active = loadout.paintId === theme.id;
-              return (
-                <button
-                  key={theme.id}
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playSnapPop();
-                    onSelectPaint(theme.id);
-                  }}
-                  title={theme.name}
-                  className={`w-5 h-5 rounded-full border-2 transition cursor-pointer ${
-                    active ? 'border-white scale-125 shadow-md' : 'border-slate-600 opacity-80'
-                  }`}
-                  style={{
-                    background: `linear-gradient(135deg, ${theme.primaryHex} 50%, ${theme.secondaryHex} 50%)`,
-                  }}
-                />
-              );
-            })}
+          <div className="flex items-center gap-2">
+            {/* Paint Swatches */}
+            <div
+              className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-white/10"
+              title="Cycle Livery Paint (Key P)"
+            >
+              <span className="text-[11px] font-bold text-slate-400 mr-1">
+                🎨 Livery <span className="text-[9px] font-mono opacity-75">[P]</span>:
+              </span>
+              {COASTER_PAINT_THEMES.map((theme) => {
+                const active = loadout.paintId === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playSnapPop();
+                      onSelectPaint(theme.id);
+                    }}
+                    title={theme.name}
+                    className={`w-4 h-4 rounded-full border-2 transition cursor-pointer ${
+                      active ? 'border-white scale-125 shadow-md' : 'border-slate-600 opacity-80'
+                    }`}
+                    style={{
+                      background: `linear-gradient(135deg, ${theme.primaryHex} 50%, ${theme.secondaryHex} 50%)`,
+                    }}
+                  />
+                );
+              })}
+            </div>
+
+            <span className="hidden xl:inline-block text-[10px] font-bold text-slate-400">
+              🖱️ Drag 3D to Orbit • Scroll to Zoom • Click Sockets
+            </span>
           </div>
         </div>
 
         {/* Part Cards Row + BOARD STATION Launch Button */}
-        <div className="flex flex-col md:flex-row items-stretch gap-3">
+        <div className="flex flex-col md:flex-row items-stretch gap-2.5">
           <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
             {categoryParts.map((part) => {
               const isEquipped = loadout[activeCategory] === part.id;
@@ -459,11 +564,11 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                   onFocus={() => setHoveredPartId(part.id)}
                   onBlur={() => setHoveredPartId(null)}
                   onClick={() => onSelectPart(part)}
-                  className={`relative flex flex-col justify-between p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                  className={`relative flex flex-col justify-between p-2.5 rounded-2xl border-2 text-left transition cursor-pointer ${
                     isEquipped
-                      ? 'bg-sky-500/20 border-sky-400 ring-2 ring-sky-400/40'
+                      ? 'bg-gradient-to-b from-sky-500/25 to-slate-900 border-sky-400 shadow-lg'
                       : isUnlocked
-                      ? 'bg-slate-900/90 hover:bg-slate-800 border-slate-700'
+                      ? 'bg-slate-900/90 hover:bg-slate-800/85 border-white/12 hover:border-sky-300/60'
                       : canAfford
                       ? 'bg-amber-950/40 hover:bg-amber-900/40 border-amber-500/60'
                       : 'bg-slate-900/50 border-slate-800 opacity-65'
@@ -472,11 +577,11 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                   <div className="flex items-start justify-between gap-1">
                     <span className="text-xl">{part.emoji}</span>
                     {isEquipped ? (
-                      <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-sky-400 text-slate-950">
-                        FIT
+                      <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded-full bg-sky-400 text-slate-950">
+                        EQUIPPED
                       </span>
                     ) : !isUnlocked ? (
-                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-amber-400/40">
                         🔒 {part.costStars}⭐
                       </span>
                     ) : null}
@@ -496,13 +601,17 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
           </div>
 
           {/* Active Part Micro-Description + Big Launch CTA */}
-          <div className="md:w-72 flex flex-col justify-between gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl p-2.5">
+          <div className="md:w-72 flex flex-col justify-between gap-2 bg-slate-900/90 border border-white/10 rounded-2xl p-2.5">
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-black text-white">
-                <span>{displayPart.emoji}</span>
-                <span className="truncate">{displayPart.name}</span>
+              <div className="flex items-center justify-between text-xs font-black text-white">
+                <span className="truncate">
+                  {displayPart.emoji} {displayPart.name}
+                </span>
+                <span className="text-sky-300 shrink-0 ml-1">
+                  {displayPart.massLbs} lbs
+                </span>
               </div>
-              <p className="text-[11px] text-slate-300 leading-snug mt-0.5 line-clamp-2">
+              <p className="text-[10px] text-slate-300 leading-snug mt-0.5 line-clamp-2">
                 {displayPart.funTip}
               </p>
             </div>
@@ -513,7 +622,8 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                 soundEngine.playAirhorn();
                 onStartRide();
               }}
-              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 hover:from-red-500 hover:to-amber-300 active:scale-98 text-slate-950 font-black text-sm sm:text-base tracking-wide uppercase shadow-lg shadow-orange-500/30 border border-amber-200 transition cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-2xl bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 hover:from-red-500 hover:to-amber-300 active:scale-95 text-slate-950 font-display font-black text-sm sm:text-base tracking-wide uppercase shadow-xl border-2 border-yellow-200 transition cursor-pointer"
+              title="Board Station & Launch Coaster (Space)"
             >
               BOARD STATION! 🎢
             </button>
@@ -522,49 +632,66 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
       </div>
 
       {/* ===================================================================== */}
-      {/* PRESETS & SAVED BLUEPRINTS MODAL */}
+      {/* PRESETS & SAVED BUILDS MODAL                                          */}
       {/* ===================================================================== */}
       {showPresetsModal && (
-        <div className="pointer-events-auto fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-black text-white flex items-center gap-2">
-                <span>📋</span>
-                <span>Coaster Engineering Blueprints &amp; Saved Trains</span>
+        <div
+          className="pointer-events-auto fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="coaster-presets-modal-heading"
+          onClick={() => setShowPresetsModal(false)}
+        >
+          <div
+            className="bg-slate-900 border-4 border-sky-400 rounded-3xl max-w-2xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-white/15 pb-2">
+              <h2
+                id="coaster-presets-modal-heading"
+                className="font-display text-lg sm:text-xl font-black text-sky-300 flex items-center gap-2"
+              >
+                <span>🎢</span>
+                <span>PRESETS &amp; SAVED BUILDS</span>
               </h2>
               <button
                 type="button"
                 onClick={() => setShowPresetsModal(false)}
-                className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-black cursor-pointer"
               >
                 ✕ Close
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {COASTER_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playSnapPop();
-                    onApplyPreset(preset.loadout);
-                    setShowPresetsModal(false);
-                  }}
-                  className="flex flex-col gap-1 p-3 rounded-xl bg-slate-800/90 hover:bg-slate-750 border border-slate-600/80 text-left transition cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl">{preset.emoji}</span>
-                    <span className="font-black text-white text-sm">{preset.name}</span>
-                  </div>
-                  <p className="text-xs text-slate-300 leading-snug">{preset.tagline}</p>
-                </button>
-              ))}
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-wider text-sky-300 mb-2">
+                Official Presets (4)
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {COASTER_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playSnapPop();
+                      onApplyPreset(preset.loadout);
+                      setShowPresetsModal(false);
+                    }}
+                    className="flex flex-col gap-1 p-3 rounded-2xl bg-slate-800/90 hover:bg-slate-800 border-2 border-white/15 hover:border-sky-400 text-left transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl">{preset.emoji}</span>
+                      <span className="font-display font-black text-white text-sm">{preset.name}</span>
+                    </div>
+                    <p className="text-xs text-slate-300 leading-snug">{preset.tagline}</p>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="border-t border-slate-800 pt-3">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-2">
-                Custom Workshop Save Slots
+            <div className="border-t border-white/15 pt-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-amber-300 mb-2">
+                Saved Builds (3 Slots)
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {[0, 1, 2].map((slotIdx) => {
@@ -572,7 +699,7 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                   return (
                     <div
                       key={slotIdx}
-                      className="flex flex-col justify-between gap-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800"
+                      className="flex flex-col justify-between gap-2 p-2.5 rounded-2xl bg-slate-950/80 border border-white/10"
                     >
                       <div>
                         <div className="text-xs font-bold text-white">
@@ -589,9 +716,9 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                             soundEngine.playSnapPop();
                             onSaveBlueprintSlot(slotIdx);
                           }}
-                          className="flex-1 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-bold cursor-pointer"
+                          className="flex-1 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 text-[11px] font-black cursor-pointer"
                         >
-                          Save
+                          Save Build
                         </button>
                         {saved && (
                           <button
@@ -601,7 +728,7 @@ export const CoasterBuilderHUD: React.FC<CoasterBuilderHUDProps> = ({
                               onLoadBlueprintSlot(slotIdx);
                               setShowPresetsModal(false);
                             }}
-                            className="flex-1 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold cursor-pointer"
+                            className="flex-1 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] font-black cursor-pointer"
                           >
                             Load
                           </button>

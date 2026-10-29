@@ -64,19 +64,20 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
     const mountedAt = performance.now();
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.code === 'Enter') {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyR') {
         if (e.repeat || performance.now() - mountedAt < 350) {
           e.preventDefault();
           return;
         }
-        if (document.activeElement instanceof HTMLButtonElement) {
+        if (
+          document.activeElement instanceof HTMLButtonElement &&
+          document.activeElement !== primaryBtnRef.current &&
+          e.code !== 'KeyR'
+        ) {
           return;
         }
         e.preventDefault();
-        onRaceAgain();
-      } else if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        if (e.repeat || performance.now() - mountedAt < 350) return;
         onRaceAgain();
       } else if (e.code === 'Escape' || e.code === 'KeyB') {
         e.preventDefault();
@@ -319,7 +320,7 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/25 via-yellow-500/20 to-emerald-500/25 border-2 border-amber-300 p-2.5">
             <div className="flex items-center gap-1.5 text-xs font-black text-amber-200 mb-1.5">
               <Sparkles className="h-4 w-4 text-yellow-300" />
-              <span>NEW SOAPBOX GARAGE PART(S) UNLOCKED!</span>
+              <span>NEW PARTS UNLOCKED IN WORKSHOP!</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {newlyUnlockedParts.map((part) => (
@@ -352,33 +353,36 @@ export const SoapboxScorecardModal: React.FC<SoapboxScorecardModalProps> = React
           </div>
         ) : null}
 
-        {/* ACTION BUTTONS */}
-        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+        {/* UNIFIED ACTION BUTTONS ROW */}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
+            ref={primaryBtnRef}
             type="button"
-            onClick={onReturnToHub}
-            className="flex items-center justify-center gap-1 rounded-2xl bg-slate-900 hover:bg-slate-800 border-2 border-amber-400/50 px-3.5 py-2.5 text-xs sm:text-sm font-black text-amber-300 transition active:scale-95 cursor-pointer"
+            onClick={onRaceAgain}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 hover:from-amber-300 hover:to-red-400 border-2 border-yellow-200 px-3 py-2.5 font-display text-xs sm:text-sm font-black text-slate-950 shadow-xl transition hover:scale-102 active:scale-95 cursor-pointer"
+            title="Race Again (Space / Enter / R)"
           >
-            <span>◀ Arcade Hub</span>
+            <RotateCcw className="h-4 w-4 stroke-[2.5]" />
+            <span>RACE AGAIN! [R / Space]</span>
           </button>
 
           <button
             type="button"
             onClick={onBackToGarage}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border-2 border-white/15 px-3 py-2.5 text-xs sm:text-sm font-black text-white transition active:scale-95 cursor-pointer"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border-2 border-sky-400/60 px-3 py-2.5 font-display text-xs sm:text-sm font-black text-white shadow-lg transition active:scale-95 cursor-pointer"
+            title="Return to Workshop (B / Esc)"
           >
             <Wrench className="h-4 w-4 text-sky-400" />
-            <span>TUNE IN GARAGE</span>
+            <span>WORKSHOP [B / Esc]</span>
           </button>
 
           <button
-            ref={primaryBtnRef}
             type="button"
-            onClick={onRaceAgain}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 hover:from-amber-300 hover:to-red-400 border-2 border-yellow-200 px-3 py-2.5 text-xs sm:text-sm font-black text-slate-950 shadow-xl transition hover:scale-102 active:scale-95 cursor-pointer"
+            onClick={onReturnToHub}
+            className="flex items-center justify-center gap-1 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-3 py-2.5 text-xs font-extrabold text-slate-300 hover:text-white transition active:scale-95 cursor-pointer"
+            title="Return to Arcade Hub"
           >
-            <RotateCcw className="h-4 w-4" />
-            <span>RACE AGAIN! 🏁</span>
+            <span>◀ Arcade Hub</span>
           </button>
         </div>
       </div>

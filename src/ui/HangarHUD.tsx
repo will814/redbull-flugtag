@@ -250,6 +250,9 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
       } else if (e.key.toLowerCase() === 'r') {
         e.preventDefault();
         onRandomizeCraft();
+      } else if (e.key.toLowerCase() === 'm') {
+        e.preventDefault();
+        onToggleMute();
       } else if (
         (e.code === 'Space' || e.code === 'Enter') &&
         !e.repeat &&
@@ -270,6 +273,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
     onStartFlight,
     onUndo,
     onRedo,
+    onToggleMute,
     onReturnToHub,
   ]);
 
@@ -278,7 +282,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
       ? {
           label: 'BALANCED GLIDER!',
           sub: 'Sweet Spot!',
-          bg: 'bg-emerald-600/95 border-emerald-300',
+          bg: 'bg-emerald-600/95 border-emerald-300 text-white',
         }
       : displayMetrics.balanceStatus === 'nose_heavy'
       ? {
@@ -289,8 +293,13 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
       : {
           label: 'TAIL HEAVY!',
           sub: 'Flips Up!',
-          bg: 'bg-purple-600/95 border-purple-300',
+          bg: 'bg-purple-600/95 border-purple-300 text-white',
         };
+
+  const activePart = useMemo(
+    () => getPartById(hoveredPartId ?? currentEquippedId),
+    [hoveredPartId, currentEquippedId]
+  );
 
   const handleQuickSave = () => {
     onSaveCurrentBuild(customBuildName.trim() || undefined);
@@ -303,332 +312,146 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
   };
 
   return (
-    <div className="safe-area-hud pointer-events-none fixed inset-0 z-10 flex flex-col justify-between">
-      {/* TOP GROUP: Single-Row Header Bar + Mobile Telemetry Strip + Optional Wind Tunnel Banner */}
-      <div className="flex flex-col gap-1">
-        <div className="pointer-events-auto flex items-center justify-between gap-1.5 rounded-2xl bg-slate-900/95 px-2.5 py-1.5 border border-white/15 shadow-xl">
-          {/* Scrollable Left + Center + Secondary Tools Region */}
-          <div className="flex flex-1 min-w-0 items-center justify-between gap-1.5 overflow-x-auto no-scrollbar touch-pan-x pr-0.5">
-            {/* Left: Arcade Hub Button + Brand Badge + Stars & Record & Mute */}
-            <div className="flex shrink-0 items-center gap-1.5">
-              {onReturnToHub && (
-                <button
-                  onClick={onReturnToHub}
-                  className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/20 px-2.5 py-1 text-xs sm:text-sm font-extrabold text-slate-100 active:scale-95 transition cursor-pointer shadow"
-                  title="Return to Red Bull DIY Extreme Arcade Hub (Esc)"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-400" />
-                  <span>◀ Arcade Hub</span>
-                </button>
-              )}
+    <div className="safe-area-hud pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-2 sm:p-3.5">
+      {/* ===================================================================== */}
+      {/* TOP BAR: Arcade Hub Return, Title, Records, Stars & Workshop Tools   */}
+      {/* ===================================================================== */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Top-Left: Arcade Hub Return & Workshop Identity */}
+          <div className="pointer-events-auto flex items-center gap-2 bg-slate-950/88 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3 py-1.5 shadow-xl">
+            {onReturnToHub && (
+              <button
+                type="button"
+                onClick={onReturnToHub}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-100 text-xs sm:text-sm font-extrabold border border-slate-600 transition cursor-pointer"
+                title="Return to Arcade Hub (Esc)"
+              >
+                ◀ Arcade Hub
+              </button>
+            )}
 
-              <div className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 to-amber-500 px-2.5 py-1 shadow">
-                <span className="text-base sm:text-lg">🐂</span>
-                <span className="font-display text-xs sm:text-sm font-black tracking-wide text-white">
-                  FLUGTAG
-                </span>
+            <div className="pl-1 pr-2 border-l border-slate-700">
+              <div className="flex items-center gap-1.5">
+                <span className="text-lg sm:text-xl">✈️</span>
+                <h1 className="font-display text-sm sm:text-base font-black tracking-tight text-white uppercase">
+                  Red Bull Flugtag Workshop
+                </h1>
               </div>
+              <p className="text-[10px] sm:text-xs text-sky-300 font-semibold">
+                30-Ft Pier Flight • Wind Tunnel &amp; 258-Ft World Record
+              </p>
+            </div>
+          </div>
 
+          {/* Top-Right: Best Record, Shared Stars, Wind Rig, Presets & Builds, Random, Undo/Redo & Mute */}
+          <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 sm:gap-2 bg-slate-950/88 backdrop-blur-md border border-slate-700/80 rounded-2xl px-3 py-1.5 shadow-xl">
+            <div className="flex items-center gap-2.5 px-2.5 py-1 bg-slate-900/90 rounded-xl border border-slate-800 text-xs font-mono">
+              <div title="Best Flight Distance (World Record: 258 ft!)">
+                <span className="text-slate-400 font-sans font-semibold">BEST: </span>
+                <span className="text-amber-300 font-black">{bestDistanceFeet} FT</span>
+              </div>
+              <div className="h-3 w-px bg-slate-700" />
               <div
-                className="flex items-center gap-1 rounded-xl bg-amber-400/20 border border-amber-400/50 px-2 py-1 text-xs sm:text-sm font-extrabold text-amber-300"
-                title="Judge Stars Earned — Unlocks New Parts!"
+                className="flex items-center gap-1 text-yellow-300 font-black font-sans"
+                title="Shared Red Bull Judge Stars Pool"
               >
                 <span>⭐</span>
                 <span>{totalStars}</span>
               </div>
-
-              <div
-                className="flex items-center gap-1 rounded-xl bg-sky-500/20 border border-sky-400/40 px-2 py-1 text-xs sm:text-sm font-extrabold text-sky-200"
-                title="Best Flight Distance (World Record: 258 ft!)"
-              >
-                <span>🏆</span>
-                <span>{bestDistanceFeet} FT</span>
-              </div>
-
-              <button
-                onClick={onToggleMute}
-                aria-pressed={muted}
-                className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 active:scale-95 transition cursor-pointer"
-                aria-label={muted ? 'Unmute Sound' : 'Mute Sound'}
-              >
-                {muted ? (
-                  <VolumeX className="h-4 w-4 text-rose-400" />
-                ) : (
-                  <Volume2 className="h-4 w-4 text-emerald-400" />
-                )}
-              </button>
             </div>
 
-            {/* Center: Kid-Friendly Balance Seesaw & Desktop Weight/Lift/Stability/Fun Meters */}
-            <div className="flex shrink-0 items-center gap-2">
-              {/* Animated Balance Seesaw Pill with Nose/Tail Orientation & Subtitle */}
-              <div
-                className={`flex items-center gap-1.5 rounded-xl border px-2 py-1 text-xs font-extrabold shadow ${balanceConfig.bg}`}
-                title="Center of Gravity Balance Seesaw (Tail ← → Nose)"
-              >
-                <div className="relative flex h-5 w-12 items-center justify-between rounded-lg bg-black/30 px-1">
-                  <span className="text-[8px] font-black uppercase opacity-80">T</span>
-                  <div
-                    className="h-1.5 w-6 rounded-full bg-yellow-300 transition-transform duration-300"
-                    style={{ transform: `rotate(${-displayMetrics.seesawTiltDeg}deg)` }}
-                  />
-                  <span className="text-[9px] leading-none">✈️</span>
-                  <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rotate-45 bg-white" />
-                </div>
-                <div className="leading-tight">
-                  <div className="text-[11px] sm:text-xs font-black tracking-wide">
-                    {balanceConfig.label}
-                  </div>
-                  <div className="text-[10px] font-bold opacity-90 hidden sm:block">
-                    {balanceConfig.sub}
-                  </div>
-                </div>
-              </div>
+            <button
+              type="button"
+              onClick={onToggleWindTunnel}
+              aria-pressed={windTunnelActive}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black border transition cursor-pointer flex items-center gap-1.5 ${
+                windTunnelActive
+                  ? 'bg-cyan-500 text-slate-950 border-cyan-300 shadow-lg shadow-cyan-500/30 animate-pulse'
+                  : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-500/40'
+              }`}
+              title="Toggle Wind Tunnel Rig (W)"
+            >
+              <Wind className={`h-3.5 w-3.5 ${windTunnelActive ? 'animate-spin' : ''}`} />
+              <span>{windTunnelActive ? 'Wind Rig: ON' : 'Wind Rig'}</span>
+            </button>
 
-              {/* Desktop Weight, Lift, Stability & Fun Bars */}
-              <div className="hidden xl:flex items-center gap-2.5 rounded-xl bg-slate-800/95 px-2.5 py-1 border border-white/10 text-xs">
-                <div className="flex items-center gap-1" title="Wing Lift Power">
-                  <span>🦅</span>
-                  <span className="font-bold text-sky-300">Lift</span>
-                  <div className="h-2 w-11 rounded-full bg-slate-700 overflow-hidden">
-                    <div
-                      className="h-full w-full origin-left bg-gradient-to-r from-sky-400 to-emerald-400 transition-transform duration-300"
-                      style={{ transform: `scaleX(${displayMetrics.liftScore / 100})` }}
-                    />
-                  </div>
-                  {liftDelta !== 0 && (
-                    <span
-                      className={`text-[10px] font-black tabular-nums ${
-                        liftDelta > 0 ? 'text-emerald-300' : 'text-rose-400'
-                      }`}
-                    >
-                      {liftDelta > 0 ? `+${liftDelta}` : liftDelta}
-                    </span>
-                  )}
-                </div>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmDeleteId(null);
+                setShowGarageModal((v) => !v);
+              }}
+              aria-expanded={showGarageModal}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-black border border-indigo-400/50 transition cursor-pointer flex items-center gap-1.5"
+              title="Open Presets & Saved Builds (G)"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              <span>Presets &amp; Builds</span>
+            </button>
 
-                <div className="flex items-center gap-1" title="Pitch Stability & Control">
-                  <span>🎯</span>
-                  <span className="font-bold text-emerald-300">Stability</span>
-                  <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
-                    <div
-                      className="h-full w-full origin-left bg-gradient-to-r from-emerald-400 to-teal-300 transition-transform duration-300"
-                      style={{ transform: `scaleX(${displayMetrics.stabilityScore / 100})` }}
-                    />
-                  </div>
-                  {stabilityDelta !== 0 && (
-                    <span
-                      className={`text-[10px] font-black tabular-nums ${
-                        stabilityDelta > 0 ? 'text-emerald-300' : 'text-rose-400'
-                      }`}
-                    >
-                      {stabilityDelta > 0 ? `+${stabilityDelta}` : stabilityDelta}
-                    </span>
-                  )}
-                </div>
+            <button
+              type="button"
+              onClick={onRandomizeCraft}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer flex items-center gap-1"
+              title="Randomize Build (R)"
+            >
+              <Shuffle className="h-3.5 w-3.5 text-purple-300" />
+              <span className="hidden sm:inline">Random</span>
+            </button>
 
-                <div
-                  className="flex items-center gap-1"
-                  title="Ramp Total Weight (Over 400 lbs triggers Heavyweight Inertia & +1 Creativity Bonus!)"
-                >
-                  <span>⚖️</span>
-                  <span
-                    className={`font-bold tabular-nums ${
-                      displayMetrics.isOverWeightLimit
-                        ? 'text-rose-400 animate-pulse'
-                        : 'text-amber-300'
-                    }`}
-                  >
-                    {displayMetrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS} lb
-                    {displayMetrics.isOverWeightLimit ? ' ⚠️' : ''}
-                  </span>
-                  {massDelta !== 0 && (
-                    <span
-                      className={`text-[10px] font-black tabular-nums ${
-                        massDelta < 0 ? 'text-sky-300' : 'text-amber-200'
-                      }`}
-                    >
-                      ({massDelta > 0 ? `+${massDelta}` : massDelta})
-                    </span>
-                  )}
-                </div>
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition ${
+                canUndo
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600 cursor-pointer'
+                  : 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
+              }`}
+              title="Undo Change (Ctrl+Z)"
+              aria-label="Undo Craft Change"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </button>
 
-                <div className="flex items-center gap-1" title="Judge Creativity Score">
-                  <span>🎭</span>
-                  <span className="font-bold text-pink-300">Fun</span>
-                  <div className="h-2 w-10 rounded-full bg-slate-700 overflow-hidden">
-                    <div
-                      className="h-full w-full origin-left bg-gradient-to-r from-pink-500 to-amber-400 transition-transform duration-300"
-                      style={{ transform: `scaleX(${displayMetrics.creativityScore / 100})` }}
-                    />
-                  </div>
-                  {creativityDelta !== 0 && (
-                    <span
-                      className={`text-[10px] font-black tabular-nums ${
-                        creativityDelta > 0 ? 'text-emerald-300' : 'text-rose-400'
-                      }`}
-                    >
-                      {creativityDelta > 0 ? `+${creativityDelta}` : creativityDelta}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition ${
+                canRedo
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600 cursor-pointer'
+                  : 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
+              }`}
+              title="Redo Change (Ctrl+Y)"
+              aria-label="Redo Craft Change"
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+            </button>
 
-            {/* Secondary Workshop Tools: Undo/Redo, Wind Tunnel, Mix, Save Build, Garage */}
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                onClick={onUndo}
-                disabled={!canUndo}
-                className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl border transition cursor-pointer ${
-                  canUndo
-                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/15 active:scale-95'
-                    : 'bg-slate-900/50 text-slate-600 border-white/5 cursor-not-allowed'
-                }`}
-                title="Undo Change (Ctrl+Z)"
-                aria-label="Undo Craft Change"
-              >
-                <Undo2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </button>
-
-              <button
-                onClick={onRedo}
-                disabled={!canRedo}
-                className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl border transition cursor-pointer ${
-                  canRedo
-                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/15 active:scale-95'
-                    : 'bg-slate-900/50 text-slate-600 border-white/5 cursor-not-allowed'
-                }`}
-                title="Redo Change (Ctrl+Y)"
-                aria-label="Redo Craft Change"
-              >
-                <Redo2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </button>
-
-              <button
-                onClick={onToggleWindTunnel}
-                aria-pressed={windTunnelActive}
-                className={`flex items-center gap-1 rounded-xl px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold border transition active:scale-95 cursor-pointer ${
-                  windTunnelActive
-                    ? 'bg-emerald-500 text-slate-950 border-emerald-200 shadow-lg shadow-emerald-500/30'
-                    : 'bg-slate-800 text-sky-200 border-sky-400/40 hover:bg-slate-700'
-                }`}
-                title="Test Craft in Wind Tunnel (W)"
-              >
-                <Wind className={`h-4 w-4 ${windTunnelActive ? 'animate-spin' : ''}`} />
-                <span>{windTunnelActive ? 'Wind ON' : 'Test Wind'}</span>
-              </button>
-
-              <button
-                onClick={onRandomizeCraft}
-                className="flex items-center gap-1 rounded-xl bg-purple-600 hover:bg-purple-500 border border-purple-300/40 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold text-white active:scale-95 transition cursor-pointer"
-                title="Random Funny Craft! (R — Undoable!)"
-              >
-                <Shuffle className="h-4 w-4" />
-                <span className="hidden sm:inline">Mix!</span>
-              </button>
-
-              <button
-                onClick={handleQuickSave}
-                className={`flex items-center gap-1 rounded-xl border px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold transition active:scale-95 cursor-pointer ${
-                  justSavedToast
-                    ? 'bg-emerald-500 text-slate-950 border-emerald-200'
-                    : 'bg-slate-800 hover:bg-slate-700 text-emerald-300 border-emerald-400/40'
-                }`}
-                title="Save Current Craft Configuration"
-              >
-                {justSavedToast ? (
-                  <>
-                    <Check className="h-4 w-4" />
-                    <span>Saved!</span>
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4" />
-                    <span className="hidden sm:inline">Save</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  setConfirmDeleteId(null);
-                  setShowGarageModal((v) => !v);
-                }}
-                aria-expanded={showGarageModal}
-                className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-amber-400/40 px-2 sm:px-2.5 py-1 text-xs sm:text-sm font-extrabold text-amber-200 active:scale-95 transition cursor-pointer"
-                title="Open Saved Builds & Famous Presets (G)"
-              >
-                <FolderOpen className="h-4 w-4 text-amber-300" />
-                <span>Builds ({savedBuilds.length})</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onToggleMute}
+              aria-pressed={muted}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer"
+              aria-label={muted ? 'Unmute Audio' : 'Mute Audio'}
+              title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
+            >
+              {muted ? (
+                <VolumeX className="h-3.5 w-3.5 text-rose-400" />
+              ) : (
+                <Volume2 className="h-3.5 w-3.5 text-emerald-400" />
+              )}
+            </button>
           </div>
-
-          {/* Primary Launch CTA Button — Pinned outside overflow-x-auto so it is never clipped */}
-          <button
-            onClick={onStartFlight}
-            className="animate-pulse-glow flex shrink-0 items-center gap-1 rounded-xl bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-500 px-3 sm:px-4 py-1 font-display text-xs sm:text-base font-black text-slate-950 border-2 border-yellow-200 shadow-lg active:scale-95 transition cursor-pointer"
-            title="Roll Out to the 30-Foot Pier! (Space)"
-          >
-            <Rocket className="h-4 w-4" />
-            <span>TO THE PIER!</span>
-          </button>
-        </div>
-
-        {/* COMPACT MOBILE / TABLET (<1280px) TELEMETRY BAR */}
-        <div className="pointer-events-auto flex xl:hidden flex-wrap max-w-full items-center justify-center gap-x-2 gap-y-0.5 self-center rounded-xl bg-slate-900/95 border border-white/15 px-3 py-1 text-[11px] shadow-md">
-          <span className="font-extrabold text-sky-300 tabular-nums">
-            🦅 Lift {displayMetrics.liftScore}%
-            {liftDelta !== 0 && (
-              <span className={liftDelta > 0 ? ' text-emerald-300' : ' text-rose-400'}>
-                {' '}
-                ({liftDelta > 0 ? `+${liftDelta}` : liftDelta})
-              </span>
-            )}
-          </span>
-          <span className="text-slate-600">•</span>
-          <span className="font-extrabold text-emerald-300 tabular-nums">
-            🎯 Stab {displayMetrics.stabilityScore}%
-            {stabilityDelta !== 0 && (
-              <span className={stabilityDelta > 0 ? ' text-emerald-300' : ' text-rose-400'}>
-                {' '}
-                ({stabilityDelta > 0 ? `+${stabilityDelta}` : stabilityDelta})
-              </span>
-            )}
-          </span>
-          <span className="text-slate-600">•</span>
-          <span
-            className={`font-extrabold tabular-nums ${
-              displayMetrics.isOverWeightLimit ? 'text-rose-400 animate-pulse' : 'text-amber-300'
-            }`}
-          >
-            ⚖️ {displayMetrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS}lb
-            {displayMetrics.isOverWeightLimit ? ' (HEAVY!)' : ''}
-            {massDelta !== 0 && (
-              <span className={massDelta < 0 ? ' text-sky-300' : ' text-amber-200'}>
-                {' '}
-                ({massDelta > 0 ? `+${massDelta}` : massDelta})
-              </span>
-            )}
-          </span>
-          <span className="text-slate-600">•</span>
-          <span className="font-extrabold text-pink-300 tabular-nums">
-            🎭 Fun {displayMetrics.creativityScore}%
-            {creativityDelta !== 0 && (
-              <span className={creativityDelta > 0 ? ' text-emerald-300' : ' text-rose-400'}>
-                {' '}
-                ({creativityDelta > 0 ? `+${creativityDelta}` : creativityDelta})
-              </span>
-            )}
-          </span>
         </div>
 
         {/* WIND TUNNEL LIVE FEEDBACK BANNER */}
         {windTunnelActive && (
-          <div className="pointer-events-none self-center rounded-xl bg-slate-900/95 border border-sky-400/50 px-3 py-0.5 text-center shadow-md">
-            <div className="text-[11px] sm:text-xs font-extrabold text-sky-300">
-              💨 WIND TUNNEL:{' '}
+          <div className="pointer-events-none self-center rounded-xl bg-slate-950/90 border border-cyan-400/60 px-3.5 py-1 text-center shadow-lg">
+            <div className="text-[11px] sm:text-xs font-extrabold text-cyan-300">
+              💨 WIND RIG:{' '}
               {displayMetrics.isOverWeightLimit
                 ? '⚠️ OVER 400 LB RULE! Harder start push, but massive cannonball momentum & +1 Creativity Bonus!'
                 : displayMetrics.balanceStatus === 'balanced' && displayMetrics.liftScore >= 45
@@ -643,69 +466,240 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
         )}
       </div>
 
-      {/* MY GARAGE (SAVED CRAFTS & PRESETS MODAL WITH BACKDROP) */}
+      {/* ===================================================================== */}
+      {/* MIDDLE-LEFT: Aerodynamic Telemetry, Balance Seesaw & Quick Builds     */}
+      {/* ===================================================================== */}
+      <div className="my-auto flex items-center justify-between pointer-events-none">
+        <div className="pointer-events-auto w-full max-w-xs sm:max-w-sm bg-slate-950/88 backdrop-blur-md border border-slate-700/80 rounded-2xl p-3 shadow-2xl flex flex-col gap-2">
+          {/* Status Header: Seesaw Balance Badge + Ramp Total Mass */}
+          <div className="flex items-center justify-between gap-2">
+            <div
+              className={`flex items-center gap-1.5 rounded-xl border px-2 py-0.5 text-[11px] font-black shadow ${balanceConfig.bg}`}
+              title="Center of Gravity Balance Seesaw (Tail ← → Nose)"
+            >
+              <div className="relative flex h-4 w-10 items-center justify-between rounded bg-black/30 px-1">
+                <span className="text-[7px] font-black uppercase opacity-80">T</span>
+                <div
+                  className="h-1 w-5 rounded-full bg-yellow-300 transition-transform duration-300"
+                  style={{ transform: `rotate(${-displayMetrics.seesawTiltDeg}deg)` }}
+                />
+                <span className="text-[8px] leading-none">✈️</span>
+                <div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rotate-45 bg-white" />
+              </div>
+              <span>{balanceConfig.label}</span>
+            </div>
+
+            <span
+              className={`text-[11px] font-mono font-bold tabular-nums ${
+                displayMetrics.isOverWeightLimit
+                  ? 'text-rose-400 animate-pulse'
+                  : 'text-slate-300'
+              }`}
+              title="Ramp Total Weight (Over 400 lbs triggers Heavyweight Inertia & +1 Creativity Bonus!)"
+            >
+              ⚖️ {displayMetrics.rampTotalMassLbs}/{MAX_FLUGTAG_WEIGHT_LBS} LBS
+              {displayMetrics.isOverWeightLimit ? ' ⚠️' : ''}
+              {massDelta !== 0 && (
+                <span className={massDelta < 0 ? ' text-sky-300' : ' text-amber-300'}>
+                  {' '}
+                  ({massDelta > 0 ? `+${massDelta}` : massDelta})
+                </span>
+              )}
+            </span>
+          </div>
+
+          {/* 3 Core Stat Bars: Lift, Pitch Stability, Judge Creativity */}
+          <div className="space-y-1.5 text-[11px] font-extrabold">
+            {[
+              {
+                label: '🦅 Wing Lift Power',
+                val: displayMetrics.liftScore,
+                delta: liftDelta,
+                barCls: 'bg-sky-400',
+              },
+              {
+                label: '🎯 Pitch Stability',
+                val: displayMetrics.stabilityScore,
+                delta: stabilityDelta,
+                barCls: 'bg-emerald-400',
+              },
+              {
+                label: '🎭 Judge Creativity',
+                val: displayMetrics.creativityScore,
+                delta: creativityDelta,
+                barCls: 'bg-pink-400',
+              },
+            ].map((row) => (
+              <div key={row.label}>
+                <div className="flex justify-between text-slate-200 mb-0.5">
+                  <span>{row.label}</span>
+                  <span>
+                    {row.val}/100
+                    {row.delta !== 0 && (
+                      <span
+                        className={
+                          row.delta > 0 ? 'text-emerald-300 ml-1' : 'text-rose-400 ml-1'
+                        }
+                      >
+                        ({row.delta > 0 ? `+${row.delta}` : row.delta})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className={`h-full transition-all duration-200 ${row.barCls}`}
+                    style={{ width: `${Math.min(100, Math.max(6, row.val))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 1-Click Quick Builds */}
+          <div className="border-t border-slate-800/80 pt-2 flex flex-col gap-1">
+            <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+              <span>⚡ Quick Builds:</span>
+              <span className="text-sky-300 font-semibold">1-Click Equip</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {PRESET_BLUEPRINTS.map((preset) => {
+                const isCurrent =
+                  loadout.chassis === preset.chassis &&
+                  loadout.wings === preset.wings &&
+                  loadout.tail === preset.tail &&
+                  loadout.nose === preset.nose &&
+                  loadout.topper === preset.topper &&
+                  loadout.trolley === preset.trolley;
+                return (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    onClick={() => onApplyPreset(preset)}
+                    className={`truncate rounded-lg border px-1.5 py-1 text-left text-[10px] font-extrabold transition cursor-pointer ${
+                      isCurrent
+                        ? 'border-amber-400 bg-amber-400/20 text-amber-200'
+                        : 'border-slate-700/80 bg-slate-900/80 text-slate-300 hover:border-amber-400/50 hover:text-white'
+                    }`}
+                    title={`Equip ${preset.name}`}
+                  >
+                    {preset.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ===================================================================== */}
+      {/* PRESETS & SAVED BUILDS MODAL                                          */}
+      {/* ===================================================================== */}
       {showGarageModal && (
         <div
-          className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-slate-950/75 p-2 sm:p-4 backdrop-blur-sm"
+          className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-slate-950/80 p-3 sm:p-4 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-labelledby="garage-modal-title"
           onClick={() => setShowGarageModal(false)}
         >
           <div
-            className="rounded-3xl bg-slate-900/98 border-2 border-amber-400/80 p-3 sm:p-4 shadow-2xl max-w-xl w-full max-h-[80dvh] overflow-y-auto no-scrollbar touch-pan-y"
+            className="rounded-3xl bg-slate-900 border-2 border-slate-700 p-4 sm:p-5 shadow-2xl max-w-xl w-full max-h-[85dvh] overflow-y-auto no-scrollbar touch-pan-y"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-white/15 pb-2 mb-2.5">
+            <div className="flex items-center justify-between border-b border-white/15 pb-2.5 mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-xl">🏠</span>
-                <span
+                <span className="text-xl">✈️</span>
+                <h2
                   id="garage-modal-title"
-                  className="font-display text-sm sm:text-lg font-black text-amber-300"
+                  className="font-display text-base sm:text-lg font-black text-white uppercase tracking-wide"
                 >
-                  MY CRAFT GARAGE & SAVED BUILDS
-                </span>
+                  PRESETS &amp; SAVED BUILDS
+                </h2>
               </div>
               <button
+                type="button"
                 onClick={() => setShowGarageModal(false)}
                 className="rounded-xl bg-slate-800 px-3 py-1 text-xs font-extrabold text-slate-200 hover:bg-slate-700 cursor-pointer"
               >
-                Close ✕
+                ✕ Close
               </button>
             </div>
 
-            {/* Save Current Build Row */}
-            <div className="flex items-center gap-2 rounded-2xl bg-slate-800/90 border border-emerald-400/40 p-2 mb-3">
-              <input
-                type="text"
-                aria-label="Custom craft name"
-                value={customBuildName}
-                onChange={(e) => setCustomBuildName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    handleQuickSave();
-                  }
-                }}
-                placeholder="Name your craft (or tap Save for cool auto-name!)"
-                className="flex-1 rounded-xl bg-slate-950/80 px-3 py-1.5 text-xs sm:text-sm font-bold text-white placeholder-slate-400 border border-white/15 focus:outline-none focus:border-amber-400"
-              />
-              <button
-                onClick={handleQuickSave}
-                className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3.5 py-1.5 font-display text-xs sm:text-sm font-black text-slate-950 shadow active:scale-95 transition cursor-pointer"
-              >
-                <Save className="h-4 w-4" />
-                <span>Save Craft!</span>
-              </button>
-            </div>
-
-            {/* Saved Custom Builds List */}
-            <div className="mb-3">
-              <div className="text-xs font-black uppercase tracking-wider text-sky-300 mb-1.5">
-                ⭐ My Saved Builds ({savedBuildSummaries.length})
+            {/* Official Presets */}
+            <div className="mb-4">
+              <div className="text-xs font-black uppercase tracking-wider text-amber-300 mb-2">
+                Official Presets (4)
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {presetBuildSummaries.map(
+                  ({ preset, chassis, wings, tail, nose, topper, trolley, metrics: pMetrics }) => (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => {
+                        onApplyPreset(preset);
+                        setShowGarageModal(false);
+                      }}
+                      className="flex items-center justify-between gap-2 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700 hover:border-amber-400 p-2.5 text-left transition active:scale-95 cursor-pointer"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className="truncate text-xs sm:text-sm font-extrabold text-white">
+                          {preset.name}
+                        </span>
+                        <div className="mt-0.5 flex items-center gap-1 text-xs sm:text-sm">
+                          <span>{chassis.emoji}</span>
+                          <span>{wings.emoji}</span>
+                          <span>{tail.emoji}</span>
+                          <span>{nose.emoji}</span>
+                          <span>{topper.emoji}</span>
+                          <span>{trolley.emoji}</span>
+                          <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-300 tabular-nums">
+                            ⚖️ {pMetrics.rampTotalMassLbs}lb
+                          </span>
+                        </div>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-black text-amber-300">
+                        Load ▶
+                      </span>
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+
+            {/* Saved Builds Row */}
+            <div className="border-t border-slate-800 pt-3">
+              <div className="text-xs font-black uppercase tracking-wider text-sky-300 mb-2">
+                Saved Builds ({savedBuildSummaries.length})
+              </div>
+              <div className="flex items-center gap-2 rounded-2xl bg-slate-950/70 border border-slate-800 p-2 mb-2.5">
+                <input
+                  type="text"
+                  aria-label="Custom craft name"
+                  value={customBuildName}
+                  onChange={(e) => setCustomBuildName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleQuickSave();
+                    }
+                  }}
+                  placeholder="Custom build name (optional)..."
+                  className="flex-1 rounded-xl bg-slate-900 px-3 py-1.5 text-xs sm:text-sm font-bold text-white placeholder-slate-400 border border-slate-700 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleQuickSave}
+                  className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-3.5 py-1.5 font-display text-xs sm:text-sm font-black text-slate-950 shadow active:scale-95 transition cursor-pointer"
+                >
+                  {justSavedToast ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+                  <span>{justSavedToast ? 'Saved!' : 'Save Build'}</span>
+                </button>
+              </div>
+
               {savedBuildSummaries.length === 0 ? (
                 <div className="rounded-xl bg-slate-800/50 border border-white/10 p-3 text-center text-xs font-bold text-slate-400">
-                  No saved crafts yet! Tap &ldquo;Save Craft!&rdquo; above to save your favorite designs!
+                  No custom builds saved yet. Click &ldquo;Save Build&rdquo; to save your design!
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -727,6 +721,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                           className="flex items-center justify-between gap-2 rounded-2xl bg-slate-800/95 border border-sky-400/40 p-2.5 shadow"
                         >
                           <button
+                            type="button"
                             onClick={() => {
                               onApplyPreset(slot.loadout);
                               setShowGarageModal(false);
@@ -751,6 +746,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
 
                           <div className="flex items-center gap-1">
                             <button
+                              type="button"
                               onClick={() => {
                                 onApplyPreset(slot.loadout);
                                 setShowGarageModal(false);
@@ -760,6 +756,7 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                               Load
                             </button>
                             <button
+                              type="button"
                               onClick={() => {
                                 if (isConfirming) {
                                   onDeleteSavedBuild(slot.id);
@@ -788,61 +785,23 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                 </div>
               )}
             </div>
-
-            {/* Starter Famous Blueprints */}
-            <div>
-              <div className="text-xs font-black uppercase tracking-wider text-amber-300 mb-1.5">
-                🏆 Famous Starter Blueprints
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {presetBuildSummaries.map(
-                  ({ preset, chassis, wings, tail, nose, topper, trolley, metrics: pMetrics }) => (
-                    <button
-                      key={preset.name}
-                      onClick={() => {
-                        onApplyPreset(preset);
-                        setShowGarageModal(false);
-                      }}
-                      className="flex items-center justify-between gap-2 rounded-xl bg-slate-800 hover:bg-indigo-600/80 border border-white/15 p-2.5 text-left transition active:scale-95 cursor-pointer"
-                    >
-                      <div className="flex flex-col min-w-0">
-                        <span className="truncate text-xs sm:text-sm font-extrabold text-white">
-                          {preset.name}
-                        </span>
-                        <div className="mt-0.5 flex items-center gap-1 text-xs sm:text-sm">
-                          <span>{chassis.emoji}</span>
-                          <span>{wings.emoji}</span>
-                          <span>{tail.emoji}</span>
-                          <span>{nose.emoji}</span>
-                          <span>{topper.emoji}</span>
-                          <span>{trolley.emoji}</span>
-                          <span className="ml-1 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-300 tabular-nums">
-                            ⚖️ {pMetrics.rampTotalMassLbs}lb
-                          </span>
-                        </div>
-                      </div>
-                      <span className="shrink-0 text-[11px] font-black text-amber-300">
-                        Load ▶
-                      </span>
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
           </div>
         </div>
       )}
 
-      {/* BOTTOM SNAP-SOCKET BUILDER DOCK */}
-      <div className="pointer-events-auto flex flex-col gap-1.5 rounded-2xl bg-slate-900/95 p-2 border border-white/15 shadow-2xl">
-        {/* Category Tabs + Paint Swatch Button + Collapse Toggle */}
-        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar touch-pan-x">
-          <div className="flex items-center gap-1" role="tablist" aria-label="Craft Part Categories">
+      {/* ===================================================================== */}
+      {/* BOTTOM DOCK: 6 Category Tabs, Paint, Part Cards & Primary Launch CTA  */}
+      {/* ===================================================================== */}
+      <div className="pointer-events-auto flex flex-col gap-2 rounded-2xl bg-slate-950/90 backdrop-blur-md p-2.5 sm:p-3 border border-slate-700/80 shadow-2xl">
+        {/* Category Tabs + Paint Swatch Button + Orbit Hint & Collapse Toggle */}
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <div className="flex flex-wrap items-center gap-1" role="tablist" aria-label="Craft Part Categories">
             {CATEGORY_TABS.map((tab, idx) => {
               const isSelected = !showPaintDrawer && selectedCategory === tab.id;
               return (
                 <button
                   key={tab.id}
+                  type="button"
                   role="tab"
                   aria-selected={isSelected}
                   title={`${tab.label} (Key ${idx + 1})`}
@@ -851,26 +810,21 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                     setDockCollapsed(false);
                     onSelectCategory(tab.id);
                   }}
-                  className={`flex items-center gap-1.5 rounded-xl px-2.5 sm:px-3.5 py-1.5 text-xs sm:text-sm font-extrabold transition active:scale-95 whitespace-nowrap cursor-pointer ${
+                  className={`flex items-center gap-1.5 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-extrabold transition active:scale-95 whitespace-nowrap cursor-pointer border ${
                     isSelected
-                      ? 'bg-amber-400 text-slate-950 shadow-md border-2 border-yellow-200'
-                      : 'bg-slate-800/90 text-slate-200 hover:bg-slate-700 border border-white/10'
+                      ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md'
+                      : 'bg-slate-900 text-slate-200 hover:bg-slate-800 border-slate-700'
                   }`}
                 >
-                  <span className="text-base sm:text-lg">{tab.emoji}</span>
+                  <span>{tab.emoji}</span>
                   <span>{tab.label}</span>
-                  <span
-                    className={`hidden xl:inline rounded px-1 text-[10px] font-black ${
-                      isSelected ? 'bg-black/15 text-slate-950' : 'bg-white/10 text-slate-400'
-                    }`}
-                  >
-                    {idx + 1}
-                  </span>
+                  <span className="text-[10px] opacity-65 font-mono">[{idx + 1}]</span>
                 </button>
               );
             })}
 
             <button
+              type="button"
               role="tab"
               aria-selected={showPaintDrawer}
               title="Paint Themes (Key P)"
@@ -878,207 +832,219 @@ export const HangarHUD: React.FC<HangarHUDProps> = React.memo(({
                 setDockCollapsed(false);
                 setShowPaintDrawer((v) => !v);
               }}
-              className={`flex items-center gap-1.5 rounded-xl px-2.5 sm:px-3.5 py-1.5 text-xs sm:text-sm font-extrabold transition active:scale-95 whitespace-nowrap cursor-pointer ${
+              className={`flex items-center gap-1.5 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-extrabold transition active:scale-95 whitespace-nowrap cursor-pointer border ${
                 showPaintDrawer
-                  ? 'bg-pink-500 text-white shadow-md border-2 border-pink-200'
-                  : 'bg-slate-800/90 text-slate-200 hover:bg-slate-700 border border-white/10'
+                  ? 'bg-pink-500 text-white border-pink-300 shadow-md'
+                  : 'bg-slate-900 text-pink-300 hover:bg-slate-800 border-pink-400/30'
               }`}
             >
-              <span className="text-base sm:text-lg">🎨</span>
+              <span>🎨</span>
               <span>Paint</span>
-              <span
-                className={`hidden xl:inline rounded px-1 text-[10px] font-black ${
-                  showPaintDrawer ? 'bg-black/20 text-white' : 'bg-white/10 text-slate-400'
-                }`}
-              >
-                P
-              </span>
+              <span className="text-[10px] opacity-65 font-mono">[P]</span>
             </button>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <div className="hidden md:flex items-center gap-1.5 text-[11px] font-bold text-slate-300">
-              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              <span>
-                {selectedCategory === 'wings' || selectedCategory === 'tail'
-                  ? 'Symmetric L/R Pair • Drag/Scroll 3D to Spin & Zoom!'
-                  : 'Tap 3D rings or cards to snap on! Drag/Scroll 3D to Spin & Zoom!'}
-              </span>
-            </div>
+            <span className="hidden lg:inline-block text-[10px] font-bold text-slate-400">
+              🖱️ Drag 3D to Orbit • Scroll to Zoom • Click Sockets
+            </span>
+
+            {dockCollapsed && (
+              <button
+                type="button"
+                onClick={onStartFlight}
+                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-red-600 via-amber-500 to-yellow-400 px-3 py-1.5 text-xs font-black text-slate-950 border border-amber-200 shadow cursor-pointer"
+              >
+                <Rocket className="h-3.5 w-3.5" />
+                <span>TO THE PIER! ✈️</span>
+              </button>
+            )}
 
             <button
+              type="button"
               onClick={() => setDockCollapsed((c) => !c)}
               aria-expanded={!dockCollapsed}
               aria-label={dockCollapsed ? 'Expand Part Dock' : 'Minimize Part Dock'}
-              className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 px-2 py-1 text-[11px] font-bold text-slate-200 cursor-pointer"
-              title={dockCollapsed ? 'Show Part Cards' : 'Hide Part Cards to View 3D Craft'}
+              className="flex items-center gap-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 p-1.5 text-xs font-bold text-slate-200 cursor-pointer"
+              title={dockCollapsed ? 'Expand Part Dock' : 'Collapse Part Dock'}
             >
-              {dockCollapsed ? (
-                <>
-                  <ChevronUp className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Parts</span>
-                </>
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
-              )}
+              {dockCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>
           </div>
         </div>
 
-        {/* Horizontal Carousel of Parts or Paint Themes */}
-        {!dockCollapsed &&
-          (showPaintDrawer ? (
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar touch-pan-x py-1">
-              {PAINT_THEMES.map((theme) => {
-                const active = loadout.paintTheme === theme.id;
-                return (
-                  <button
-                    key={theme.id}
-                    aria-pressed={active}
-                    onClick={() => onSelectPaint(theme.id)}
-                    className={`flex shrink-0 items-center gap-2.5 rounded-xl px-3.5 py-2 border-2 transition active:scale-95 cursor-pointer ${
-                      active
-                        ? 'bg-slate-800 border-yellow-400 shadow-lg scale-[1.02]'
-                        : 'bg-slate-800/60 border-white/10 hover:bg-slate-800'
-                    }`}
-                  >
-                    <span className="text-xl">{theme.emoji}</span>
-                    <div className="text-left">
-                      <div className="text-xs sm:text-sm font-extrabold text-white">
-                        {theme.name}
-                      </div>
-                      <div className="flex items-center gap-1 mt-1">
-                        <span
-                          className="h-3 w-5 rounded-full border border-white/40"
-                          style={{ backgroundColor: theme.bodyHex }}
-                        />
-                        <span
-                          className="h-3 w-5 rounded-full border border-white/40"
-                          style={{ backgroundColor: theme.wingHex }}
-                        />
-                        <span
-                          className="h-3 w-5 rounded-full border border-white/40"
-                          style={{ backgroundColor: theme.stripeHex }}
-                        />
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div
-              className="flex items-stretch gap-2 overflow-x-auto no-scrollbar touch-pan-x py-0.5"
-              onPointerLeave={() => setHoveredPartId(null)}
-            >
-              {categoryParts.map((part: CraftPart) => {
-                const isEquipped = currentEquippedId === part.id;
-                const isLocked = totalStars < part.unlockStars;
-                const hasBalanceTendency = Math.abs(part.cgOffsetX) >= 0.25;
-
-                return (
-                  <button
-                    key={part.id}
-                    ref={isEquipped ? activePartCardRef : null}
-                    aria-pressed={isEquipped}
-                    aria-disabled={isLocked}
-                    onPointerEnter={() => setHoveredPartId(part.id)}
-                    onFocus={() => setHoveredPartId(part.id)}
-                    onBlur={() =>
-                      setHoveredPartId((prev) => (prev === part.id ? null : prev))
-                    }
-                    onClick={() => {
-                      if (!isLocked) {
-                        onEquipPart(selectedCategory, part.id);
-                      }
-                    }}
-                    className={`relative flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-1.5 sm:py-2 text-left border-2 transition active:scale-95 min-w-[178px] sm:min-w-[206px] ${
-                      isLocked
-                        ? 'bg-slate-900/75 border-slate-700/80 opacity-75 cursor-not-allowed'
-                        : isEquipped
-                        ? 'bg-gradient-to-br from-indigo-900/90 to-slate-800 border-yellow-400 shadow-lg shadow-yellow-400/15 cursor-pointer'
-                        : 'bg-slate-800/80 border-white/10 hover:border-sky-400/60 hover:bg-slate-800 cursor-pointer'
-                    }`}
-                  >
-                    {/* Big Part Emoji Badge */}
-                    <div
-                      className="flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl text-2xl sm:text-3xl shadow-inner"
-                      style={{
-                        backgroundColor: isLocked ? '#1e293b' : `${part.primaryColor}33`,
-                        border: `2px solid ${isLocked ? '#475569' : part.primaryColor}`,
-                      }}
-                    >
-                      {isLocked ? (
-                        <Lock className="h-5 w-5 text-amber-400" />
-                      ) : (
-                        part.emoji
-                      )}
-                    </div>
-
-                    {/* Part Name, Kid Badge & Mini Icons */}
-                    <div className="flex flex-col justify-center min-w-0">
-                      <div className="truncate text-xs sm:text-sm font-extrabold text-white">
-                        {part.name}
-                      </div>
-
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                        {isLocked && (
-                          <span className="inline-flex items-center gap-0.5 rounded-md bg-amber-500/25 border border-amber-400/40 px-1.5 py-0.5 text-[10px] font-black text-amber-300">
-                            🔒 {part.unlockStars}⭐
-                          </span>
-                        )}
-                        <span
-                          className={`inline-block rounded-md px-1.5 py-0.5 text-[10px] sm:text-[11px] font-extrabold ${
-                            isLocked
-                              ? 'bg-white/5 text-slate-300'
-                              : 'bg-white/10 text-amber-300'
-                          }`}
-                        >
-                          {part.kidBadge}
-                        </span>
-                        {hasBalanceTendency && (
-                          <span
-                            className="inline-block rounded-md bg-sky-500/20 border border-sky-400/30 px-1 py-0.5 text-[10px] font-extrabold text-sky-200"
-                            title={
-                              part.cgOffsetX > 0
-                                ? 'Shifts balance toward Nose'
-                                : 'Shifts balance toward Tail'
-                            }
-                          >
-                            {part.cgOffsetX > 0 ? 'Nose+' : 'Tail+'}
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        className={`mt-1 flex items-center gap-2 text-[11px] font-bold ${
-                          isLocked ? 'text-slate-400' : 'text-slate-300'
+        {/* Part Cards Carousel + Right Active Part Summary & Primary Launch CTA */}
+        {!dockCollapsed && (
+          <div className="flex flex-col md:flex-row items-stretch gap-3">
+            <div className="flex-1 min-w-0">
+              {showPaintDrawer ? (
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar touch-pan-x py-1">
+                  {PAINT_THEMES.map((theme) => {
+                    const active = loadout.paintTheme === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => onSelectPaint(theme.id)}
+                        className={`flex shrink-0 items-center gap-2.5 rounded-xl px-3.5 py-2 border-2 transition active:scale-95 cursor-pointer ${
+                          active
+                            ? 'bg-slate-800 border-yellow-400 shadow-lg scale-[1.02]'
+                            : 'bg-slate-800/60 border-white/10 hover:bg-slate-800'
                         }`}
                       >
-                        <span>⚖️ {part.massLbs}lb</span>
-                        {part.category === 'trolley' && part.pushEfficiency ? (
-                          <span className="text-emerald-300">
-                            🛞 +{Math.round((part.pushEfficiency - 0.85) * 40)}
-                          </span>
-                        ) : part.wingAreaM2 > 0.5 ? (
-                          <span className="text-sky-300">
-                            🦅 +{Math.round(part.wingAreaM2 * part.liftMultiplier)}
-                          </span>
-                        ) : null}
-                        <span>✨ +{part.creativityPoints}</span>
-                      </div>
-                    </div>
+                        <span className="text-xl">{theme.emoji}</span>
+                        <div className="text-left">
+                          <div className="text-xs sm:text-sm font-extrabold text-white">
+                            {theme.name}
+                          </div>
+                          <div className="flex items-center gap-1 mt-1">
+                            <span
+                              className="h-3 w-5 rounded-full border border-white/40"
+                              style={{ backgroundColor: theme.bodyHex }}
+                            />
+                            <span
+                              className="h-3 w-5 rounded-full border border-white/40"
+                              style={{ backgroundColor: theme.wingHex }}
+                            />
+                            <span
+                              className="h-3 w-5 rounded-full border border-white/40"
+                              style={{ backgroundColor: theme.stripeHex }}
+                            />
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div
+                  className="flex items-stretch gap-2 overflow-x-auto no-scrollbar touch-pan-x py-0.5"
+                  onPointerLeave={() => setHoveredPartId(null)}
+                >
+                  {categoryParts.map((part: CraftPart) => {
+                    const isEquipped = currentEquippedId === part.id;
+                    const isLocked = totalStars < part.unlockStars;
+                    const hasBalanceTendency = Math.abs(part.cgOffsetX) >= 0.25;
 
-                    {isEquipped && !isLocked && (
-                      <span className="absolute -top-1.5 -right-1.5 rounded-full bg-yellow-400 px-1.5 py-0.5 text-[10px] font-black text-slate-950 shadow">
-                        ON
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+                    return (
+                      <button
+                        key={part.id}
+                        type="button"
+                        ref={isEquipped ? activePartCardRef : null}
+                        aria-pressed={isEquipped}
+                        aria-disabled={isLocked}
+                        onPointerEnter={() => setHoveredPartId(part.id)}
+                        onFocus={() => setHoveredPartId(part.id)}
+                        onBlur={() =>
+                          setHoveredPartId((prev) => (prev === part.id ? null : prev))
+                        }
+                        onClick={() => {
+                          if (!isLocked) {
+                            onEquipPart(selectedCategory, part.id);
+                          }
+                        }}
+                        className={`relative flex shrink-0 items-center gap-2.5 rounded-xl px-3 py-2 text-left border transition active:scale-95 min-w-[180px] sm:min-w-[205px] ${
+                          isLocked
+                            ? 'bg-slate-900/60 border-slate-800 opacity-65 cursor-not-allowed'
+                            : isEquipped
+                            ? 'bg-amber-400/20 border-amber-400 ring-2 ring-amber-400/40 cursor-pointer'
+                            : 'bg-slate-900/90 border-slate-700 hover:bg-slate-800 cursor-pointer'
+                        }`}
+                      >
+                        <div
+                          className="flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl text-2xl sm:text-3xl shadow-inner"
+                          style={{
+                            backgroundColor: isLocked ? '#1e293b' : `${part.primaryColor}33`,
+                            border: `2px solid ${isLocked ? '#475569' : part.primaryColor}`,
+                          }}
+                        >
+                          {isLocked ? (
+                            <Lock className="h-5 w-5 text-amber-400" />
+                          ) : (
+                            part.emoji
+                          )}
+                        </div>
+
+                        <div className="flex flex-col justify-center min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="truncate text-xs font-black text-white">
+                              {part.name}
+                            </span>
+                            {isEquipped && !isLocked ? (
+                              <span className="shrink-0 rounded bg-amber-400 px-1.5 py-0.5 text-[9px] font-black uppercase text-slate-950">
+                                EQUIPPED
+                              </span>
+                            ) : isLocked ? (
+                              <span className="shrink-0 inline-flex items-center gap-0.5 rounded bg-amber-500/20 border border-amber-400/40 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                                🔒 {part.unlockStars}⭐
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                            <span className="inline-block rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-extrabold text-amber-300">
+                              {part.kidBadge}
+                            </span>
+                            {hasBalanceTendency && (
+                              <span
+                                className="inline-block rounded bg-sky-500/20 border border-sky-400/30 px-1 py-0.5 text-[10px] font-extrabold text-sky-200"
+                                title={
+                                  part.cgOffsetX > 0
+                                    ? 'Shifts balance toward Nose'
+                                    : 'Shifts balance toward Tail'
+                                }
+                              >
+                                {part.cgOffsetX > 0 ? 'Nose+' : 'Tail+'}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-1 flex items-center gap-2 text-[10px] font-mono text-slate-300">
+                            <span>{part.massLbs} lbs</span>
+                            {part.category === 'trolley' && part.pushEfficiency ? (
+                              <span className="text-emerald-300">
+                                🛞 +{Math.round((part.pushEfficiency - 0.85) * 40)}
+                              </span>
+                            ) : part.wingAreaM2 > 0.5 ? (
+                              <span className="text-sky-300">
+                                🦅 +{Math.round(part.wingAreaM2 * part.liftMultiplier)}
+                              </span>
+                            ) : null}
+                            <span className="text-amber-300">✨ +{part.creativityPoints}</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          ))}
+
+            {/* Right Sub-panel: Active Part Overview & Primary Launch CTA */}
+            <div className="md:w-72 flex flex-col justify-between gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl p-2.5 shrink-0">
+              <div>
+                <div className="flex items-center gap-1.5 text-xs font-black text-white">
+                  <span>{activePart.emoji}</span>
+                  <span className="truncate">{activePart.name}</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-snug mt-0.5 line-clamp-2">
+                  {activePart.kidBadge} • {activePart.massLbs} lbs • +{activePart.creativityPoints} Creativity Flair
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={onStartFlight}
+                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 via-amber-500 to-yellow-400 hover:from-red-500 hover:to-yellow-300 active:scale-95 text-slate-950 font-black text-sm sm:text-base tracking-wider uppercase shadow-xl shadow-red-500/30 border-2 border-amber-200 transition cursor-pointer flex items-center justify-center gap-2"
+                title="Launch Flight Run (Space)"
+              >
+                <Rocket className="h-4 w-4" />
+                <span>TO THE PIER! ✈️</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

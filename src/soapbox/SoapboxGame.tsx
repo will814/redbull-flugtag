@@ -479,6 +479,8 @@ export const SoapboxGame: React.FC<SoapboxGameProps> = ({
           onBrakeChange={handleBrakeChange}
           onReturnToGarage={handleReturnToGarage}
           onRestartRace={handleStartRace}
+          muted={muted}
+          onToggleMute={onToggleMute}
         />
       )}
 

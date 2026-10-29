@@ -477,6 +477,8 @@ export const FlugtagGame: React.FC<FlugtagGameProps> = ({
           onPitchInputChange={handlePitchInputChange}
           onReturnToHangar={handleReturnToHangar}
           onRestartFlight={handleStartFlight}
+          muted={muted}
+          onToggleMute={onToggleMute}
         />
       )}
 

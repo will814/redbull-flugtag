@@ -16,6 +16,8 @@ import {
   Flame,
   Gauge,
   OctagonAlert,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 interface SoapboxRaceHUDProps {
@@ -31,6 +33,8 @@ interface SoapboxRaceHUDProps {
   onBrakeChange: (active: boolean) => void;
   onReturnToGarage: () => void;
   onRestartRace: () => void;
+  muted?: boolean;
+  onToggleMute?: () => void;
 }
 
 export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
@@ -46,6 +50,8 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
   onBrakeChange,
   onReturnToGarage,
   onRestartRace,
+  muted = false,
+  onToggleMute,
 }) => {
   const activeCourse = useMemo(
     () => getSoapboxCourse(selectedCourseId || 'alpine_panorama'),
@@ -215,6 +221,11 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
 
+      if (e.code === 'KeyM' && !e.ctrlKey && !e.metaKey && onToggleMute) {
+        e.preventDefault();
+        onToggleMute();
+        return;
+      }
       if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         onRestartRace();
@@ -326,6 +337,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
     onRestartRace,
     onReturnToGarage,
     onSteerChange,
+    onToggleMute,
     simStateRef,
   ]);
 
@@ -481,26 +493,41 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
           </div>
         </div>
 
-        {/* Right: Restart & Back to Garage */}
+        {/* Right: Unified Run Navigation Cluster ([Mute], [Restart [R]], [Workshop [B]]) */}
         <div className="pointer-events-auto flex items-center gap-1.5">
+          {onToggleMute && (
+            <button
+              type="button"
+              onClick={onToggleMute}
+              className="rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 p-2 text-slate-200 shadow-lg transition active:scale-95 cursor-pointer"
+              title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
+            >
+              {muted ? (
+                <VolumeX className="h-4 w-4 text-rose-400" />
+              ) : (
+                <Volume2 className="h-4 w-4 text-emerald-400" />
+              )}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onRestartRace}
             className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-2 text-xs font-black text-amber-300 shadow-lg transition active:scale-95 cursor-pointer"
-            title="Restart Derby Run (R)"
+            title="Restart Run (R)"
           >
             <RotateCcw className="h-4 w-4" />
-            <span className="hidden sm:inline">Restart</span>
+            <span>Restart [R]</span>
           </button>
 
           <button
             type="button"
             onClick={onReturnToGarage}
             className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-2 text-xs font-black text-slate-200 shadow-lg transition active:scale-95 cursor-pointer"
-            title="Return to Soapbox Garage (B / Esc)"
+            title="Return to Workshop (B / Esc)"
           >
             <Wrench className="h-4 w-4 text-sky-400" />
-            <span>Garage</span>
+            <span>Workshop [B]</span>
           </button>
         </div>
       </div>
@@ -627,7 +654,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
               onClick={onActionTap}
               className="rounded-xl bg-emerald-400 hover:bg-emerald-300 px-3.5 py-1 text-xs font-black text-slate-950 shadow transition active:scale-95 cursor-pointer"
             >
-              🏃 CREW PUSH / SHOVE! [Space / W / Up]
+              🏃 CREW PUSH / SHOVE! [W / ↑ / SPACE]
             </button>
           </div>
         )}
@@ -669,8 +696,9 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
                 : 'bg-slate-900/90 border-amber-400/60 text-white hover:bg-slate-800'
             }`}
           >
-            <ArrowLeft className="h-6 w-6 sm:h-7 sm:w-7" />
+            <ArrowLeft className="h-5 w-5 sm:h-6 sm:w-6" />
             <span className="text-[11px] sm:text-xs">STEER L</span>
+            <span className="text-[9px] font-bold opacity-80">[A / ←]</span>
           </button>
 
           <button
@@ -703,8 +731,9 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
                 : 'bg-slate-900/90 border-amber-400/60 text-white hover:bg-slate-800'
             }`}
           >
-            <ArrowRight className="h-6 w-6 sm:h-7 sm:w-7" />
+            <ArrowRight className="h-5 w-5 sm:h-6 sm:w-6" />
             <span className="text-[11px] sm:text-xs">STEER R</span>
+            <span className="text-[9px] font-bold opacity-80">[D / →]</span>
           </button>
         </div>
 
@@ -846,7 +875,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
           >
             <span className="text-lg">🛑</span>
             <span className="text-[11px] sm:text-xs">BRAKE / DRIFT</span>
-            <span className="text-[9px] text-slate-400">Hold S / Down</span>
+            <span className="text-[9px] text-slate-400">[S / ↓]</span>
           </button>
 
           <button
@@ -885,7 +914,7 @@ export const SoapboxRaceHUD: React.FC<SoapboxRaceHUDProps> = React.memo(({
               {simState.phase === 'racing' ? 'AERO TUCK' : 'CREW PUSH!'}
             </span>
             <span className="text-[9px] font-bold text-slate-900">
-              Space / W / Up
+              [W / ↑ / SPACE]
             </span>
           </button>
         </div>

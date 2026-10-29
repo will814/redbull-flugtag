@@ -476,7 +476,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
         onReturnToWorkshop();
         return;
       }
-      if (e.code === 'KeyM' && onToggleMute) {
+      if (e.code === 'KeyM' && !e.ctrlKey && !e.metaKey && !e.altKey && onToggleMute) {
         e.preventDefault();
         onToggleMute();
         return;
@@ -770,10 +770,10 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
                 soundEngine.playSnapPop();
                 onToggleMute();
               }}
-              className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-slate-950/85 border border-white/15 text-slate-300 hover:text-white hover:bg-slate-800 active:scale-95 shadow-lg backdrop-blur-md transition-all"
-              title={muted ? 'Unmute' : 'Mute'}
+              className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-slate-950/85 border border-white/15 text-slate-300 hover:text-white hover:bg-slate-800 active:scale-95 shadow-lg backdrop-blur-md transition-all cursor-pointer"
+              title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
             >
-              {muted ? <VolumeX className="h-4 w-4 text-rose-400" /> : <Volume2 className="h-4 w-4" />}
+              {muted ? <VolumeX className="h-4 w-4 text-rose-400" /> : <Volume2 className="h-4 w-4 text-emerald-400" />}
             </button>
           )}
 
@@ -782,10 +782,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
               soundEngine.playSnapPop();
               onRestartRun();
             }}
-            className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-slate-950/85 border border-white/15 text-slate-300 hover:text-amber-300 hover:bg-slate-800 active:scale-95 shadow-lg backdrop-blur-md transition-all"
+            className="flex items-center gap-1.5 h-9 sm:h-10 px-3 rounded-2xl bg-slate-950/85 border border-white/15 text-xs font-black text-slate-200 hover:text-amber-300 hover:bg-slate-800 active:scale-95 shadow-lg backdrop-blur-md transition-all cursor-pointer"
             title="Restart Run (R)"
           >
-            <RotateCcw className="h-4 w-4" />
+            <RotateCcw className="h-4 w-4 text-amber-400" />
+            <span>Restart [R]</span>
           </button>
 
           <button
@@ -793,11 +794,11 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
               soundEngine.playSnapPop();
               onReturnToWorkshop();
             }}
-            className="flex items-center gap-1.5 h-9 sm:h-10 px-3 rounded-2xl bg-slate-950/85 border border-white/15 text-xs font-black text-slate-200 hover:text-sky-300 hover:bg-slate-800 active:scale-95 shadow-lg backdrop-blur-md transition-all"
-            title="Return to Workshop (Esc)"
+            className="flex items-center gap-1.5 h-9 sm:h-10 px-3 rounded-2xl bg-slate-950/85 border border-white/15 text-xs font-black text-slate-200 hover:text-sky-300 hover:bg-slate-800 active:scale-95 shadow-lg backdrop-blur-md transition-all cursor-pointer"
+            title="Return to Workshop (B / Esc)"
           >
             <Wrench className="h-4 w-4 text-sky-400" />
-            <span className="hidden sm:inline">WORKSHOP</span>
+            <span>Workshop [B]</span>
           </button>
         </div>
       </div>
@@ -853,7 +854,7 @@ export const TandemCourseHUD: React.FC<TandemCourseHUDProps> = React.memo(({
                 className="mt-1 w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-400 hover:bg-amber-300 active:scale-95 py-2.5 px-4 font-display text-sm font-black text-slate-950 shadow-lg transition-transform cursor-pointer"
               >
                 <Zap className="h-4 w-4" />
-                <span>LAUNCH NOW! (Enter)</span>
+                <span>LAUNCH NOW! [Enter]</span>
               </button>
             </div>
           </div>

@@ -128,7 +128,14 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          (e.target as HTMLElement).blur();
+        }
+        return;
+      }
 
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -141,33 +148,86 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
         } else {
           onReturnToHub();
         }
-      } else if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !showPresetsModal && !showCoursesModal) {
+        if (e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            if (canRedo && onRedo) onRedo();
+          } else {
+            if (canUndo && onUndo) onUndo();
+          }
+        } else if (e.key.toLowerCase() === 'y') {
+          e.preventDefault();
+          if (canRedo && onRedo) onRedo();
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey || showCoursesModal) return;
+
+      const lower = e.key.toLowerCase();
+      if (lower === 'g') {
+        e.preventDefault();
+        soundEngine.playSnapPop();
+        setShowPresetsModal((prev) => !prev);
+        return;
+      }
+
+      if (showPresetsModal) return;
+
+      if (['1', '2', '3', '4', '5', '6'].includes(e.key)) {
         const catIdx = parseInt(e.key, 10) - 1;
         const cat = TANDEM_CATEGORIES[catIdx];
         if (cat) {
           soundEngine.playSnapPop();
           onSelectCategory(cat);
         }
-      } else if (e.code === 'Space' && !showPresetsModal && !showCoursesModal) {
+      } else if (e.code === 'Space') {
+        if (e.repeat || document.activeElement instanceof HTMLButtonElement) return;
         e.preventDefault();
         soundEngine.playAirhorn();
         onStartCourseRun();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      } else if (lower === 'w') {
         e.preventDefault();
-        if (e.shiftKey) {
-          if (canRedo && onRedo) onRedo();
-        } else {
-          if (canUndo && onUndo) onUndo();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        soundEngine.playRollersWhir();
+        onToggleDyno();
+      } else if (lower === 'p') {
         e.preventDefault();
-        if (canRedo && onRedo) onRedo();
+        soundEngine.playSnapPop();
+        const curIdx = TANDEM_PAINT_THEMES.findIndex((t) => t.id === loadout.paintThemeId);
+        const nextTheme = TANDEM_PAINT_THEMES[(curIdx + 1) % TANDEM_PAINT_THEMES.length];
+        if (nextTheme) onSelectPaint(nextTheme.id);
+      } else if (lower === 'r') {
+        e.preventDefault();
+        soundEngine.playSnapPop();
+        onRandomizeLoadout();
+      } else if (lower === 'm') {
+        e.preventDefault();
+        onToggleMute();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showPresetsModal, showCoursesModal, onReturnToHub, onSelectCategory, onStartCourseRun, canUndo, canRedo, onUndo, onRedo]);
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, [
+    showPresetsModal,
+    showCoursesModal,
+    onReturnToHub,
+    onSelectCategory,
+    onStartCourseRun,
+    onToggleDyno,
+    onRandomizeLoadout,
+    onToggleMute,
+    loadout.paintThemeId,
+    onSelectPaint,
+    canUndo,
+    canRedo,
+    onUndo,
+    onRedo,
+  ]);
 
   // Auto-rock simulation for Dyno Balance Rig (throttled to ~20Hz to avoid 60fps React tree re-renders)
   useEffect(() => {
@@ -294,6 +354,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
               onReturnToHub();
             }}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-100 text-xs sm:text-sm font-extrabold border border-slate-600 transition cursor-pointer"
+            title="Return to Arcade Hub (Esc)"
           >
             ◀ Arcade Hub
           </button>
@@ -302,7 +363,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="text-lg sm:text-xl">🚲</span>
               <h1 className="text-sm sm:text-base font-black tracking-tight text-white uppercase">
-                Red Bull Tandem Lab
+                Red Bull Tandem Workshop
               </h1>
             </div>
             <p className="text-[10px] sm:text-xs text-amber-300 font-semibold">
@@ -367,12 +428,13 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                 ? 'bg-cyan-500 text-slate-950 border-cyan-300 shadow-lg shadow-cyan-500/40 animate-pulse'
                 : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-500/40'
             }`}
+            title="Toggle Dyno Rig (W)"
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>{dynoActive ? '⚡ Dyno Rig: Active' : '⚡ Dyno Rig: Standby'}</span>
+            <span>{dynoActive ? 'Dyno Rig: ON' : 'Dyno Rig'}</span>
           </button>
 
-          {/* Presets & Garage Button */}
+          {/* Presets & Builds Button */}
           <button
             type="button"
             data-testid="presets-modal-btn"
@@ -381,9 +443,10 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
               setShowPresetsModal(true);
             }}
             className="px-3 py-1.5 rounded-xl bg-indigo-600/90 hover:bg-indigo-500 text-white text-xs font-black border border-indigo-400/50 transition cursor-pointer flex items-center gap-1.5"
+            title="Presets & Saved Builds (G)"
           >
             <FolderOpen className="w-3.5 h-3.5" />
-            <span>Presets &amp; Garage</span>
+            <span>Presets &amp; Builds</span>
           </button>
 
           {/* Randomizer */}
@@ -393,10 +456,11 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
               soundEngine.playSnapPop();
               onRandomizeLoadout();
             }}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer"
-            title="Randomize Tandem Build"
+            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer flex items-center gap-1.5"
+            title="Randomize Tandem Build (R)"
           >
             <Shuffle className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Random</span>
           </button>
 
           {/* Undo / Redo */}
@@ -447,9 +511,13 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
             type="button"
             onClick={onToggleMute}
             className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-600 transition cursor-pointer"
-            title={muted ? 'Unmute Audio' : 'Mute Audio'}
+            title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
           >
-            {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            {muted ? (
+              <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+            )}
           </button>
         </div>
       </div>
@@ -537,7 +605,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
           {/* Quick-Select Curated Builds Bar */}
           <div className="border-t border-slate-800/80 pt-2 flex flex-col gap-1">
             <div className="flex items-center justify-between text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-              <span>Quick Builds:</span>
+              <span>⚡ Quick Builds:</span>
               <span className="text-indigo-300 font-semibold">1-Click Equip</span>
             </div>
             <div className="grid grid-cols-4 gap-1">
@@ -694,6 +762,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                     soundEngine.playSnapPop();
                     onSelectCategory(cat);
                   }}
+                  title={`${meta.label} (Key ${meta.keyHint})`}
                   className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer border ${
                     isSelected
                       ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-md shadow-amber-400/25'
@@ -708,30 +777,40 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
             })}
           </div>
 
-          {/* 6 Paint Theme Swatches */}
-          <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800">
-            <span className="text-[11px] font-bold text-slate-400 mr-1">🎨 Livery:</span>
-            {TANDEM_PAINT_THEMES.map((theme) => {
-              const active = loadout.paintThemeId === theme.id;
-              return (
-                <button
-                  key={theme.id}
-                  type="button"
-                  data-testid={`paint-swatch-${theme.id}`}
-                  onClick={() => {
-                    soundEngine.playSnapPop();
-                    onSelectPaint(theme.id);
-                  }}
-                  title={theme.name}
-                  className={`w-5 h-5 rounded-full border-2 transition cursor-pointer ${
-                    active ? 'border-white scale-125 shadow-md shadow-white/30' : 'border-slate-600 opacity-75 hover:opacity-100'
-                  }`}
-                  style={{
-                    background: `linear-gradient(135deg, ${theme.primaryHex} 50%, ${theme.secondaryHex} 50%)`,
-                  }}
-                />
-              );
-            })}
+          {/* 6 Paint Theme Swatches & 3D Camera Hint */}
+          <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800"
+              title="Cycle Livery Paint (Key P)"
+            >
+              <span className="text-[11px] font-bold text-slate-400 mr-1">
+                🎨 Livery <span className="text-[9px] font-mono opacity-75">[P]</span>:
+              </span>
+              {TANDEM_PAINT_THEMES.map((theme) => {
+                const active = loadout.paintThemeId === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    data-testid={`paint-swatch-${theme.id}`}
+                    onClick={() => {
+                      soundEngine.playSnapPop();
+                      onSelectPaint(theme.id);
+                    }}
+                    title={theme.name}
+                    className={`w-5 h-5 rounded-full border-2 transition cursor-pointer ${
+                      active ? 'border-white scale-125 shadow-md shadow-white/30' : 'border-slate-600 opacity-75 hover:opacity-100'
+                    }`}
+                    style={{
+                      background: `linear-gradient(135deg, ${theme.primaryHex} 50%, ${theme.secondaryHex} 50%)`,
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <div className="hidden xl:flex items-center gap-1.5 text-[11px] text-slate-400 font-semibold px-2">
+              <span>🖱️ Drag 3D to Orbit • Scroll to Zoom • Click Sockets</span>
+            </div>
           </div>
         </div>
 
@@ -771,7 +850,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                     <span className="text-xl">{part.emoji}</span>
                     {isEquipped ? (
                       <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-400 text-slate-950">
-                        FIT
+                        EQUIPPED
                       </span>
                     ) : !unlocked ? (
                       <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40 flex items-center gap-0.5">
@@ -818,6 +897,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                 soundEngine.playAirhorn();
                 onStartCourseRun();
               }}
+              title="Launch Tandem Course Run (Space)"
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-red-600 via-amber-500 to-yellow-400 hover:from-red-500 hover:to-yellow-300 active:scale-95 text-slate-950 font-black text-sm sm:text-base tracking-wider uppercase shadow-xl shadow-red-500/30 border-2 border-amber-200 transition cursor-pointer flex items-center justify-center gap-2"
             >
               <span>HIT THE PIER! 🚀</span>
@@ -830,12 +910,24 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
       {/* 4. PRESETS & SAVED BUILDS MODAL                                      */}
       {/* ===================================================================== */}
       {showPresetsModal && (
-        <div className="pointer-events-auto fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tandem-presets-modal-heading"
+          onClick={() => setShowPresetsModal(false)}
+          className="pointer-events-auto fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+          >
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-black text-white flex items-center gap-2">
-                <span>📋</span>
-                <span>Tandem Presets &amp; Custom Saved Builds</span>
+              <h2
+                id="tandem-presets-modal-heading"
+                className="text-lg font-black text-white flex items-center gap-2 uppercase tracking-wide"
+              >
+                <span>🚲</span>
+                <span>PRESETS &amp; SAVED BUILDS</span>
               </h2>
               <button
                 type="button"
@@ -849,7 +941,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
             {/* 4 Curated Presets */}
             <div>
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400 mb-2">
-                Official Red Bull Presets
+                Official Presets (4)
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {TANDEM_PRESETS.map((preset) => (
@@ -878,7 +970,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
             <div className="border-t border-slate-800 pt-3 flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                  Custom Workshop Save Slots
+                  Saved Builds ({savedBuilds.length})
                 </h3>
                 <div className="flex items-center gap-2">
                   <input
@@ -897,7 +989,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                     }}
                     className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
                   >
-                    <Save className="w-3 h-3" /> Save Current
+                    <Save className="w-3 h-3" /> Save Build
                   </button>
                 </div>
               </div>
@@ -942,7 +1034,7 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
                 ))}
                 {savedBuilds.length === 0 && (
                   <div className="col-span-3 text-center text-xs text-slate-500 py-3">
-                    No custom builds saved yet. Click &quot;Save Current&quot; to create your first build slot.
+                    No custom builds saved yet. Click &quot;Save Build&quot; to create your first build slot.
                   </div>
                 )}
               </div>
@@ -956,13 +1048,23 @@ export const TandemWorkshopHUD: React.FC<TandemWorkshopHUDProps> = ({
       {/* ===================================================================== */}
       {showCoursesModal && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tandem-courses-modal-heading"
           data-testid="course-selector-modal"
+          onClick={() => setShowCoursesModal(false)}
           className="pointer-events-auto fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 z-50"
         >
-          <div className="bg-slate-900 border-2 border-amber-400/60 rounded-2xl max-w-3xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-slate-900 border-2 border-amber-400/60 rounded-2xl max-w-3xl w-full p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
-                <h2 className="text-lg font-black text-white flex items-center gap-2">
+                <h2
+                  id="tandem-courses-modal-heading"
+                  className="text-lg font-black text-white flex items-center gap-2"
+                >
                   <span>🗺️</span>
                   <span>Select Over-Water Canal Pier Course</span>
                 </h2>

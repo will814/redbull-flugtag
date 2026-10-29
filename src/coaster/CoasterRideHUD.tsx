@@ -7,6 +7,7 @@ import {
   CoasterPhysicsState,
   evaluateCoasterTrack,
 } from './CoasterPhysicsEngine';
+import { Volume2, VolumeX, RotateCcw, Wrench } from 'lucide-react';
 
 export interface CoasterRideHUDProps {
   metrics: CoasterMetrics;
@@ -72,7 +73,7 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
     controlsRef.current.brakeInput = touchBrakeRef.current || keyBrake;
   };
 
-  // Keyboard & Global Pointer Release Listeners (A/D Lean, W/Space Boost, S Brake, R Restart, B/Esc Lab)
+  // Keyboard & Global Pointer Release Listeners (A/D Lean, W/Space Boost, S Brake, M Mute, R Restart, B/Esc Workshop)
   useEffect(() => {
     const keysDown = keysDownRef.current;
     keysDown.clear();
@@ -81,14 +82,21 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.code === 'KeyR') {
+      if (e.code === 'KeyM' && !e.repeat) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        onToggleMute();
+        return;
+      }
+      if (e.code === 'KeyR' && !e.repeat) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         onRestartRide();
         return;
       }
-      if (e.code === 'KeyB' || e.code === 'Escape') {
+      if ((e.code === 'KeyB' || e.code === 'Escape') && !e.repeat) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -149,7 +157,7 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
       controlsRef.current.leanInput = 0;
       controlsRef.current.brakeInput = false;
     };
-  }, [controlsRef, onAbortToBuilder, onRestartRide, onTriggerActionTap, rideStateRef]);
+  }, [controlsRef, onAbortToBuilder, onRestartRide, onToggleMute, onTriggerActionTap, rideStateRef]);
 
   // 60fps Direct-DOM Telemetry Updater
   useEffect(() => {
@@ -233,13 +241,13 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
         if (s.phase === 'station_countdown') {
           boostButtonLabelRef.current.textContent =
             s.countdownSec <= 0.65
-              ? '🚀 GREEN LIGHT! LAUNCH NOW!'
-              : `⚡ TAP TO CHARGE LIM (${Math.round(s.limChargePct)}%)`;
+              ? '🚀 GREEN LIGHT! LAUNCH NOW! [W / SPACE]'
+              : `⚡ TAP TO CHARGE LIM (${Math.round(s.limChargePct)}%) [W / SPACE]`;
         } else {
           boostButtonLabelRef.current.textContent =
             s.kersBoostActiveTimer > 0
               ? '🔥 KERS OVERDRIVE ACTIVE!'
-              : `⚡ KERS BOOST (${Math.round(s.kersChargePct)}%)`;
+              : `⚡ KERS BOOST (${Math.round(s.kersChargePct)}%) [W / SPACE]`;
         }
       }
 
@@ -276,77 +284,22 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
     ((BULLSEYE_END_FEET - BULLSEYE_START_FEET) / COASTER_TRACK_LENGTH_FEET) * 100;
 
   return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-3 sm:p-4 select-none z-10">
+    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2 sm:p-4 select-none z-10">
       {/* ===================================================================== */}
-      {/* TOP BAR: Workshop Return, Track Progress Spline Bar & Element Badge */}
+      {/* TOP BAR: Track Progress (Left), Element & Speed (Center), Nav (Right) */}
       {/* ===================================================================== */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="pointer-events-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onAbortToBuilder}
-              className="px-3 py-1.5 rounded-xl bg-slate-950/85 hover:bg-slate-800 text-slate-100 text-xs font-extrabold border border-slate-700 shadow-lg cursor-pointer"
-              title="Back to Coaster Lab (B / Esc)"
-            >
-              ◀ Coaster Workshop [B]
-            </button>
-            <button
-              type="button"
-              onClick={onRestartRide}
-              className="px-3 py-1.5 rounded-xl bg-slate-950/85 hover:bg-slate-800 text-amber-300 text-xs font-extrabold border border-slate-700 shadow-lg cursor-pointer"
-              title="Restart Coaster Ride (R)"
-            >
-              🔄 Restart [R]
-            </button>
-            <button
-              type="button"
-              onClick={onToggleMute}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-950/85 hover:bg-slate-800 text-slate-100 text-xs font-bold border border-slate-700 shadow-lg cursor-pointer"
-            >
-              {muted ? '🔇' : '🔊'}
-            </button>
-          </div>
-
-          {/* Current Coaster Element Badge */}
-          <div className="bg-slate-950/90 backdrop-blur-md border border-sky-400/50 rounded-2xl px-4 py-1.5 shadow-xl flex flex-col items-center">
-            <div
-              ref={elementBadgeRef}
-              className="text-xs sm:text-sm font-black text-sky-300 uppercase tracking-wide"
-            >
-              ⚡ 105-Ft Top-Hat LIM Launch
-            </div>
-            <div
-              ref={calloutTextRef}
-              className="text-[10px] sm:text-xs font-bold text-amber-300 text-center"
-            >
-              TAP BOOST TO CHARGE LIM COILS!
-            </div>
-          </div>
-
-          {/* Speedometer */}
-          <div className="bg-slate-950/90 backdrop-blur-md border border-slate-700 rounded-2xl px-4 py-1.5 shadow-xl flex items-baseline gap-1.5">
-            <span
-              ref={speedTextRef}
-              className="text-2xl sm:text-3xl font-black font-mono text-white"
-            >
-              0
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        {/* Top-Left: 2,000-Ft Track Progress Bar with Golden Bullseye Zone Marker */}
+        <div className="pointer-events-auto bg-slate-950/90 backdrop-blur-md border-2 border-sky-400/60 rounded-2xl px-3.5 py-2 shadow-xl flex flex-col gap-1.5 min-w-64 sm:min-w-88">
+          <div className="flex items-center justify-between gap-3 text-[11px] font-black">
+            <span className="text-sky-300 uppercase tracking-wider">
+              🎢 TRACK PROGRESS (🔄 Loop · 🌀 Helix · 🎯 Bullseye)
             </span>
-            <span className="text-xs font-black text-amber-400">MPH</span>
-          </div>
-        </div>
-
-        {/* 2,000-Ft Track Progress Bar with Golden Bullseye Zone Marker */}
-        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-700/80 rounded-xl px-3 py-1.5 shadow-lg flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[11px] font-bold">
-            <span className="text-slate-300">
-              🎢 TRACK PROGRESS (🔄 Loop · 🌀 Helix · ⛰️ Hills · ⚠️ 32ft Gap · 🌊 Lagoon · 🎯 Bullseye)
-            </span>
-            <span ref={distTextRef} className="text-sky-300 font-mono font-black">
+            <span ref={distTextRef} className="text-white font-display text-sm sm:text-base font-black shrink-0">
               0 / 2000 FT
             </span>
           </div>
-          <div className="relative w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+          <div className="relative w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-white/15">
             {/* Golden Station Bullseye Stop Zone highlight (1,865..1,955 ft) */}
             <div
               className="absolute top-0 bottom-0 bg-emerald-400/50 border-x border-emerald-300 z-10"
@@ -362,6 +315,70 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
               style={{ width: '0%' }}
             />
           </div>
+        </div>
+
+        {/* Top-Center: Current Coaster Element Badge + Speedometer */}
+        <div className="pointer-events-auto flex items-center gap-2">
+          <div className="bg-slate-950/90 backdrop-blur-md border border-sky-400/50 rounded-2xl px-4 py-1.5 shadow-xl flex flex-col items-center">
+            <div
+              ref={elementBadgeRef}
+              className="text-xs sm:text-sm font-black text-sky-300 uppercase tracking-wide"
+            >
+              ⚡ 105-Ft Top-Hat LIM Launch
+            </div>
+            <div
+              ref={calloutTextRef}
+              className="text-[10px] sm:text-xs font-bold text-amber-300 text-center"
+            >
+              TAP BOOST TO CHARGE LIM COILS!
+            </div>
+          </div>
+
+          <div className="bg-slate-950/90 backdrop-blur-md border border-white/15 rounded-2xl px-4 py-1.5 shadow-xl flex items-baseline gap-1.5">
+            <span
+              ref={speedTextRef}
+              className="text-2xl sm:text-3xl font-black font-mono text-white"
+            >
+              0
+            </span>
+            <span className="text-xs font-black text-amber-400">MPH</span>
+          </div>
+        </div>
+
+        {/* Top-Right: Unified Run Navigation Cluster ([Mute], [Restart [R]], [Workshop [B]]) */}
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onToggleMute}
+            className="rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 p-2 text-slate-200 shadow-lg transition active:scale-95 cursor-pointer"
+            title={muted ? 'Unmute Audio (M)' : 'Mute Audio (M)'}
+          >
+            {muted ? (
+              <VolumeX className="h-4 w-4 text-rose-400" />
+            ) : (
+              <Volume2 className="h-4 w-4 text-emerald-400" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onRestartRide}
+            className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-2 text-xs font-black text-amber-300 shadow-lg transition active:scale-95 cursor-pointer"
+            title="Restart Run (R)"
+          >
+            <RotateCcw className="h-4 w-4" />
+            <span>Restart [R]</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onAbortToBuilder}
+            className="flex items-center gap-1 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-white/15 px-2.5 py-2 text-xs font-black text-slate-200 shadow-lg transition active:scale-95 cursor-pointer"
+            title="Return to Workshop (B / Esc)"
+          >
+            <Wrench className="h-4 w-4 text-sky-400" />
+            <span>Workshop [B]</span>
+          </button>
         </div>
       </div>
 
@@ -421,7 +438,7 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
             }}
             className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-sky-500 active:text-slate-950 text-white font-black text-xs sm:text-sm border border-slate-600 transition cursor-pointer"
           >
-            ◀ LEAN LEFT [A]
+            ◀ LEAN LEFT [A / ←]
           </button>
           <button
             type="button"
@@ -443,7 +460,7 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
             }}
             className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-sky-500 active:text-slate-950 text-white font-black text-xs sm:text-sm border border-slate-600 transition cursor-pointer"
           >
-            LEAN RIGHT [D] ▶
+            LEAN RIGHT [D / →] ▶
           </button>
         </div>
 
@@ -560,7 +577,7 @@ export const CoasterRideHUD: React.FC<CoasterRideHUDProps> = ({
             }}
             className="px-4 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 active:scale-95 text-white font-black text-xs sm:text-sm border border-rose-400 shadow-lg cursor-pointer"
           >
-            🧲 MAGNET BRAKE [S]
+            🧲 MAGNET BRAKE [S / ↓]
           </button>
         </div>
       </div>

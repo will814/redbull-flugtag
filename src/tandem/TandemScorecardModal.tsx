@@ -14,7 +14,6 @@ import {
   Trophy,
   Sparkles,
   ArrowRight,
-  Home,
   Star,
   Award,
 } from 'lucide-react';
@@ -79,27 +78,33 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
     const mountedAt = performance.now();
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.code === 'Enter') {
-        if (e.repeat || performance.now() - mountedAt < 350) return;
-        if (document.activeElement instanceof HTMLButtonElement) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyR') {
+        if (e.repeat || performance.now() - mountedAt < 350) {
+          e.preventDefault();
+          return;
+        }
+        if (
+          document.activeElement instanceof HTMLButtonElement &&
+          document.activeElement !== primaryBtnRef.current &&
+          e.code !== 'KeyR'
+        ) {
+          return;
+        }
         e.preventDefault();
-        soundEngine.playSnapPop();
-        onRideAgain();
-      } else if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        if (e.repeat || performance.now() - mountedAt < 350) return;
         soundEngine.playSnapPop();
         onRideAgain();
       } else if (e.code === 'Escape' || e.code === 'KeyB') {
         e.preventDefault();
+        e.stopImmediatePropagation();
         if (e.repeat || performance.now() - mountedAt < 350) return;
         soundEngine.playSnapPop();
         onBackToWorkshop();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [onRideAgain, onBackToWorkshop]);
 
   // Judge Cards Data
@@ -303,43 +308,45 @@ export const TandemScorecardModal: React.FC<TandemScorecardModalProps> = React.m
           </div>
         )}
 
-        {/* ACTION BUTTONS */}
-        <div className="flex flex-col sm:flex-row gap-2 pt-1 border-t border-white/10">
+        {/* UNIFIED ACTION BUTTONS ROW */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-white/10">
           <button
             ref={primaryBtnRef}
+            type="button"
             onClick={() => {
               soundEngine.playSnapPop();
               onRideAgain();
             }}
-            className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-amber-400 hover:bg-amber-300 active:scale-98 px-4 py-3 font-display text-sm sm:text-base font-black text-slate-950 shadow-lg transition-transform"
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 border-2 border-yellow-200 active:scale-95 px-3 py-2.5 font-display text-xs sm:text-sm font-black text-slate-950 shadow-xl transition cursor-pointer"
+            title="Ride Again (Space / Enter / R)"
           >
-            <RotateCcw className="h-4 w-4" />
-            <span>RIDE AGAIN</span>
-            <span className="hidden sm:inline text-xs font-bold text-slate-800 opacity-80">(Space / R)</span>
+            <RotateCcw className="h-4 w-4 stroke-[2.5]" />
+            <span>RIDE AGAIN! [R / Space]</span>
           </button>
 
           <button
+            type="button"
             onClick={() => {
               soundEngine.playSnapPop();
               onBackToWorkshop();
             }}
-            className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-98 border border-white/15 px-4 py-3 font-display text-sm sm:text-base font-black text-white shadow-md transition-transform"
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-95 border-2 border-sky-400/60 px-3 py-2.5 font-display text-xs sm:text-sm font-black text-white shadow-lg transition cursor-pointer"
+            title="Return to Workshop (B / Esc)"
           >
             <Wrench className="h-4 w-4 text-sky-400" />
-            <span>WORKSHOP</span>
-            <span className="hidden sm:inline text-xs font-bold text-slate-400">(Esc)</span>
+            <span>WORKSHOP [B / Esc]</span>
           </button>
 
           <button
+            type="button"
             onClick={() => {
               soundEngine.playSnapPop();
               onReturnToHub();
             }}
-            className="flex items-center justify-center gap-1.5 rounded-2xl bg-slate-900 hover:bg-slate-800 active:scale-98 border border-white/10 px-3.5 py-3 font-display text-xs sm:text-sm font-black text-slate-300 transition-transform"
+            className="flex items-center justify-center gap-1 rounded-2xl bg-slate-900/90 hover:bg-slate-800 active:scale-95 border border-white/15 px-3 py-2.5 text-xs font-extrabold text-slate-300 hover:text-white transition cursor-pointer"
             title="Return to Arcade Hub"
           >
-            <Home className="h-4 w-4 text-slate-400" />
-            <span>HUB</span>
+            <span>◀ Arcade Hub</span>
           </button>
         </div>
       </div>
